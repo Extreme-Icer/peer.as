@@ -130,9 +130,15 @@ wrangler pages deploy dist --project-name bgp-insights --branch main --commit-di
 - 前端是 Vite+Svelte 编译产物(`web/dist/`)拷进 `dist/`；CF Pages 侧无构建命令；`./ipc serve` 仅本地 debug。
 - **HTTP Range / 缓存（关键）**：DuckDB-WASM 靠 HTTP Range 部分读 Parquet。CF **只对命中边缘缓存的资源回 206**；
   Pages 默认给所有资源发 `cache-control: max-age=0, must-revalidate`（不可缓存）⇒ Range 退化成整文件下载。
-  修复：`web/public/_headers`（Vite 拷进 `dist/`）把 `/assets/*` 设 immutable、`/data/parquet|prefixes/*` 设
-  `max-age=86400`、JSON 设短缓存。**`*.pages.dev` 走 Pages 资源路由、可能仍回 200 全量**（实测全表搜索因此较慢）；
+  修复：`web/public/_headers`（Vite 拷进 `dist/`）把 `/assets/*` 与 `/data/parquet|prefixes/*` 设长缓存(可缓存才有 Range)、
+  `/data/meta.json` 设 `no-cache`、`/data/asnames.json` 长缓存(显式列, 别用 `/data/*.json` 否则会和 meta.json 规则叠加)。
+  **`*.pages.dev` 走 Pages 资源路由、可能仍回 200 全量**（实测全表搜索因此较慢）；
   **Range/边缘缓存在自定义域名 `peer.as`（走完整 CF CDN）上才生效**。改 `_headers` 后重新 deploy 即可（其余文件秒级跳过）。
+- **数据版本 / 缓存失效（关键）**：parquet/json 路径固定(`prefixes/data_4.parquet`)但内容每次 export 都变 ⇒ 固定 URL +
+  长缓存会让浏览器/CDN 读到**过期分片**(曾导致高位 prefix 搜不到、隐私窗口却能搜到)。修复：`meta.version`=文件清单+计数+ts
+  的 sha1 短哈希；前端 `dv()`(db.js) 把 `?v=<version>` 拼到**所有** parquet/asnames URL 上(经 `rpList`)，数据一变 version
+  变 → URL 变 → 旧缓存失效。`meta.json` 自身用 `cache:'no-cache'` 取且 `_headers` 也 `no-cache`(它是 version 源, 必须最新)。
+  因此 parquet 可放心设 1 年长缓存。**改了数据务必重新 export(刷新 version)再 deploy**。
 
 发版自检：
 ```bash

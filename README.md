@@ -1,126 +1,140 @@
-# PEER.AS — 回程 AS_PATH 采集 / 分析 / 静态看板
+# PEER.AS
 
-一套 CLI（`ipc`）：从 RIPE rrc00 的 MRT 全表做**静态分析**，入库口径 =
-**境内(CN) 所有 AS_PATH 含焦点 ASN 的前缀**（不按城市过滤；城市以 ipdb 为准、展示时切段），
-导出为**纯静态分片 JSON** 部署到看板，**按 AS_PATH 搜索**回程路由。
+**A pure-static, reproducible BGP / IP / ASN insights hub.** Explore the global
+IPv4 routing table — prefixes, origin ASNs, and the actual **AS_PATH**s that reach
+them — entirely in your browser. No backend, no API, no database server: the whole
+site is a bundle of static files you can host, fork, or mirror anywhere.
 
-> 核心取向：BGP 数据里有参考价值的只有 **AS_PATH**——path 里有哪些 ASN + 它们的**顺序**。
-> 不做任何"线路质量"评分（CN2 vs GIA 从境外 collector 的回程 BGP 根本分不出，GIA ⊂ CN2 同走 4809）。
-> 搜索就是输入一段 ASN：**1 个 = path 含它；多个 = 按顺序相邻出现**
-> （`1299 23764 4809` 与 `1299 4809` 是两回事）。
-> MRT RIB 是 **per-peer** 的，每个 peer 的 AS_PATH 是一个「去往目标的去程」，multihome 前缀的
-> 「等价路由」由此天然得到。`origin asn` 仅作展示参考，不参与排序。
+Live at **[peer.as](https://peer.as)**.
 
-## 数据流
+PEER.AS sits somewhere between [ipinfo](https://ipinfo.io),
+[bgp.he.net](https://bgp.he.net), and [bgp.tools](https://bgp.tools) — a looking
+glass and IP/ASN reference — but built on a single conviction about what BGP data
+is actually good for, and delivered as a static artifact rather than a service.
+
+---
+
+## The idea
+
+Most "BGP route quality" tooling tries to read meaning into a path that isn't
+there. PEER.AS deliberately does the opposite. **The only thing worth reading out
+of a public BGP feed is the AS_PATH** — *which* ASNs carry a prefix and in *what
+order*. Everything is built around that:
+
+- **Order and adjacency matter.** Searching for `23764 4809` means those two ASNs
+  appear **consecutively** in the path — which is a different question from "the
+  path contains both 23764 and 4809 somewhere." `1299 23764 4809` and
+  `1299 4809` are genuinely different routes.
+- **No line-quality scoring, ever.** You cannot tell premium transit tiers apart
+  from a public collector's view (e.g. a carrier's premium and standard products
+  often share the same AS), so PEER.AS doesn't pretend to. It shows the path; it
+  doesn't grade it.
+- **`origin AS` is display-only.** It labels a prefix; it never drives ranking or
+  filtering.
+- **Multihoming falls out for free.** A collector's RIB is *per-peer* — each peer
+  contributes one path *toward* a destination — so the set of distinct paths to a
+  prefix is its observed multihome / equal-cost routing, straight from the data.
+
+## Why static & reproducible
+
+The entire dataset is exported to **Parquet** and queried in-browser with
+**DuckDB-WASM** over **HTTP Range** requests. There is no server doing queries —
+the browser fetches only the byte ranges of the Parquet files it needs.
+
+That design buys three things:
+
+- **Serverless & cheap.** It deploys to any static host (Cloudflare Pages today).
+  No compute, no scaling, no per-query cost.
+- **Reproducible.** The data comes from a public source (RIPE RIS `rrc00` MRT
+  dumps). Anyone can re-run the pipeline and rebuild the exact same site.
+- **Mirrorable.** Because it's just files, you can clone and self-host the whole
+  thing — useful for archival, censorship resistance, or running your own snapshot.
+
+## What you can do
+
+- **Search by AS_PATH** — type a sequence of ASNs and find every prefix whose path
+  contains that **consecutive** run. Works globally (full-table scan) or scoped to
+  a country.
+- **Search by origin AS** — exact, fast, column-pruned lookup of everything a given
+  network originates.
+- **Subnet / IP lookup** — enter an IP and get every prefix in the table that
+  covers it, most-specific first.
+- **Per-prefix insight** — open any prefix to see a **route graph** (origin →
+  upstreams → Tier-1) drawn from all observed paths, the **best path** highlighted,
+  and its **parent / child prefixes** (covering and more-specific routes found live
+  by numeric range).
+- **Browse by country & city** — geolocation is resolved against a geo database,
+  and prefixes are carved into the regions they actually cover.
+- **Bilingual (中文 / English)** UI with pre-rendered, SEO-friendly per-country
+  landing pages, a sitemap, and `?lang` / `?cc` / `?city` deep links.
+
+## How it's built
 
 ```
-geo     ipdb.txt  ──► geo 表(城市/省/运营商), ingest/build 据此定位
-ingest  rrc00 RIB ──► prefix / pathobs / path_asn(倒排)   (境内 ∩ path含焦点ASN)
-query   城市 + AS_PATH(含ASN/连续序列) + origin  多维筛选
-insight 某前缀/IP 的 multihome 等价路由(各 peer 视角的去程 AS_PATH)
-build   导出静态分片 JSON + 前端 ──► dist/  (部署到 CF Pages, 无服务器)
-serve   本地 debug: 静态托管 dist/(看到的就是将部署的同一份产物)
+RIPE rrc00 MRT RIB ──ingest──► SQLite (full IPv4 table, deduped per-peer paths)
+                                  │
+                                  └─export-parquet──► Parquet dataset + meta.json
+                                                       (geo/<cc>, prefixes, paths,
+                                                        pathsearch) + bilingual SSG
+                                                          │
+                                          DuckDB-WASM (browser) ──HTTP Range──► you
 ```
 
-## 安装 / 初始化
+- **Collector** — a streaming MRT parser ingests the latest `rrc00` RIB and stores
+  every IPv4 prefix with its distinct AS_PATHs (`ingest_scope=global`; nothing is
+  filtered out at ingest).
+- **Export** — the SQLite database is exported to a Parquet dataset, sorted and
+  partitioned so that DuckDB-WASM can prune to a handful of byte ranges per query.
+  A static-site generator emits per-country landing pages for crawlers.
+- **Frontend** — a Vite + Svelte 5 app (dark "console" aesthetic, system fonts,
+  Font Awesome icons) that runs DuckDB-WASM against the remote Parquet files.
+
+**Scale** (2026-05 `rrc00` snapshot): ~1.13M IPv4 prefixes, ~47.5M distinct paths,
+≈3.0 GB SQLite, ≈460 MB Parquet. IPv6 is deferred for now.
+
+### Geolocation: dual-track
+
+PEER.AS supports two interchangeable geo backends so the project stays open while
+the hosted site can be more precise:
+
+- **`ipdb`** — a city-level commercial database (used by the official deployment;
+  the file itself is private and **not** redistributable).
+- **`rir`** — RIR delegated-extended stats: country-level, openly redistributable,
+  fully reproducible for anyone rebuilding from scratch.
+
+## Limitations (worth knowing)
+
+- AS_PATHs are approximated from the *outbound* view of each public collector peer;
+  a specific network's true vantage point is limited to whichever peers `rrc00`
+  has. "Path contains ASN X" is the most robust filter (peer-independent); strict
+  ordering/adjacency depends on the collector's view.
+- Parent/child segments are computed only over **collected** prefixes — this is a
+  large slice of the table, not a private global RIB, so coverage can be partial
+  (the UI says so).
+- City-level geolocation is only as good as the underlying geo database.
+- This is a research/education tool over a public, approximate snapshot — it can be
+  stale, and it is not authoritative for operational decisions.
+
+## Running it yourself
+
+The pipeline is a self-contained CLI (`ipc`). In short:
 
 ```bash
-cd <repo>
-./ipc init                 # 写默认 config.json + 建库
-./ipc geo-import           # 导入 ipdb.txt(约 10s, 1.3M 行)
-./ipc ingest               # 下载并解析 rrc00 最新 RIB(约 400MB)，按 境内(CN)+path含焦点ASN 入库(不按城市)
+./ipc geo-import --provider rir     # open country-level geo (or ipdb if you have it)
+./ipc ingest --reset                # download & parse the latest rrc00 RIB (~400 MB)
+./ipc export-parquet --out dist     # SQLite → Parquet dataset + bilingual SSG
+# dist/ is now a complete static site — deploy it anywhere, or:
+./ipc serve --port 8812             # local preview (serves the same artifact)
 ```
 
-`ipc` 启动器会自动用同目录 `.venv`，数据/缓存都落在本目录（可用 `IPC_HOME` 覆盖）。
-地理库默认取项目根的 `ipdb.txt`，可用 `IPC_IPDB_PATH` 环境变量指向别处。
+Configuration lives in `config.json` (gitignored; commit-safe template in
+`config.example.json`). Secrets — Cloudflare credentials, the private geo path —
+are supplied via environment variables (`.env.example`) and never committed.
 
-## 配置（config.json）
+## Project notes
 
-`config.json` 已在 `.gitignore` 中（仅含本机配置，无密钥）；仓库提交的是 `config.example.json`。
-
-```bash
-./ipc config show
-./ipc config set focus_asns 4809,23764,9929,4837,58807,58453,9808,4134,4538,7497  # path 含这些即入库
-./ipc config set focus_cities 北京,上海,广州,深圳,杭州          # 展示时切到这些城市
-```
-
-关键项：
-- `focus_asns`：纯 ASN 列表，**ingest 过滤器**——只保留 AS_PATH 含其中任一 ASN 的前缀。无任何质量含义。
-  改了**需重新 `ingest`**。
-- `focus_country_code`：ingest 时只保留该国前缀（默认 `CN`，空=不限）。`ingest --all-countries` 可临时不限。
-- `focus_cities` / `focus_provinces`：**不影响入库**，只决定 build 把前缀切到哪些城市来展示。
-  改了只需重新 `build`（不必 reingest）。
-- `path_presets`：path 搜索的**预制下拉项**，每项 `{alias, path:[asns]}` 给一段连续 AS_PATH 起名
-  （如 `电信CTGNet`=`[23764,4809]`）。面板/CLI 也可自行输入序列。
-- `asn_registry`：ASN→`{name, op}` 注册表，**集中在 config.json 维护、不在代码里 hard code**，
-  仅用于展示/下拉/着色（无评分）。覆盖五大骨干网 + 省级网 + 常见国际 transit。注：**58807 = 移动 CMIN2**。
-  `bgp.set_registry()` 在 `config.load()` 时把它灌入 `bgp.ASN_REGISTRY/ASN_NAME`。
-
-## 核心命令
-
-```bash
-# 筛前缀: 上海 + AS_PATH 出现连续 23764→4809
-./ipc query --city 上海 --path "23764 4809"
-./ipc query --city 上海 --asn 9929 --format csv --out sh.csv   # --asn=含任一(无序)
-
-# 某前缀/IP 的 multihome 等价路由(各 peer 视角的去程 AS_PATH)
-./ipc insight 101.226.0.0/16
-./ipc insight 180.153.10.1
-
-# 统计
-./ipc stats
-
-# 静态看板: 生成 dist/ (部署 CF Pages) + 本地 debug 托管
-./ipc build                  # 产出 dist/ (静态前端 + 分片 JSON)
-./ipc serve --rebuild        # 先 build 再本地托管, 浏览器开 http://127.0.0.1:8787/
-```
-
-## 实战提示（来自真实 rrc00 数据）
-
-- **顺序很重要**：`--path "23764 4809"` 要求 23764 **紧接着** 4809（连续子串），与 `--asn 23764,4809`
-  （path 含这两个即可，无序）语义不同。
-- **不分 CN2/GIA**：GIA 是 CN2(4809) 的商业产品档，公网 BGP path 上看不出；真要区分只能 traceroute
-  看 `59.43.x.x` 跳，不在本工具范围。
-
-## Web 看板（纯静态 / Serverless）
-
-看板是**纯静态**的：前端 (`ipcollect/web/{index.html,style.css,app.js}`) 只 `fetch ./data/*.json`，
-**无服务器、无 `/api`**。`ipc build` 把数据库导出为分片 JSON 写入 `dist/`：
-
-```
-dist/
-  index.html  style.css  app.js              # 独立前端, 便于维护
-  data/
-    index.json                # 统计 + 城市清单(含分片数) + ASN名称 + path_presets + focus
-    ipindex.json              # 全部 IPv4 前缀 [start,end,pid,cid,prefix](子网搜索用)
-    prefixes/<cid>-<p>.json   # 按城市分片的前缀; 每前缀内嵌去重 AS_PATH(供搜索+抽屉)
-                              #   + 父子段 sup/sub(库内更大/更小段, build 时一次栈扫描预计算)
-```
-
-每个前缀**内嵌它的去重 AS_PATH**，所以 path 顺序搜索与 multihome 抽屉用同一份数据、无需二次请求。
-抽屉里还显示该前缀的**更大段（覆盖它的母段）/ 更小段（更具体段）**，点击可跳到对应前缀（按需加载其城市
-分片）。**注意：仅基于数据库已采集的前缀，并非全球路由表，父子段可能不全**——抽屉里也有同样提示。
-面板**按需加载/搜索**：首屏只拉 `index.json`，选城市才拉它的前缀分片。大城市按 `PART_SIZE`(默认 2500)
-**二次切分**，避免单文件超过 **CF Pages 25 MiB/文件**上限。
-
-**部署 Cloudflare Pages**：把 `dist/` 作为输出目录（构建命令留空、无服务器）。本地 `ipc build` 后
-`wrangler pages deploy dist`。账户与 token 通过环境变量提供（见 `.env.example`），不写进任何提交的文件。
-
-## 定时（cron 示例）
-
-```cron
-# 每周一 3:09 重新 ingest 最新 RIB 并重建看板
-9 3 * * 1   cd <repo> && ./ipc ingest --reset && ./ipc build >> cron.log 2>&1
-```
-
-## 数据表
-
-`prefix`(焦点前缀+地理+origin) · `pathobs`(每peer去程 AS_PATH) · `path_asn`(ASN→前缀倒排) ·
-`geo`(ipdb) · `meta`。
-
-## 局限（务必知悉）
-
-- AS_PATH 是以**公开 collector 各 peer 的去程**近似；真·某运营商视角受限于 rrc00 是否有该 peer。
-  筛 `path 含某 ASN` 是最稳的维度（不依赖特定 peer），但顺序/相邻性受 collector 视角影响。
-- 不做线路质量评分：CN2 vs GIA 等产品档从公网 BGP path 分不出（GIA ⊂ CN2 同走 4809）。
-- City 级地理依赖 ipdb 精度。
+- **Data source:** [RIPE RIS](https://ris.ripe.net/) `rrc00` public MRT RIB dumps.
+- **Maintenance & deployment** details (build steps, Cloudflare Pages specifics,
+  the HTTP-Range/caching gotcha, invariants) live in **[`AGENTS.md`](AGENTS.md)**,
+  and the data/format contract in **`docs/GLOBAL_DESIGN.md`**.
+- **For BGP research and education only.**

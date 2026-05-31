@@ -19,8 +19,11 @@
 
 # meta.json is the version source — must always be revalidated so a new build is
 # seen immediately (304 when unchanged, fresh when the version bumps).
+# Keep this an exclusive match: a broader /data/*.json rule would also match
+# meta.json and CF concatenates both headers (no-cache + max-age) — ambiguous.
 /data/meta.json
   Cache-Control: no-cache
-# Other JSON (asnames) is also fetched with ?v= → safe to cache long.
-/data/*.json
+# asnames.json is fetched with ?v= → safe to cache long. (List explicitly, not
+# /data/*.json, so it never overlaps the meta.json rule above.)
+/data/asnames.json
   Cache-Control: public, max-age=86400

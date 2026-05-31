@@ -384,7 +384,14 @@ def export(cfg: dict, conn, sqlite_path: str, out_dir: str = "dist") -> dict:
     files["pathsearch_origin"] = ps_origin
 
     now = int(time.time())
+    # 数据版本: 文件清单(含各文件区间索引)+计数+时间 的短哈希。前端把它作为 ?v= 拼到所有 parquet/json URL 上,
+    # 数据一变 version 就变 -> URL 变 -> 浏览器/CDN 旧缓存自动失效, 拉到新数据(解决"固定 URL 内容变了仍命中旧缓存")。
+    import hashlib as _hashlib
+    version = _hashlib.sha1(json.dumps(
+        {"files": files, "n_prefix": int(n_prefix), "n_paths": int(n_paths_total), "ts": now},
+        sort_keys=True).encode()).hexdigest()[:12]
     meta = {
+        "version": version,
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

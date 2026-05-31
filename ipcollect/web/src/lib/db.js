@@ -8,11 +8,15 @@ export const PQ = `${DATA}/parquet`
 
 let db = null, conn = null
 
-export async function getJSON(url) {
-  const r = await fetch(url)
+export async function getJSON(url, opts) {
+  const r = await fetch(url, opts)
   if (!r.ok) throw new Error(`${url} → ${r.status}`)
   return r.json()
 }
+
+// 数据版本查询串: meta.version 拼成 ?v=<hash>。数据一变 version 就变 -> URL 变 -> 旧缓存(浏览器/CDN)失效。
+// 所有 parquet/asnames URL 都带上它; 因此即便 parquet 长缓存(max-age=86400)也不会读到过期数据。
+export const dv = () => { const v = S.meta?.version; return v ? `?v=${encodeURIComponent(v)}` : '' }
 
 export async function initDuck() {
   // CDN 动态 import; /* @vite-ignore */ 让 Vite 不解析这个远程 URL。
@@ -38,8 +42,8 @@ export async function q(sql) {
   })
 }
 
-// HTTP 不支持 glob -> 用 meta.files 的显式文件清单
-export const rpList = files => `read_parquet([${(files || []).map(f => `'${PQ}/${f}'`).join(',')}])`
+// HTTP 不支持 glob -> 用 meta.files 的显式文件清单; 每个 URL 带 ?v=<数据版本> 做缓存失效。
+export const rpList = files => `read_parquet([${(files || []).map(f => `'${PQ}/${f}${dv()}'`).join(',')}])`
 export const rp = name => rpList((S.meta?.files || {})[name])
 
 // paths 分多文件; 用 paths_pid 区间只读命中那 1 个文件

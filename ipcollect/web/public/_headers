@@ -9,14 +9,18 @@
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 
-# Static Parquet (large) — cache a day so CF edge serves Range partial reads.
+# Static Parquet (large). The frontend appends ?v=<data-version> to every URL,
+# so a rebuild changes the URL and busts caches — long caching here is safe and
+# also lets CF edge serve Range partial reads.
 /data/parquet/*
-  Cache-Control: public, max-age=86400
+  Cache-Control: public, max-age=31536000
 /data/prefixes/*
-  Cache-Control: public, max-age=86400
+  Cache-Control: public, max-age=31536000
 
-# Manifests / JSON — must stay fresh (file manifest + asn names).
+# meta.json is the version source — must always be revalidated so a new build is
+# seen immediately (304 when unchanged, fresh when the version bumps).
 /data/meta.json
-  Cache-Control: public, max-age=300, must-revalidate
+  Cache-Control: no-cache
+# Other JSON (asnames) is also fetched with ?v= → safe to cache long.
 /data/*.json
-  Cache-Control: public, max-age=3600
+  Cache-Control: public, max-age=86400

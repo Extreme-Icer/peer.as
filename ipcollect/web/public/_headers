@@ -1,0 +1,22 @@
+# Cloudflare Pages: enable HTTP Range (206) + edge caching for DuckDB-WASM.
+# CF only serves Range from its edge cache; the Pages default
+# `cache-control: public, max-age=0, must-revalidate` makes assets uncacheable,
+# so partial Parquet reads fall back to full-file downloads. Mark assets cacheable.
+# NOTE: Range/206 + edge cache apply on the custom domain (peer.as, full CF CDN);
+# *.pages.dev streams from the Pages asset router and may still return 200.
+
+# Vite-hashed JS/CSS — filename carries a content hash → safe to cache forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Static Parquet (large) — cache a day so CF edge serves Range partial reads.
+/data/parquet/*
+  Cache-Control: public, max-age=86400
+/data/prefixes/*
+  Cache-Control: public, max-age=86400
+
+# Manifests / JSON — must stay fresh (file manifest + asn names).
+/data/meta.json
+  Cache-Control: public, max-age=300, must-revalidate
+/data/*.json
+  Cache-Control: public, max-age=3600

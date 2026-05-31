@@ -1,0 +1,31 @@
+# ── 机密 / 本地配置（绝不入库）────────────────────────────────
+# 注意：git 不支持行内注释，注释必须独占一行。
+.env
+# 本地配置；提交的是 config.example.json
+config.json
+# wrangler 缓存（含 account id 等）
+.wrangler/
+
+# ── 数据 / 地理库（体积大或不可再分发）──────────────────────────
+# 私有商业地理库，不可随仓库再分发
+ipdb.txt
+*.db
+*.db-wal
+*.db-shm
+# 下载的 MRT RIB / autnums / Shodan 等缓存
+cache/
+# 构建产物（由 export-parquet 生成，含全球 Parquet 全表，~700MB）
+dist/
+# 历史导出样例
+test-ips.csv
+
+# ── 前端 (Vite + Svelte) ─────────────────────────────────
+ipcollect/web/node_modules/
+# 前端构建产物（npm run build 生成；export-parquet 拷进 dist/）
+ipcollect/web/dist/
+
+# ── Python ───────────────────────────────────────────────
+.venv/
+__pycache__/
+*.pyc
+ipcollect/web/e2e-shot.png

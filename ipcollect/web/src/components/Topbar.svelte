@@ -1,0 +1,111 @@
+<script>
+  import Fa from 'svelte-fa'
+  import { S } from '../lib/store.svelte.js'
+  import { t } from '../lib/i18n.js'
+  import { ccLabel } from '../lib/bgp.js'
+  import { resolveCC, scheduleSearch, searchNow } from '../lib/queries.js'
+  import { iCountry, iCity, iPath, iOrigin, iSubnet, iSearch, iClear } from '../lib/icons.js'
+  import Field from './Field.svelte'
+
+  let cc = $derived(resolveCC(S.filters.cc))
+  let cities = $derived((cc && S.meta?.cities?.[cc]) || [])
+  let f = S.filters
+  const sched = () => scheduleSearch(350)
+  const noop = () => {}
+  function clearAll() {
+    Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false })
+    searchNow()
+  }
+</script>
+
+<header class="topbar">
+  <div class="filters">
+    <!-- 第一行: 最常用的两种查询 — 完整 IP(子网) + origin AS -->
+    <div class="row primary">
+      <span class="rlabel">{t('subnet')}</span>
+      <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
+        oninput={sched} onenter={searchNow} />
+      <span class="rlabel">{t('origin')}</span>
+      <Field icon={iOrigin} bind:value={f.origin} placeholder={t('ph_origin')} big grow width=""
+        oninput={sched} onenter={searchNow} />
+      <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
+      <button class="clrbtn" onclick={clearAll} title={t('clear')}><Fa icon={iClear} /></button>
+    </div>
+    <!-- 第二行: 其余筛选(AS_PATH 撑满剩余宽度) -->
+    <div class="row secondary">
+      <Field icon={iCountry} bind:value={f.cc} placeholder={t('ph_cc')} list="cclist"
+        width="220px" oninput={sched} onenter={searchNow} />
+      <Field icon={iCity} bind:value={f.city} placeholder={cities.length ? t('ph_city') : '—'}
+        list="citylist" disabled={!cities.length} width="155px" oninput={sched} onenter={searchNow} />
+      <Field icon={iPath} bind:value={f.path} placeholder={t('ph_path')}
+        grow width="" oninput={noop} onenter={searchNow} />
+      <input class="numbox" type="text" bind:value={f.limit} title={t('ph_limit')}
+        oninput={sched} onkeydown={(e) => e.key === 'Enter' && searchNow()} />
+      <label class="chk" title={t('lowvis')}>
+        <input type="checkbox" bind:checked={f.incllow} onchange={sched} />
+        <span>{t('incllow')}</span>
+      </label>
+    </div>
+  </div>
+  <div class="statusline">{S.msg}</div>
+
+  <datalist id="cclist">
+    {#each S.meta?.countries || [] as c}
+      <option value={ccLabel(c.cc)}>{c.n_prefix.toLocaleString()}{(S.meta?.focus_countries || []).includes(c.cc) ? (S.lang === 'zh' ? ' · 可到城市' : ' · city-level') : ''}</option>
+    {/each}
+  </datalist>
+  <datalist id="citylist">
+    {#each cities as c}<option value={c.name}>{c.n_prefix.toLocaleString()}</option>{/each}
+  </datalist>
+</header>
+
+<style>
+  .topbar {
+    position: sticky; top: 0; z-index: 6; padding: 12px 18px 10px;
+    background:
+      radial-gradient(rgba(125,200,190,.025) 1px, transparent 1px) 0 0 / 18px 18px,
+      var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .filters { display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+  .row.primary { padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
+  .rlabel {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    font: 600 11px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
+  }
+  .rlabel :global(svg) { color: var(--accent); }
+  .gobtn.big { height: 40px; padding: 0 22px; font-size: 13.5px; border-radius: 9px; }
+  .clrbtn {
+    display: inline-flex; align-items: center; justify-content: center; height: 40px; width: 40px;
+    flex: 0 0 auto; background: transparent; border: 1px solid var(--line); border-radius: 9px;
+    color: var(--muted); cursor: pointer; transition: all .12s;
+  }
+  .clrbtn:hover { color: #ef4444; border-color: #ef4444; background: color-mix(in srgb, #ef4444 8%, transparent); }
+  .numbox {
+    width: 64px; height: 32px; background: var(--inbg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px; padding: 0 9px;
+    font: 12.5px var(--mono); outline: none;
+  }
+  .numbox:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .chk {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none;
+  }
+  .chk input { width: auto; accent-color: var(--accent); }
+  .gobtn {
+    display: inline-flex; align-items: center; gap: 7px; height: 32px;
+    background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 7px;
+    padding: 0 16px; font: 600 12.5px var(--sans); cursor: pointer; transition: filter .12s, transform .05s;
+    box-shadow: 0 2px 10px var(--accent-dim);
+  }
+  .gobtn:hover { filter: brightness(1.08); }
+  .gobtn:active { transform: translateY(1px); }
+  .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); }
+  @media (max-width: 820px) {
+    .topbar { padding: 10px 12px; }
+    .rlabel { display: none; }
+    .row :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
+    .gobtn.big { flex: 1 1 100%; }
+  }
+</style>

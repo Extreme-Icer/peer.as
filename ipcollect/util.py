@@ -1,0 +1,111 @@
+"""通用工具: 路径解析, IP<->整数, CIDR, 日志."""
+from __future__ import annotations
+
+import ipaddress
+import os
+import sys
+import time
+from pathlib import Path
+
+# 项目根目录 = 包目录的上一级 (即 /home/aosc/test-ip-collect)。
+# 可用环境变量 IPC_HOME 覆盖, 让数据/缓存跟随安装位置。
+ROOT = Path(os.environ.get("IPC_HOME", Path(__file__).resolve().parent.parent))
+
+CONFIG_PATH = ROOT / "config.json"
+DB_PATH = ROOT / "ipcollect.db"
+CACHE_DIR = ROOT / "cache"
+MRT_CACHE_DIR = CACHE_DIR / "mrt"
+# geo 库路径: 默认项目根的 ipdb.txt, 可用 IPC_IPDB_PATH 覆盖(不入库的私有库)。
+DEFAULT_IPDB = Path(os.environ.get("IPC_IPDB_PATH", ROOT / "ipdb.txt"))
+
+
+def ensure_dirs() -> None:
+    for d in (CACHE_DIR, MRT_CACHE_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+
+
+# ----------------------------------------------------------------------------
+# IP <-> 整数
+# ----------------------------------------------------------------------------
+def ip2int(ip: str) -> int:
+    return int(ipaddress.ip_address(ip))
+
+
+def int2ip(n: int, v6: bool = False) -> str:
+    return str(ipaddress.ip_address(n))
+
+
+def is_v6(ip: str) -> bool:
+    return ":" in ip
+
+
+def cidr_bounds(cidr: str) -> tuple[int, int, int]:
+    """返回 (start_int, end_int, family) ; family: 4 或 6."""
+    net = ipaddress.ip_network(cidr, strict=False)
+    return int(net.network_address), int(net.broadcast_address), net.version
+
+
+def prefix_from_bytes(pfx_bytes: bytes, plen: int, family: int) -> tuple[int, int, str]:
+    """MRT 里前缀以 ceil(plen/8) 字节存储, 右侧补零得到网络地址."""
+    addr_bytes = 4 if family == 4 else 16
+    bits = addr_bytes * 8
+    padded = pfx_bytes + b"\x00" * (addr_bytes - len(pfx_bytes))
+    start = int.from_bytes(padded[:addr_bytes], "big")
+    # 清掉主机位 (防御性)
+    if plen < bits:
+        mask = ((1 << plen) - 1) << (bits - plen)
+        start &= mask
+        end = start | ((1 << (bits - plen)) - 1)
+    else:
+        end = start
+    ip = ipaddress.ip_address(start)
+    cidr = f"{ip}/{plen}"
+    return start, end, cidr
+
+
+def hosts_in_prefix(cidr: str, limit: int | None = None, sample: bool = True):
+    """枚举 CIDR 内可用主机 (跳过网络/广播地址)。可抽样。"""
+    net = ipaddress.ip_network(cidr, strict=False)
+    it = net.hosts() if net.num_addresses > 2 else iter([net.network_address])
+    out = []
+    for i, h in enumerate(it):
+        if limit is not None and len(out) >= limit:
+            break
+        out.append(str(h))
+    return out
+
+
+# ----------------------------------------------------------------------------
+# 日志 (轻量, 带时间戳, 输出到 stderr)
+# ----------------------------------------------------------------------------
+_T0 = time.time()
+_QUIET = False
+
+
+def set_quiet(q: bool) -> None:
+    global _QUIET
+    _QUIET = q
+
+
+def log(msg: str, *, err: bool = False) -> None:
+    if _QUIET and not err:
+        return
+    dt = time.time() - _T0
+    prefix = "!" if err else "·"
+    print(f"[{dt:7.1f}s] {prefix} {msg}", file=sys.stderr, flush=True)
+
+
+def human(n: float) -> str:
+    for unit in ("", "K", "M", "G", "T"):
+        if abs(n) < 1000:
+            return f"{n:.0f}{unit}" if unit == "" else f"{n:.1f}{unit}"
+        n /= 1000.0
+    return f"{n:.1f}P"
+
+
+def human_bytes(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024:
+            return f"{n:.1f}{unit}"
+        n /= 1024.0
+    return f"{n:.1f}PB"

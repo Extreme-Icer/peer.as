@@ -1,0 +1,56 @@
+/* PEER.AS — "network operations console" 设计系统。
+ * 暗色优先(运营商在暗环境工作); 亮色为干净变体。侧栏恒深(console rail)。
+ * 字体: IBM Plex Sans(UI) + IBM Plex Mono(路由数据)。强调=teal, 信号(最优路径/状态)=amber。 */
+
+:root {
+  color-scheme: light;
+  --bg: #f6f8fa; --panel: #ffffff; --alt: #eef2f6; --line: #dce3ea; --line2: #e8edf2;
+  --fg: #10212f; --muted: #5d6b7c;
+  --accent: #0d9488; --accent-h: #0f766e; --accent-fg: #ffffff; --accent-dim: rgba(13, 148, 136, .12);
+  --signal: #d97706; --link: #0b7285; --code: #0c5b52; --inbg: #ffffff;
+  --rowhover: #f0f5f7; --hit: rgba(217, 119, 6, .09); --hit-h: rgba(217, 119, 6, .15);
+  --sans: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { color-scheme: dark;
+    --bg: #0a0e15; --panel: #0d131c; --alt: #111a26; --line: #1b2738; --line2: #152030;
+    --fg: #dde6f0; --muted: #7c8aa0;
+    --accent: #2dd4bf; --accent-h: #5eead4; --accent-fg: #04201c; --accent-dim: rgba(45, 212, 191, .16);
+    --signal: #fbbf24; --link: #5eead4; --code: #9fe7dc; --inbg: #0d131c;
+    --rowhover: #101b2a; --hit: rgba(251, 191, 36, .10); --hit-h: rgba(251, 191, 36, .17);
+  }
+}
+:root[data-theme=dark] { color-scheme: dark;
+  --bg: #0a0e15; --panel: #0d131c; --alt: #111a26; --line: #1b2738; --line2: #152030;
+  --fg: #dde6f0; --muted: #7c8aa0;
+  --accent: #2dd4bf; --accent-h: #5eead4; --accent-fg: #04201c; --accent-dim: rgba(45, 212, 191, .16);
+  --signal: #fbbf24; --link: #5eead4; --code: #9fe7dc; --inbg: #0d131c;
+  --rowhover: #101b2a; --hit: rgba(251, 191, 36, .10); --hit-h: rgba(251, 191, 36, .17);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font-family: var(--sans); background: var(--bg); color: var(--fg); font-size: 13px;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+#app { min-height: 100vh; }
+::selection { background: var(--accent-dim); }
+
+/* badge / 运营商配色 (数据语义, 全局) */
+.badge {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 5px;
+  font: 600 11px/1.5 var(--sans); white-space: nowrap; border: 1px solid transparent;
+  background: color-mix(in srgb, var(--c, #888) 16%, transparent);
+  color: var(--c, #888); border-color: color-mix(in srgb, var(--c, #888) 32%, transparent);
+}
+.op-ct { --c: #3b82f6; } .op-cu { --c: #ef4444; } .op-cm { --c: #10b981; }
+.op-edu { --c: #a78bfa; } .op-sci { --c: #f59e0b; } .op-intl { --c: #94a3b8; }
+.b-ok { --c: #22c55e; } .b-warn { --c: #f59e0b; } .b-bad { --c: #ef4444; } .b-mute { --c: #94a3b8; }
+
+/* 细滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 7px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-track { background: transparent; }

@@ -1,0 +1,123 @@
+<script>
+  import Fa from 'svelte-fa'
+  import { S } from '../lib/store.svelte.js'
+  import { t } from '../lib/i18n.js'
+  import { isLowVis, rangesToCidrs, parseBest, parseSeq, ccLabel } from '../lib/bgp.js'
+  import { sortRows, showInsight, closeInsight } from '../lib/queries.js'
+  import { iStar, iSignal, iChevD, iChevR } from '../lib/icons.js'
+  import AsnTag from './AsnTag.svelte'
+  import AsPath from './AsPath.svelte'
+
+  let hasPath = $derived(parseSeq(S.filters.path).length > 0)
+  let cols = $derived(4 + (hasPath ? 1 : 0)) // prefix, origin, loc, #path (+seg col always) (+match)
+
+  function rowClick(r) {
+    if (S.selectedPid === r.pid) closeInsight()
+    else showInsight(r.pid)
+  }
+  const loc = r => [r.province, r.city].filter(Boolean).join(' ') || (r.cc ? ccLabel(r.cc) : '')
+  function arrow(key) { return S.sortKey === key ? (S.sortDir < 0 ? '▾' : '▴') : '' }
+</script>
+
+{#if S.rows.length}
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th onclick={() => sortRows('prefix')}>{t('col_prefix')} <span class="ar">{arrow('prefix')}</span></th>
+          <th onclick={() => sortRows('origin_asn')}>{t('col_origin')} <span class="ar">{arrow('origin_asn')}</span></th>
+          <th onclick={() => sortRows('city')}>{t('col_loc')} <span class="ar">{arrow('city')}</span></th>
+          <th class="num" onclick={() => sortRows('n_paths')}>{t('col_path')} <span class="ar">{arrow('n_paths')}</span></th>
+          <th class="nosort">{t('col_seg')}</th>
+          {#if hasPath}<th class="nosort">{t('col_match')}</th>{/if}
+        </tr>
+      </thead>
+      <tbody>
+        {#each S.rows as r, i (i)}
+          {@const sel = S.selectedPid === r.pid}
+          {@const low = isLowVis(r)}
+          <tr class="prow" class:hit={r._best} class:selected={sel} onclick={() => rowClick(r)}>
+            <td class="pfx">
+              <span class="chev"><Fa icon={sel ? iChevD : iChevR} /></span>{r.prefix}
+            </td>
+            <td><AsnTag asn={r.origin_asn} /></td>
+            <td class="loc">{loc(r)}</td>
+            <td class="num">
+              <span class="np">{r.n_paths ?? 0}</span>
+              {#if low}<span class="badge b-warn lv" title={t('lowvis')}><Fa icon={iSignal} /></span>{/if}
+            </td>
+            <td class="seg">{#if r.segs && r.segs.length}<span class="segn">{r.segs.length}</span>{/if}</td>
+            {#if hasPath}
+              <td class="match">
+                {#if r.best_path}
+                  {#if r._best}<span class="star"><Fa icon={iStar} /></span>{/if}
+                  <AsPath asns={parseBest(r.best_path)} dim={!r._best} />
+                {/if}
+              </td>
+            {/if}
+          </tr>
+          {#if sel && r.segs && r.segs.length}
+            <tr class="segrow"><td></td><td colspan={cols}>
+              <div class="seghdr">{t('segs_title')}</div>
+              <div class="segs">
+                {#each rangesToCidrs(r.segs).slice(0, 64) as cidr}<span class="segpill">{cidr}</span>{/each}
+              </div>
+            </td></tr>
+          {/if}
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{:else if S.mode === 'prompt'}
+  <div class="prompt">
+    <div class="prompt-icon"><Fa icon={iSignal} /></div>
+    <p>{@html t('pick_country')}</p>
+  </div>
+{:else}
+  <div class="empty">{t('no_results')}</div>
+{/if}
+
+<style>
+  .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 11px; border-bottom: 1px solid var(--line2); white-space: nowrap; }
+  thead th {
+    position: sticky; top: 0; z-index: 2; background: var(--alt); color: var(--muted);
+    font: 700 10.5px var(--sans); letter-spacing: .04em; text-transform: uppercase;
+    cursor: pointer; border-bottom: 1px solid var(--line); user-select: none;
+  }
+  thead th.nosort { cursor: default; }
+  th.num, td.num { text-align: right; }
+  .ar { color: var(--accent); }
+  tbody tr.prow { cursor: pointer; }
+  tbody tr.prow:hover { background: var(--rowhover); }
+  tr.hit { background: var(--hit); }
+  tr.hit:hover { background: var(--hit-h); }
+  tr.selected td { background: var(--rowhover); }
+  tr.selected td.pfx { box-shadow: inset 3px 0 0 var(--accent); }
+  .pfx { font-family: var(--mono); color: var(--link); }
+  .chev { color: var(--muted); font-size: 9px; margin-right: 7px; display: inline-block; width: 8px; }
+  tr.selected .chev, tr.prow:hover .chev { color: var(--accent); }
+  .loc { color: var(--fg); }
+  .np { font-family: var(--mono); }
+  .lv { padding: 0 5px; font-size: 9px; }
+  .seg .segn {
+    font: 600 10px var(--mono); color: var(--muted); background: var(--alt);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;
+  }
+  .match .star { color: var(--signal); margin-right: 4px; }
+  tr.segrow td { background: var(--alt); padding: 9px 12px 11px; box-shadow: inset 3px 0 0 var(--accent); }
+  .seghdr { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .segs { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .segpill { font: 11.5px var(--mono); color: var(--code); }
+
+  .prompt { padding: 60px 20px; text-align: center; color: var(--muted); max-width: 520px; margin: 0 auto; }
+  .prompt-icon {
+    font-size: 30px; color: var(--accent); opacity: .5; margin-bottom: 16px;
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
+  .prompt p { font-size: 13.5px; line-height: 1.8; }
+  .prompt :global(b) { color: var(--fg); font-weight: 600; }
+  .empty { color: var(--muted); padding: 40px 6px; font-size: 13px; text-align: center; }
+</style>

@@ -93,7 +93,7 @@
 ./ipc export-parquet --out dist       # SQLite -> dist/data/parquet/* + meta.json + SSG(c/<cc>.html…), 约 2.5 分钟
 ```
 注意: duckdb 溢出目录走真盘(`cache/duck_tmp`, 见 `_duck`; /tmp 是 tmpfs/RAM 会 OOM)。内存紧可设
-`IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。CI 同。
+`IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。
 
 ### 3) 查 / 看（CLI 只读，调试用）
 ```bash
@@ -194,7 +194,6 @@ curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                       
 
 ## 路线图（进行中）
 **已完成**：全球全表(v4) PEER.AS，纯静态可复现可镜像，**DuckDB-WASM + Parquet** 分发，geo 双轨
-(官方 ipdb 城市级 / OSS rir 国家级)，i18n(zh/en) + SEO(SSG 双语国家页+sitemap)，CI(`.github/workflows`)。
-详见 `docs/GLOBAL_DESIGN.md`。
-**待办/可改进**：v6(需 128 位端到端)
-geo per-country 导出对 CI 小内存 runner 偏重(可优化/用自托管)；duckdb-wasm 可改 vendored 提升可镜像性。
+(官方 ipdb 城市级 / OSS rir 国家级)，i18n(zh/en) + SEO(SSG 双语国家页+sitemap)。
+详见 `docs/GLOBAL_DESIGN.md`。**无 CI**：build/export/deploy 全手动在本机跑(见上「构建 & 部署」), GitHub 仅托管源码。
+**待办/可改进**：v6(需 128 位端到端)；duckdb-wasm 可改 vendored 提升可镜像性。

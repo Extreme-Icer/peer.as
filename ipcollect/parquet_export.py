@@ -28,6 +28,9 @@ from . import bgp, geoip, util
 
 PATH_CAP = 24       # 每前缀最多导出多少条去重 path(短路径优先)
 FILE_SIZE = "16MB"  # 单 parquet 文件体积上限(留足余量 < CF Pages 25MiB/文件; duckdb 按 row-group 会略超)
+# pathsearch 单独切更小: 它**按 origin_asn 排序**, 配合 meta.files.pathsearch_origin 区间索引,
+# 一次 origin AS 搜索只读覆盖该 ASN 的那 1 个文件 -> 文件越小, 该次搜索下载越少(尤其 *.pages.dev 无 Range 时整文件下)。
+PATHSEARCH_FILE_SIZE = "6MB"
 
 
 def _duck():
@@ -300,17 +303,30 @@ def export(cfg: dict, conn, sqlite_path: str, out_dir: str = "dist") -> dict:
     n_geo_rows = con.execute("SELECT count(*) FROM geo_full").fetchone()[0]
 
     # pathsearch: **全表一行/前缀**(pid,prefix,cc,origin_asn,n_paths,paths_blob,best_path) —— 供前端
-    # **不选国家**时做全局 AS_PATH(LIKE 全表扫) / origin AS(精确, 列裁剪) 搜索。无全局排序(避免大字符串
-    # 排序 OOM); 前端对过滤后的小结果集自己 ORDER BY。pid 自然序, 文件按 16MB + ROW_GROUP_SIZE 切。
+    # **不选国家**时做全局 AS_PATH(LIKE 全表扫) / origin AS(精确) 搜索。
+    # **按 origin_asn 排序**: 让每个 origin 落在连续的 1 个文件里, 配合下面写入 meta 的 pathsearch_origin
+    # 区间索引, 前端 origin 搜索只读覆盖该 ASN 的那 1 个文件(而非全部) —— 这是「预先 index 哪个 ASN 在哪个
+    # 分片」+「分片更小」的落地。NULLS LAST 把无 origin 的前缀堆到末尾文件。排序走真盘 temp_directory(见 _duck)
+    # 不会 OOM(1.13M 行/前缀级, 远小于 25M path 行)。AS_PATH(LIKE)搜索仍是全表扫, 不受排序影响。
+    # 写这一份时强制**单线程 + 保留插入顺序**: 否则(默认 preserve_insertion_order=false / 多线程)COPY 写多文件
+    # 不保证跨文件全局有序(每线程各刷自己的文件 -> origin 区间互相重叠, 索引退化成多文件命中)。
+    # 单线程顺序写 + FILE_SIZE 滚动 -> 每文件是**互不重叠**的连续 origin 区间, origin 搜索只命中 1 个文件。
+    # 1.13M 前缀级行, 单线程几秒即可。写完恢复原设置(后续无别的 COPY, 但保持对称)。
+    import os as _os
     (pq / "pathsearch").mkdir(parents=True, exist_ok=True)
+    con.execute("PRAGMA threads=1;")
+    con.execute("SET preserve_insertion_order=true;")
     con.execute(f"""
         COPY (
           SELECT p.id AS pid, p.prefix, COALESCE(p.country_code,'ZZ') AS cc,
                  p.origin_asn, p.n_paths, pp.paths_blob, pp.best_path
           FROM s.prefix p LEFT JOIN pp ON pp.pid = p.id WHERE p.family=4
-        ) TO '{pq}/pathsearch' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}',
+          ORDER BY p.origin_asn NULLS LAST
+        ) TO '{pq}/pathsearch' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
               ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
     """)
+    con.execute("SET preserve_insertion_order=false;")
+    con.execute(f"PRAGMA threads={_os.environ.get('IPC_DUCKDB_THREADS', '4')};")
 
     # 6) meta.json: dfz_ref + 计数 + 国家/城市清单 + presets
     n_prefix = con.execute("SELECT count(*) FROM s.prefix WHERE family=4").fetchone()[0]
@@ -357,6 +373,15 @@ def export(cfg: dict, conn, sqlite_path: str, out_dir: str = "dist") -> dict:
             paths_pid.append({"f": f, "lo": int(lo), "hi": int(hi)})
     paths_pid.sort(key=lambda e: e["lo"])
     files["paths_pid"] = paths_pid
+
+    # pathsearch 每文件的 origin_asn 区间: 前端 origin AS 搜索据此只读覆盖该 ASN 的文件(否则全表扫所有分片)。
+    # 文件已按 origin_asn 排序 -> 每文件是一段连续 origin 区间; min/max 忽略 NULL, 末尾全 NULL 文件 lo=None(origin 搜索跳过)。
+    ps_origin = []
+    for f in files["pathsearch"]:
+        lo, hi = con.execute(f"SELECT min(origin_asn), max(origin_asn) FROM read_parquet('{pq}/{f}')").fetchone()
+        ps_origin.append({"f": f, "lo": (int(lo) if lo is not None else None),
+                          "hi": (int(hi) if hi is not None else None)})
+    files["pathsearch_origin"] = ps_origin
 
     now = int(time.time())
     meta = {

@@ -1,7 +1,7 @@
 // 搜索 / insight 逻辑 (从 web_ref/app.js 移植), 结果写入 S。
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
-import { q, rp, rpList, pathsFileFor } from './db.js'
+import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin } from './db.js'
 import {
   ip2int, int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, isLowVis, asnName,
 } from './bgp.js'
@@ -48,7 +48,14 @@ export async function runSearch() {
   } else {
     if (!seqLike && originAsn == null) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
     isGlobal = true
-    fromExpr = rp('pathsearch')
+    // origin AS 搜索: 只读覆盖该 ASN 的 pathsearch 分片(按 origin 排序 + 区间索引); 纯 AS_PATH 搜索仍全表扫。
+    const psFiles = pathsearchFilesForOrigin(originAsn)
+    if (psFiles === null) {   // 索引完整且无分片覆盖 -> 该 origin 不存在, 直接空结果, 不下任何文件
+      S.rows = []; S.mode = 'global'
+      S.msg = (S.lang === 'zh' ? `全表：显示 0 个前缀 · origin AS${originAsn}` : `global: 0 prefixes · origin AS${originAsn}`)
+      return
+    }
+    fromExpr = rpList(psFiles)
     cols = 'pid, prefix, cc, origin_asn, n_paths, best_path'
   }
   if (seqLike) w.push(`paths_blob LIKE ${seqLike}`)

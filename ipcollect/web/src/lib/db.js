@@ -48,3 +48,14 @@ export function pathsFileFor(pid) {
   const hits = idx.filter(e => pid >= e.lo && pid <= e.hi)
   return hits.length ? hits.map(e => e.f) : (S.meta?.files?.paths || [])
 }
+
+// pathsearch 按 origin_asn 排序 + meta.pathsearch_origin 区间索引:
+// origin AS 搜索只读覆盖该 ASN 的文件。返回 null = 库内无该 origin(前端直接给空结果, 不发查询)。
+// 无 origin 过滤(纯 AS_PATH 搜索) -> 返回全部分片(全表扫)。
+export function pathsearchFilesForOrigin(originAsn) {
+  const all = S.meta?.files?.pathsearch || []
+  const idx = S.meta?.files?.pathsearch_origin
+  if (originAsn == null || !Array.isArray(idx) || !idx.length) return all
+  const hit = idx.filter(e => e.lo != null && e.hi != null && originAsn >= e.lo && originAsn <= e.hi)
+  return hit.length ? hit.map(e => e.f) : null   // null: 索引完整但无文件覆盖 -> 该 origin 不存在
+}

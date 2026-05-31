@@ -25,6 +25,15 @@
         <li><b>不做任何「线路质量」评分</b>：CN2 vs GIA 从公网回程 BGP 根本分不出。No line-quality scoring.</li>
         <li>父子段、最优路径等仅基于已采集的全球 v4 前缀，可能不全。</li>
       </ul>
+      <h3>赞助 / Sponsor</h3>
+      <div class="sponsor-row">
+        <p>本项目的服务器与基础设施由 <b>DMIT</b> 赞助提供，特此鸣谢。<br>
+          Servers &amp; infrastructure are kindly sponsored by <b>DMIT</b>.</p>
+        <a class="sponsor-wrap" href="https://www.dmit.io" target="_blank" rel="noopener noreferrer">
+          <img class="sponsor" src="https://www.dmit.io/templates/dmit_theme_2020/dmit/assets/images/dmit_logo_with_text.svg" alt="DMIT" />
+        </a>
+      </div>
+
       <p class="disc"><b>免责 / Disclaimer</b>：仅供学习与研究 BGP 路由；数据为公开 collector 的近似快照，可能过时。
         For BGP research/education only; approximate public snapshot.</p>
     </div>
@@ -44,5 +53,9 @@
   code { font: 11.5px var(--mono); color: var(--code); }
   ul { margin: 4px 0; padding-left: 18px; }
   li { font-size: 12.5px; line-height: 1.7; margin: 4px 0; }
+  .sponsor-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 6px 0 2px; }
+  .sponsor-row p { margin: 0; }
+  .sponsor-wrap { display: inline-block; background: black; border-radius: 5px; padding: 5px; line-height: 0; flex: 0 0 auto; }
+  .sponsor { height: 30px; display: block; }
   .disc { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line2); margin-top: 16px; padding-top: 13px; }
 </style>

@@ -3,7 +3,7 @@ import { S } from './store.svelte.js'
 import { t } from './i18n.js'
 import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin } from './db.js'
 import {
-  ip2int, int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, isLowVis, asnName,
+  int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, isLowVis, asnName, classifyQuery,
 } from './bgp.js'
 
 let _ccMap = { lang: null, map: null }
@@ -26,13 +26,17 @@ export function searchNow() { clearTimeout(_timer); runSearch() }
 export async function runSearch() {
   if (!S.ready) return
   const f = S.filters
-  const ipq = ip2int(f.ip)
-  if (ipq !== null) return runSubnet(ipq)
+  // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
+  const probe = classifyQuery(f.ip)
+  if (probe.kind === 'ipv6') { S.rows = []; S.mode = 'subnet'; S.msg = t('v6_soon'); return }
+  if (probe.kind === 'ipv4') return runSubnet(probe, f)
+  if (probe.kind === 'text') { S.rows = []; S.mode = 'prompt'; S.msg = t('q_bad'); return }
+  const boxAsn = probe.kind === 'asn' ? probe.asn : null   // 纯数字 -> origin AS, 可与国家/城市/AS_PATH 叠加
 
   const cc = resolveCC(f.cc)
   const seq = parseSeq(f.path)
   const seqLike = seq.length ? sqlStr('% ' + seq.join(' ') + ' %') : null
-  const originAsn = /^\d+$/.test((f.origin || '').trim()) ? parseInt(f.origin, 10) : null
+  const originAsn = boxAsn   // origin 仅来自精确框(纯数字); 独立 origin 框已移除
   const city = (f.city || '').trim()
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   const inclLow = !!f.incllow
@@ -83,16 +87,31 @@ export async function runSearch() {
     : `${scope}: ${N} prefixes${oTxt}` + (seq.length ? ` · path contains [${seq.join(' ')}] (★=on best path)` : '') + (!inclLow ? ' · low-vis hidden' : ''))
 }
 
-async function runSubnet(ip) {
+async function runSubnet(r, f) {
   S.msg = t('querying')
+  const { start, end, isCidr, plen } = r
+  const label = isCidr ? `${int2ip(start)}/${plen}` : int2ip(start)
+  // 子网结果可叠加二次筛选(国家/城市/可见度/limit; AS_PATH 因 prefixes 无路径数据不支持)
+  const w = [`ip_start <= ${end}`, `ip_end >= ${start}`]
+  const cc = resolveCC(f.cc)
+  if (cc) w.push(`cc = ${sqlStr(cc)}`)
+  const city = (f.city || '').trim()
+  if (city) w.push(`city = ${sqlStr(city)}`)
+  if (!f.incllow) w.push(`n_paths >= ${Math.ceil(lowCut())}`)
+  const limit = Math.max(1, parseInt(f.limit || '500', 10))
   let rows
   try {
+    // 区间重叠: 命中覆盖该范围的母段, 以及落在该范围内的更具体段。
     rows = await q(`SELECT pid, prefix, ip_start, ip_end, plen, cc, city, origin_asn, n_paths
-      FROM ${rp('prefixes')} WHERE ip_start <= ${ip} AND ip_end >= ${ip} ORDER BY plen DESC`)
+      FROM ${rp('prefixes')} WHERE ${w.join(' AND ')}
+      ORDER BY plen DESC, ip_start LIMIT ${limit + 1}`)
   } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
+  const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
   S.rows = rows; S.mode = 'subnet'
-  if (!rows.length) { S.msg = `${int2ip(ip)} · ${t('no_cover')}`; return }
-  S.msg = `${int2ip(ip)} · ${rows.length} ${t('subnet_done')}`
+  const extra = [cc && ccLabel(cc), city, !f.incllow && (S.lang === 'zh' ? '隐藏低可见' : 'low-vis hidden')].filter(Boolean).join(' · ')
+  const tail = extra ? ' · ' + extra : ''
+  if (!rows.length) { S.msg = `${label}${tail} · ${t('no_cover')}`; return }
+  S.msg = `${label} · ${rows.length}${more ? '+' : ''} ${t('subnet_done')}${tail}`
 }
 
 export function cmpBy(key, dir, a, b) {

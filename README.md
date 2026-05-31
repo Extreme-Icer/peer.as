@@ -131,6 +131,13 @@ Configuration lives in `config.json` (gitignored; commit-safe template in
 `config.example.json`). Secrets — Cloudflare credentials, the private geo path —
 are supplied via environment variables (`.env.example`) and never committed.
 
+## Sponsors
+
+Servers and infrastructure for the hosted **[peer.as](https://peer.as)** deployment
+are generously **sponsored by [DMIT](https://www.dmit.io)**.
+
+[![DMIT](https://www.dmit.io/templates/dmit_theme_2020/dmit/assets/images/dmit_logo_with_text.svg)](https://www.dmit.io)
+
 ## Project notes
 
 - **Data source:** [RIPE RIS](https://ris.ripe.net/) `rrc00` public MRT RIB dumps.

@@ -29,4 +29,6 @@ export {
   faCircleNodes as iNodes,
   faSpinner as iSpinner,
   faEraser as iClear,
+  faCodeBranch as iRepo,
+  faBug as iIssue,
 } from '@fortawesome/free-solid-svg-icons'

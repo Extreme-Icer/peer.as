@@ -3,7 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { iPrefix, iPath, iGlobal, iClock, iStar, iSignal, iTheme, iLang, iAbout } from '../lib/icons.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue } from '../lib/icons.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -26,26 +26,26 @@
     </dl>
   </section>
 
-  <section class="sec legend-sec">
-    <h3>{t('legend')}</h3>
-    <ul class="legend">
-      <li><span class="badge op-ct">电信</span><span class="badge op-cu">联通</span><span class="badge op-cm">移动</span></li>
-      <li><span class="badge op-edu">教育</span><span class="badge op-sci">科技</span><span class="badge op-intl">国际</span></li>
-      <li><span class="lg-star"><Fa icon={iStar} /></span> <span>{t('best')}</span></li>
-      <li><span class="badge b-warn"><Fa icon={iSignal} /></span> <span>{t('lowvis')}</span></li>
-    </ul>
-  </section>
-
   <div class="foot">
-    <button class="ghost" onclick={toggleLang} title="中 / English">
-      <Fa icon={iLang} /> {S.lang === 'zh' ? 'EN' : '中'}
-    </button>
-    <button class="ghost" onclick={cycleTheme} title={t('theme')}>
-      <Fa icon={iTheme} /> {themeLabel}
-    </button>
-    <button class="ghost" onclick={() => (S.about = true)} title={t('about')}>
-      <Fa icon={iAbout} />
-    </button>
+    <nav class="links">
+      <a class="lnk" href="https://github.com/Archeb/peer.as" target="_blank" rel="noopener noreferrer">
+        <Fa icon={iRepo} /> {t('src_home')}
+      </a>
+      <a class="lnk" href="https://github.com/Archeb/peer.as/issues" target="_blank" rel="noopener noreferrer">
+        <Fa icon={iIssue} /> {t('feedback')}
+      </a>
+    </nav>
+    <div class="ctl">
+      <button class="ghost" onclick={toggleLang} title="中 / English">
+        <Fa icon={iLang} /> {S.lang === 'zh' ? 'EN' : '中'}
+      </button>
+      <button class="ghost" onclick={cycleTheme} title={t('theme')}>
+        <Fa icon={iTheme} /> {themeLabel}
+      </button>
+      <button class="ghost" onclick={() => (S.about = true)} title={t('about')}>
+        <Fa icon={iAbout} />
+      </button>
+    </div>
   </div>
 </aside>
 
@@ -85,16 +85,20 @@
   .stats dd { margin: 0; color: #e9eef5; font: 600 12.5px/1 var(--mono); }
   .stats dd.gen { font-size: 11px; color: #aeb9c9; }
 
-  .legend { list-style: none; margin: 0; padding: 0; font-size: 11px; color: #8693a6; }
-  .legend li { margin: 7px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .legend :global(.lg-star) { color: var(--signal); }
-
-  .foot { margin-top: auto; display: flex; gap: 6px; padding-top: 14px; }
-  .foot .ghost {
+  .foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; }
+  .links { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #141d2c; padding-top: 10px; }
+  .lnk {
+    display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+    color: #8693a6; font: 600 11px var(--sans); padding: 4px 2px; transition: color .15s;
+  }
+  .lnk :global(svg) { color: #4d5a70; width: 12px; transition: color .15s; }
+  .lnk:hover, .lnk:hover :global(svg) { color: var(--accent); }
+  .ctl { display: flex; gap: 6px; }
+  .ctl .ghost {
     flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     background: transparent; border: 1px solid #25324a; color: #aeb9c9;
     border-radius: 7px; padding: 7px 8px; font: 600 11px var(--sans); cursor: pointer;
     transition: all .15s;
   }
-  .foot .ghost:hover { background: #131c2b; color: #fff; border-color: var(--accent); }
+  .ctl .ghost:hover { background: #131c2b; color: #fff; border-color: var(--accent); }
 </style>

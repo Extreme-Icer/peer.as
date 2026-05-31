@@ -144,6 +144,19 @@ def cmd_export_parquet(args):
           f"{r['countries']} 国家, dfz_ref={r['dfz_ref']}) -> {r['out']}/data/parquet/")
 
 
+def cmd_sync_web(args):
+    """只把已构建前端 web/dist 拷进 out(改了前端但数据没变时用, 免重跑 export-parquet)。"""
+    from pathlib import Path
+    from . import parquet_export
+    if args.build:
+        import subprocess
+        web = Path(__file__).resolve().parent / "web"
+        util.log("npm run build …")
+        subprocess.run(["npm", "run", "build"], cwd=str(web), check=True)
+    n = parquet_export.copy_web(out_dir=args.out)
+    print(f"前端已同步: {n} 文件 (web/dist -> {args.out}/); 未重导出 parquet/SSG。")
+
+
 def cmd_serve(args):
     cfg = config.load()
     serve.serve(cfg, out_dir=args.out, port=args.port, host=args.host, rebuild=args.rebuild)
@@ -208,6 +221,11 @@ def build_parser():
     s = sub.add_parser("export-parquet", help="导出 Parquet 数据集(全球, 供 DuckDB-WASM 前端)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
     s.set_defaults(func=cmd_export_parquet)
+
+    s = sub.add_parser("sync-web", help="只把已构建前端 web/dist 拷进 dist(改了前端但数据没变时用, 免重导出)")
+    s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
+    s.add_argument("--build", action="store_true", help="先在 ipcollect/web 跑 npm run build 再拷")
+    s.set_defaults(func=cmd_sync_web)
 
     s = sub.add_parser("serve", help="本地 debug: 静态托管 build 产物")
     s.add_argument("--out", default="dist", help="要托管的目录(默认 dist)")

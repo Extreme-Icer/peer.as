@@ -53,6 +53,34 @@ export function ip2int(s) {
 }
 export const int2ip = n => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
 
+// IPv4 地址或 CIDR -> {start,end,plen,isCidr}; 纯 IP 视作单点(/32)。非法返回 null。
+export function ip2range(s) {
+  const m = /^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?:\/(\d{1,2}))?$/.exec((s || '').trim())
+  if (!m) return null
+  const base = ip2int(m[1])
+  if (base === null) return null
+  if (m[2] === undefined) return { start: base, end: base, plen: 32, isCidr: false }
+  const plen = +m[2]
+  if (plen > 32) return null
+  const size = Math.pow(2, 32 - plen)        // plen=0 -> 2^32, 仍在安全整数内
+  const start = base - (base % size)          // 对齐到网络地址
+  return { start, end: start + size - 1, plen, isCidr: true }
+}
+
+// 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / text / empty
+export function classifyQuery(s) {
+  s = (s || '').trim()
+  if (!s) return { kind: 'empty' }
+  if (s.includes(':')) return { kind: 'ipv6' }                  // 冒号 -> IPv6 (暂未支持)
+  if (s.includes('.') || s.includes('/')) {                     // 点分十进制 / 带掩码 -> IPv4
+    const r = ip2range(s)
+    return r ? { kind: 'ipv4', ...r } : { kind: 'text' }
+  }
+  const asm = /^(?:asn?\s*)?([0-4]?\d{1,9})$/i.exec(s)  // 纯数字 或 AS/ASN 前缀(大小写均可) -> ASN
+  if (asm) return { kind: 'asn', asn: parseInt(asm[1], 10) }
+  return { kind: 'text' }
+}
+
 export function parseSeq(str) {
   return (str || '').trim().replace(/->/g, ' ').replace(/,/g, ' ')
     .split(/\s+/).filter(x => /^\d+$/.test(x)).map(Number)

@@ -39,6 +39,7 @@
 - `report.py` — CLI 查询/统计/渲染（`query_prefixes`、`insight`，读去重 pathobs；`--asn` 走 pathobs LIKE）。
 - **`parquet_export.py`** — `ipc export-parquet`：从 SQLite 导出 Parquet 数据集(`geo/<cc>` 国家分目录 +
   `prefixes`(ip_start 排序)+ `paths`(pid 排序)+ `asn_dim`)+ `meta.json`，并调 `ssg`。**主战场**。
+  `copy_web()` 只拷前端(供 `ipc sync-web`：只改前端、数据没变时用，免重导出)。
 - **`ssg.py`** — 为每国家生成双语预渲染落地页 `c/<cc>.html` + `countries.html` + `sitemap.xml` + `robots.txt`(SEO)。
 - `build.py` — **旧版** 分片 JSON 导出(仅 focus 城市)，全球版已被 `parquet_export` 取代；保留备查。
 - `serve.py` — 本地 debug 静态托管(支持 Range)。
@@ -95,6 +96,17 @@
 注意: duckdb 溢出目录走真盘(`cache/duck_tmp`, 见 `_duck`; /tmp 是 tmpfs/RAM 会 OOM)。内存紧可设
 `IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。
 
+### 2.5) 只改前端（免重导出）
+
+前端代码改完、**数据(parquet/meta/SSG)没变**时，不必跑耗时的 `export-parquet`；在 `ipcollect/web` `npm run
+build` 后只把前端拷进 `dist/` 即可：
+```bash
+./ipc sync-web          # 只拷 web/dist -> dist/(清旧 assets, 保留 data/ 与 SSG); 秒级, 不重导出
+./ipc sync-web --build  # 顺带先在 ipcollect/web 跑 npm run build 再拷
+```
+`sync-web` 就是 `export-parquet` 的「拷前端」那一步(`parquet_export.copy_web`)。**仅当 ingest/数据/geo/SSG
+变了才需要重新 `export-parquet`。** 本地预览同理：`sync-web` 后 `./ipc serve` 刷新即生效。
+
 ### 3) 查 / 看（CLI 只读，调试用）
 ```bash
 ./ipc query --city 上海 --path "23764 4809"   # 城市+连续序列
@@ -145,6 +157,20 @@ wrangler pages deploy dist --project-name bgp-insights --branch main --commit-di
 test -f dist/index.html && grep -oE 'assets/index-[^"]+\.js' dist/index.html   # 前端 bundle 已进 dist
 curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                        # 或 bgp-insights.pages.dev
 ```
+
+### 自动化：每天 04:00 自动刷新 + 部署（cron）
+
+数据每日自动刷新：`scripts/daily-refresh.sh` 串起 `ingest --reset` → `export-parquet --out dist` →
+`wrangler pages deploy`，由 **fcron** 每天 **04:00** 触发。
+- 安装/查看：`fcrontab -l`（条目 `0 4 * * * .../scripts/daily-refresh.sh`）。改时间：`fcrontab -e` 或重灌。
+- 脚本要点：补 `PATH`(含 `/usr/lib/node-24/bin`，cron 默认 PATH 找不到 node/wrangler) 与 `HOME`(wrangler 读
+  `~/.config/.wrangler` 的 **OAuth 凭据**，会自动续期，无需 `.env`)；`flock` 串行锁防重 ingest 撕裂库；
+  日志写 `logs/daily-refresh-<ts>.log`(gitignore，留最近 14 份)。
+- **开跑先清缓存(防撑爆硬盘)**：每次运行先删 `cache/mrt/*.gz`(每版 RIB ~425MB，ingest 会重新下最新) 与
+  `cache/duck_tmp/*`(export 溢出残留)，删完再下载 ⇒ 同时只存 1 份 RIB。保留 `cache/autnums.txt`(小, 复用)。
+- **不跑 `npm run build`**：前端源每日不变，`web/dist/` 由 `export-parquet` 拷进 `dist/`；改了前端要人工先 build 再让它生效。
+- 手动试跑：`./scripts/daily-refresh.sh`（与 cron 完全同路径；约 15 分钟）。看日志：`tail -f logs/daily-refresh-*.log`。
+- 凭据失效（OAuth 过期/换机）会导致 deploy 步骤失败：重跑 `wrangler login` 即可恢复。
 
 ---
 

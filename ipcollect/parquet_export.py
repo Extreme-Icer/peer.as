@@ -154,6 +154,29 @@ def _merge(ivs: list) -> list[tuple]:
 
 
 # ----------------------------------------------------------------------------
+# 前端拷贝(可单独调用)
+# ----------------------------------------------------------------------------
+def copy_web(out_dir: str = "dist") -> int:
+    """把已构建的 Svelte SPA(ipcollect/web/dist/, 由 `npm run build` 产出)拷进 out_dir。
+    只改前端、数据(parquet/meta/SSG)没变时单独调用即可——无需重新 export-parquet。返回拷贝文件数。"""
+    out = Path(out_dir)
+    # 先清旧 assets/(hash 文件名会累积, 否则历史 bundle 残留膨胀)
+    if (out / "assets").exists():
+        shutil.rmtree(out / "assets")
+    webdist = Path(__file__).resolve().parent / "web" / "dist"
+    if not webdist.exists():
+        util.log("  ! web/dist 不存在 —— 请先在 ipcollect/web 跑 `npm ci && npm run build`", err=True)
+        return 0
+    n_files = 0
+    for p in webdist.rglob("*"):
+        if p.is_file():
+            dst = out / p.relative_to(webdist)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(p, dst); n_files += 1
+    return n_files
+
+
+# ----------------------------------------------------------------------------
 # 主导出
 # ----------------------------------------------------------------------------
 def export(cfg: dict, conn, sqlite_path: str, out_dir: str = "dist") -> dict:
@@ -164,20 +187,8 @@ def export(cfg: dict, conn, sqlite_path: str, out_dir: str = "dist") -> dict:
         shutil.rmtree(pq)
     pq.mkdir(parents=True, exist_ok=True)
 
-    # 1) 拷贝**已构建的** Svelte SPA (web/dist/, 由 `npm run build` 产出)。
-    #    先清旧 assets/(hash 文件名会累积): 否则历史 bundle 残留膨胀。
-    if (out / "assets").exists():
-        shutil.rmtree(out / "assets")
-    n_files = 0
-    webdist = Path(__file__).resolve().parent / "web" / "dist"
-    if webdist.exists():
-        for p in webdist.rglob("*"):
-            if p.is_file():
-                dst = out / p.relative_to(webdist)
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(p, dst); n_files += 1
-    else:
-        util.log("  ! web/dist 不存在 —— 请先在 ipcollect/web 跑 `npm ci && npm run build`", err=True)
+    # 1) 拷贝**已构建的** Svelte SPA (web/dist/, 由 `npm run build` 产出)。见 copy_web()(亦供 `ipc sync-web`)。
+    n_files = copy_web(out_dir)
 
     con = _duck()
     con.execute(f"ATTACH '{sqlite_path}' AS s (TYPE sqlite, READ_ONLY);")

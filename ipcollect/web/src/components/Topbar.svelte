@@ -2,14 +2,17 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { ccLabel } from '../lib/bgp.js'
+  import { ccLabel, classifyQuery } from '../lib/bgp.js'
   import { resolveCC, scheduleSearch, searchNow } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iOrigin, iSubnet, iSearch, iClear } from '../lib/icons.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear } from '../lib/icons.js'
   import Field from './Field.svelte'
 
   let cc = $derived(resolveCC(S.filters.cc))
   let cities = $derived((cc && S.meta?.cities?.[cc]) || [])
   let f = S.filters
+  // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
+  let probe = $derived(classifyQuery(S.filters.ip))
+  let pathNA = $derived(probe.kind === 'ipv4')
   const sched = () => scheduleSearch(350)
   const noop = () => {}
   function clearAll() {
@@ -20,13 +23,9 @@
 
 <header class="topbar">
   <div class="filters">
-    <!-- 第一行: 最常用的两种查询 — 完整 IP(子网) + origin AS -->
+    <!-- 第一行: 精确查询 IP / CIDR / ASN — 命中即抢占, 其余筛选禁用 -->
     <div class="row primary">
-      <span class="rlabel">{t('subnet')}</span>
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
-        oninput={sched} onenter={searchNow} />
-      <span class="rlabel">{t('origin')}</span>
-      <Field icon={iOrigin} bind:value={f.origin} placeholder={t('ph_origin')} big grow width=""
         oninput={sched} onenter={searchNow} />
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
       <button class="clrbtn" onclick={clearAll} title={t('clear')}><Fa icon={iClear} /></button>
@@ -38,13 +37,14 @@
       <Field icon={iCity} bind:value={f.city} placeholder={cities.length ? t('ph_city') : '—'}
         list="citylist" disabled={!cities.length} width="155px" oninput={sched} onenter={searchNow} />
       <Field icon={iPath} bind:value={f.path} placeholder={t('ph_path')}
-        grow width="" oninput={noop} onenter={searchNow} />
+        grow width="" disabled={pathNA} oninput={noop} onenter={searchNow} />
       <input class="numbox" type="text" bind:value={f.limit} title={t('ph_limit')}
         oninput={sched} onkeydown={(e) => e.key === 'Enter' && searchNow()} />
       <label class="chk" title={t('lowvis')}>
         <input type="checkbox" bind:checked={f.incllow} onchange={sched} />
         <span>{t('incllow')}</span>
       </label>
+      {#if pathNA}<span class="locknote">{t('path_na')}</span>{/if}
     </div>
   </div>
   <div class="statusline">{S.msg}</div>
@@ -70,11 +70,6 @@
   .filters { display: flex; flex-direction: column; gap: 9px; }
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
   .row.primary { padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
-  .rlabel {
-    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-    font: 600 11px var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted);
-  }
-  .rlabel :global(svg) { color: var(--accent); }
   .gobtn.big { height: 40px; padding: 0 22px; font-size: 13.5px; border-radius: 9px; }
   .clrbtn {
     display: inline-flex; align-items: center; justify-content: center; height: 40px; width: 40px;
@@ -102,9 +97,17 @@
   .gobtn:hover { filter: brightness(1.08); }
   .gobtn:active { transform: translateY(1px); }
   .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); }
+  .numbox:disabled { opacity: .45; cursor: not-allowed; }
+  .chk input:disabled ~ span { opacity: .45; }
+  /* Field 组件被禁用时统一变暗(兼容根为 input 或包裹 input 两种结构) */
+  .row.secondary :global(.field input:disabled),
+  .row.secondary :global(input.field:disabled) { opacity: .45; cursor: not-allowed; }
+  .locknote {
+    display: inline-flex; align-items: center; white-space: nowrap;
+    font-size: 11px; color: var(--accent); letter-spacing: .02em;
+  }
   @media (max-width: 820px) {
     .topbar { padding: 10px 12px; }
-    .rlabel { display: none; }
     .row :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
     .gobtn.big { flex: 1 1 100%; }
   }

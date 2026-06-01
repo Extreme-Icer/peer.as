@@ -3,6 +3,7 @@ export const S = $state({
   meta: null,
   asnNames: {},            // 全量 ASN -> 名(APNIC autnums + 注册表覆盖); 开机 fetch asnames.json
   ready: false,            // DuckDB-WASM 就绪
+  edge: 'cf',              // 'cf' | 'cn'：数据/wasm 宿主(configure 选定)；cn=正用中国优化 VPS
   lang: 'zh',
   theme: 'auto',           // auto | light | dark
   loading: true,

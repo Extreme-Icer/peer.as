@@ -8,6 +8,9 @@
   import AsnTag from './AsnTag.svelte'
   import AsPath from './AsPath.svelte'
 
+  // DMIT 赞助 logo(本地 public/dmit.svg)。绝对化以适配任意部署根(同 db.js 的做法)。
+  const DMIT = new URL('./dmit.svg', document.baseURI).href
+
   let hasPath = $derived(parseSeq(S.filters.path).length > 0)
   let cols = $derived(4 + (hasPath ? 1 : 0)) // prefix, origin, loc, #path (+seg col always) (+match)
 
@@ -68,13 +71,25 @@
       </tbody>
     </table>
   </div>
-{:else if S.mode === 'prompt'}
-  <div class="prompt">
-    <div class="prompt-icon"><Fa icon={iSignal} /></div>
-    <p>{@html t('pick_country')}</p>
-  </div>
 {:else}
-  <div class="empty">{t('no_results')}</div>
+  {#if S.mode === 'prompt'}
+    <div class="prompt">
+      <div class="prompt-icon"><Fa icon={iSignal} /></div>
+      <p>{@html t('pick_country')}</p>
+    </div>
+  {:else}
+    <div class="empty">{t('no_results')}</div>
+  {/if}
+  {#if S.edge === 'cn'}
+    <!-- 仅当正使用中国优化服务器时, 在空内容区显示浅色赞助提示 -->
+    <div class="cn-accel">
+      <span>{t('cn_accel_pre')}</span>
+      <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer" aria-label="DMIT">
+        <img src={DMIT} alt="DMIT" />
+      </a>
+      {#if t('cn_accel_post')}<span>{t('cn_accel_post')}</span>{/if}
+    </div>
+  {/if}
 {/if}
 
 <style>
@@ -120,4 +135,11 @@
   .prompt p { font-size: 13.5px; line-height: 1.8; }
   .prompt :global(b) { color: var(--fg); font-weight: 600; }
   .empty { color: var(--muted); padding: 40px 6px; font-size: 13px; text-align: center; }
+  /* 中国优化服务器赞助提示: 浅色处理(muted + 半透明), 不抢内容焦点 */
+  .cn-accel {
+    display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px;
+    margin: 26px auto 0; color: var(--muted); font-size: 11.5px; opacity: .55;
+  }
+  .cn-accel a { line-height: 0; }
+  .cn-accel img { height: 15px; display: block; }
 </style>

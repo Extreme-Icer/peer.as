@@ -189,7 +189,7 @@ Secrets — Cloudflare credentials, the private geo path, `VITE_DATA_BASE`, `R2_
 Servers and infrastructure for the hosted **[peer.as](https://peer.as)** deployment
 are generously **sponsored by [DMIT](https://www.dmit.io)**.
 
-[![DMIT](https://www.dmit.io/templates/dmit_theme_2020/dmit/assets/images/dmit_logo_with_text.svg)](https://www.dmit.io)
+[![DMIT](ipcollect/web/public/dmit.svg)](https://www.dmit.io)
 
 ## Project notes
 

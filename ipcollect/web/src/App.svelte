@@ -35,7 +35,8 @@
     const dw = parseFloat(localStorage.getItem('ipc-detail-w')); if (dw) S.detailW = Math.min(72, Math.max(38, dw))
 
     // 选定数据/wasm 宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则 CF/jsDelivr。
-    await configure()
+    // edge 存入 store, 供空状态显示「正在使用中国优化服务器」赞助提示。
+    S.edge = await configure()
 
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
     // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。

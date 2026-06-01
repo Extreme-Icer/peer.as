@@ -10,27 +10,40 @@
     <div class="modal-box">
       <button class="close" onclick={close} aria-label="close"><Fa icon={iClose} /></button>
       <h2>PEER.AS · 关于 / About</h2>
-      <p><b>PEER.AS</b> — 从公开 BGP 数据出发的 <b>BGP / IP / ASN 信息洞察</b>：按国家/城市浏览 IPv4 前缀的路由
-        <b>AS_PATH</b>、origin、最优路径与父子段（境内运营商有额外标注）。<br>
-        BGP / IP / ASN insights from public data — browse prefixes' <b>AS_PATH</b>, origins and routing by country/city.</p>
-      <h3>数据来源 / Data</h3>
-      <ul>
-        <li><b>路由 / Routing</b>：RIPE RIS <code>rrc00</code> MRT RIB 全表——每个 peer 视角的「去往目标前缀的去程 AS_PATH」。</li>
-        <li><b>地理 / Geo</b>：IP 地理库；城市以地理库为准，大段按地理切成子段。</li>
-        <li><b>引擎 / Engine</b>：DuckDB-WASM 在浏览器里对静态 Parquet 发 HTTP Range 查询，<b>无后端</b>。</li>
-      </ul>
-      <h3>分析方法 / Method</h3>
-      <ul>
-        <li>只看 <b>AS_PATH</b>：有哪些 ASN + 顺序/相邻（<code>1299 23764 4809</code> ≠ <code>1299 4809</code>）。</li>
-        <li><b>不做任何「线路质量」评分</b>：CN2 vs GIA 从公网回程 BGP 根本分不出。No line-quality scoring.</li>
-        <li>父子段、最优路径等仅基于已采集的全球 v4 前缀，可能不全。</li>
-      </ul>
-      <h3>赞助 / Sponsor</h3>
-      <p>本项目的服务器与基础设施由 <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer"><b>DMIT</b></a> 赞助提供，特此鸣谢。<br>
-        Servers &amp; infrastructure are kindly sponsored by <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer"><b>DMIT</b></a>.</p>
+      <p><b>PEER.AS</b> — 全球 IPv4 BGP 表的<b>静态、可复现</b>浏览器：每个前缀、它的 origin ASN，以及真正到达它的
+        <b>AS_PATH</b>。全程在浏览器内运行，<b>无后端 / API / 数据库</b>，纯静态文件可自托管或镜像。
+        <span class="en">A static, reproducible in-browser explorer of the global IPv4 BGP table — every prefix, its
+        origin ASNs, and the real AS_PATHs reaching it. Runs fully client-side; no backend, API or database.</span></p>
 
-      <p class="disc"><b>免责 / Disclaimer</b>：仅供学习与研究 BGP 路由；数据为公开 collector 的近似快照，可能过时。
-        For BGP research/education only; approximate public snapshot.</p>
+      <h3>方法 / Approach</h3>
+      <ul>
+        <li><b>AS_PATH 才是信号</b>：看有哪些 ASN、按什么顺序——搜 <code>23764 4809</code> 指两者在路径中<b>相邻</b>
+          （<code>1299 23764 4809</code> ≠ <code>1299 4809</code>）。
+          <span class="en">The AS_PATH is the signal — which ASNs, in what order; a match means consecutive hops.</span></li>
+        <li><b>不评判线路质量</b>：公网 collector 分不出 CN2/GIA（常共用 AS），只展示路径、不打分；origin AS 仅作标注。
+          <span class="en">No line-quality scoring; origin AS is display-only.</span></li>
+        <li><b>多归属自然浮现</b>：collector RIB 是 per-peer 的，一个前缀的多条去重路径即观测到的 multihome，直接来自数据、非推断。
+          <span class="en">Per-peer RIB ⇒ distinct paths are observed multihoming, straight from the data.</span></li>
+      </ul>
+
+      <h3>数据与架构 / Data &amp; stack</h3>
+      <ul>
+        <li><b>数据</b>：RIPE RIS <code>rrc00</code> 全表 IPv4 MRT RIB（入库不过滤），地理按地理库切成各地区子段。
+          <span class="en">RIPE RIS rrc00 full IPv4 RIB; prefixes carved into regions by a geo DB.</span></li>
+        <li><b>查询</b>：导出 <b>Parquet</b>，浏览器内 <b>DuckDB-WASM</b> 直查；靠 <code>meta.json</code> 区间索引只取查询所需的少数分片。
+          <span class="en">Parquet queried in-browser by DuckDB-WASM, fetching only the shards a query needs.</span></li>
+        <li><b>可复现</b>：数据源公开，任何人都能重跑流水线、重建同一份站点。
+          <span class="en">Reproducible & self-hostable from a fully public source.</span></li>
+      </ul>
+
+      <h3>中国优化 / China-optimized server</h3>
+      <p>中国大陆访问由 <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer"><b>DMIT</b></a> 赞助的<b>中国优化线路服务器</b>就近加速（数据与查询引擎自该节点分发），海外经 Cloudflare；特此鸣谢。
+        <span class="en">Mainland-China visitors are served from a China-optimized server kindly sponsored by
+        <a href="https://www.dmit.io" target="_blank" rel="noopener noreferrer">DMIT</a>; elsewhere via Cloudflare.</span></p>
+
+      <p class="disc"><b>免责 / Disclaimer</b>：仅是 rrc00 各 peer 的去程视角；父子段基于已采集前缀、可能不全；城市级精度取决于地理库。
+        公开近似快照，仅供 BGP 研究 / 学习，<b>不作运营决策依据</b>。
+        <span class="en">Outbound view of rrc00's peers; coverage may be partial. Approximate public snapshot — research/education only, not authoritative.</span></p>
     </div>
   </div>
 {/if}
@@ -50,5 +63,8 @@
   li { font-size: 12.5px; line-height: 1.7; margin: 4px 0; }
   .modal-box a { color: var(--link); text-decoration: none; }
   .modal-box a:hover { text-decoration: underline; }
+  /* 英文副行: muted, 与中文主行拉开层次 */
+  .en { display: block; color: var(--muted); margin-top: 2px; }
+  .disc .en { display: inline; }
   .disc { color: var(--muted); font-size: 12px; border-top: 1px solid var(--line2); margin-top: 16px; padding-top: 13px; }
 </style>

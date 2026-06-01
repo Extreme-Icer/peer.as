@@ -4,7 +4,9 @@
 # 由 fcron 每天 04:00 触发（见 `fcrontab -l`）。完整工作流（AGENTS.md「数据维护流程」）：
 #   1) ./ipc ingest --reset        下载 rrc00 最新 RIB(~400MB), 全表 v4 入库(~12min, db ~3GB)
 #   2) ./ipc export-parquet --out dist   SQLite -> Parquet + SSG -> dist/(~2.5min)
-#   3) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
+#   3) 同步 dist/data -> R2 桶 $R2_BUCKET(前端读 data.peer.as; 数据先传、meta.json 最后传)
+#   4) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
+# 前端已切 R2 数据源(VITE_DATA_BASE=https://data.peer.as)⇒ 步骤 3 不可省, 否则每日新数据进不了 R2。
 # 不跑 npm build：前端源每日不变，web/dist/ 已存在并由 export-parquet 拷进 dist/。
 # 改了前端时需人工先 `cd ipcollect/web && npm run build`（见 AGENTS.md）。
 set -euo pipefail
@@ -43,10 +45,36 @@ run() {
   echo "[$(date -Is)] 1/3 ingest --reset"
   ./ipc ingest --reset
 
-  echo "[$(date -Is)] 2/3 export-parquet --out dist"
+  echo "[$(date -Is)] 2/4 export-parquet --out dist"
   ./ipc export-parquet --out dist
 
-  echo "[$(date -Is)] 3/3 wrangler pages deploy"
+  # 3/4 同步到 R2：前端已读 data.peer.as ⇒ 新数据必须进桶。R2 逐对象上传非原子，
+  # 故「数据先传、meta.json 最后传」：meta 是 version 源，若数据没传全就跳过 meta，
+  # R2 维持上一致版本(宁可旧也别 version/分片错位)。单文件最多重试 3 次抗瞬时限流。
+  echo "[$(date -Is)] 3/4 sync dist/data -> R2 (${R2_BUCKET:-未配置})"
+  if [ -n "${R2_BUCKET:-}" ]; then
+    FAILS="$LOGDIR/r2-fails-$TS.txt"; : > "$FAILS"
+    export R2_BUCKET FAILS
+    ( cd "$PROJ/dist/data"
+      find . -type f ! -name meta.json -printf '%P\n' | xargs -P 6 -I{} bash -c '
+        k="$1"
+        for i in 1 2 3; do wrangler r2 object put "$R2_BUCKET/$k" --file="$k" --remote >/dev/null 2>&1 && exit 0; sleep 2; done
+        echo "$k" >> "$FAILS"' _ {} )
+    n=$(wc -l < "$FAILS" | tr -d ' ')
+    if [ "$n" -gt 0 ]; then
+      echo "  ⚠ R2 有 $n 个文件失败(见 $FAILS)，跳过 meta.json ⇒ R2 维持上一致版本"
+    else
+      for i in 1 2 3; do
+        wrangler r2 object put "$R2_BUCKET/meta.json" --file="$PROJ/dist/data/meta.json" --remote >/dev/null 2>&1 && break
+        sleep 2
+      done
+      echo "  ✓ R2 同步完成(meta.json 最后传)"; rm -f "$FAILS"
+    fi
+  else
+    echo "  跳过：未设置 R2_BUCKET（前端将回退同源 dist/data）"
+  fi
+
+  echo "[$(date -Is)] 4/4 wrangler pages deploy"
   wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
 
   echo "[$(date -Is)] 完成 ✅"

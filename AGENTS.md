@@ -166,10 +166,68 @@ test -f dist/index.html && grep -oE 'assets/index-[^"]+\.js' dist/index.html   #
 curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                        # 或 bgp-insights.pages.dev
 ```
 
+### 数据分离托管（R2，可选）
+
+把 **前端(Pages)** 与 **Parquet 数据** 拆开:前端仍部署到 Pages,数据放独立宿主(Cloudflare R2)。
+前端只认一个根 URL(`VITE_DATA_BASE`),数据放哪儿都行;留空则回退同源 `dist/data`(默认行为不变)。
+
+- **前端开关**:`db.js` 的 `DATA` 取 `import.meta.env.VITE_DATA_BASE || ./data`;`vite.config.js` 设
+  `envDir:'../../'` 让 web 构建读 **仓库根 `.env`**(与 `CLOUDFLARE_*` 同住)。Vite 仅暴露 `VITE_` 前缀 ⇒
+  凭据不入 bundle。**非公开 id 一律走 env**:account id=`CLOUDFLARE_ACCOUNT_ID`、含账号 hash 的
+  `pub-<hash>.r2.dev`=`VITE_DATA_BASE`、桶名=`R2_BUCKET`;真实值只在 `.env`,勿写进任何提交文件。
+- **一次性建桶 + 公开 + CORS**(`$R2_BUCKET` 取自 `.env`):
+  ```bash
+  wrangler r2 bucket create "$R2_BUCKET"
+  wrangler r2 bucket dev-url enable "$R2_BUCKET" -y      # 得 https://pub-<hash>.r2.dev (=VITE_DATA_BASE)
+  # 或改绑自定义域名: wrangler r2 bucket domain add "$R2_BUCKET" --domain data.peer.as
+  wrangler r2 bucket cors set "$R2_BUCKET" --file cors.json -y
+  ```
+  CORS JSON 必须是 `{"rules":[{...}]}` 结构(非 S3 风格):`allowed.{origins,methods:[GET,HEAD],headers:[range]}`
+  + **`exposeHeaders:[Content-Range,Content-Length,ETag,Accept-Ranges]`**(不暴露 Content-Range,DuckDB 拿不到 206)
+  + `maxAgeSeconds`。
+- **上传数据**(把 `dist/data/` 整树镜像到桶,key=相对路径):
+  ```bash
+  cd dist/data && find . -type f -printf '%P\n' | \
+    xargs -P 8 -I{} wrangler r2 object put "$R2_BUCKET/{}" --file={} --remote
+  ```
+  **`--remote` 必加**:`wrangler r2 object put` **默认写本地 miniflare 模拟**(无报错、但远端查无此 key),漏了会 404。
+- **构建 + 部署**:`.env` 填好 `VITE_DATA_BASE` 后照常 `npm run build`(envDir 自动注入)→ `export-parquet`(仍会
+  拷 `dist/data`,但前端不再读它,可后续精简)→ `wrangler pages deploy`。**数据变更后:先重新 export 刷新
+  `meta.version`,再上传 R2,再 deploy**——`?v=` 缓存失效机制对 R2 同样生效(URL 带 `?v=`)。
+- **HTTP Range — 前端实际不用(实测重要结论)**:R2/data.peer.as 支持 `206 Partial Content`(`curl` 带 `Range`
+  可得),但 **DuckDB-WASM 前端并不发 Range 请求**。实测两路验证(本地带日志数据服务器 + 对生产 data.peer.as
+  用 CDP 抓 Web Worker 流量)一致:**每个被触及的 parquet 分片都是 1 次探测 + 1 次无 Range 头的 `200` 整文件下载,
+  零 `206` 部分读**。因 DuckDB-WASM 对 <25MiB 小文件判定"整下比多次 Range 往返快",直接整取。
+  ⇒ **迁 R2 的收益是 egress 免费 / 突破 Pages 25MiB 与文件数限制 / 卸掉 ~633MB,不是 Range 提速;查询传输量
+  与旧 Pages 同(都整下)**。真正决定每次查询下载多少的是**文件级裁剪**(下一条)。
+- **真正的优化 = meta 索引的文件级裁剪**(不是文件内 Range):查询只 `read_parquet` 相关分片再整下。实测单次查询传输:
+  小国 geo ~10KB、大国(US)~44MB(3 分片)、IP/CIDR ~22MB(**全部 5 个 prefixes 分片**)、origin-ASN ~6.7MB
+  (经 `pathsearch_origin` 索引只取 1/18 分片 ≈ 18× 节省)、insight ~一个 paths 分片、**纯 AS_PATH 无 origin = 最坏:
+  全扫 18 个 pathsearch ≈ 119MB**。优化方向应针对"减少整下字节":更细分片 / 更强压缩 / 热路径去列,而非指望 Range。
+- **缓存**:R2 侧 `_headers` 不适用;data.peer.as 实测对所有请求回 `DYNAMIC`(直读 R2、不边缘缓存)⇒ 永远最新、无 stale,
+  `?v=` 对其冗余但无害。
+- **验证**:`curl -s -D - -o /dev/null -H 'Origin: https://peer.as' -H 'Range: bytes=0-1023'
+  "$VITE_DATA_BASE/parquet/prefixes/data_0.parquet"` 应见 `206` + `Content-Range` + `Access-Control-Allow-Origin`;
+  端到端用 `VITE_DATA_BASE=... npm run build` 后起静态服务跑 `web/test-e2e.mjs`(覆盖 geo/paths/pathsearch 三类查询)。
+  注:`test-e2e.mjs` 当前与 UI 字段布局不同步(期望 5 输入框、实测 4——origin 已并入智能框)在国家查询步骤会误报
+  失败,**与 R2 无关**;验证 R2 用 `?cc=CN` 深链更可靠。**抓 DuckDB 真实请求**:`page.on('response')` 抓不到 Web
+  Worker 流量,要用 **CDP `Target.setAutoAttach`(flatten)** 逐 worker 目标 `Network.enable`(见
+  `verify/cdp-capture` 思路);或用带日志的本地数据服务器从服务端记录。
+- **状态(2026-06-01, 已固化)**:生产 `peer.as` 已切到 R2 数据源,`VITE_DATA_BASE=https://data.peer.as`
+  (桶 `peer-as-data` 的**自定义域名**, 走 peer.as 完整 CF CDN, 无 r2.dev 限速; 桶含全量 423 对象)。
+  迁移收益是 egress/限制/架构(见上「HTTP Range」),**非 Range 提速**——前端整下分片,Pages 与 R2 传输量相同。
+  自定义域名绑定:`wrangler r2 bucket domain add peer-as-data --domain data.peer.as --zone-id <peer.as的zoneid> --min-tls 1.2`
+  (zone id 属非公开值, 用 API `GET /zones?name=peer.as` 取, 勿写进提交文件)。`dist/data/` 仍随 Pages deploy
+  上传(前端已不读, 属冗余兜底, 可后续从部署产物剔除以缩小 Pages)。
+- 切换若要回退:把 `.env` 的 `VITE_DATA_BASE` 清空 → `npm run build` → 部署, 前端即回退同源 `dist/data`。
+
 ### 自动化：每天 04:00 自动刷新 + 部署（cron）
 
 数据每日自动刷新：`scripts/daily-refresh.sh` 串起 `ingest --reset` → `export-parquet --out dist` →
-`wrangler pages deploy`，由 **fcron** 每天 **04:00** 触发。
+**sync R2** → `wrangler pages deploy`，由 **fcron** 每天 **04:00** 触发。
+- **R2 同步步(步骤 3/4, 切 R2 后关键)**:export 后把 `dist/data/` 镜像到 `$R2_BUCKET`(脚本从 `.env` 读),
+  `--remote` 必加;**数据先传、`meta.json` 最后传**——R2 逐对象上传非原子, meta 是 version 源, 若数据没传全
+  就**跳过 meta**(R2 维持上一致版本, 宁旧勿错位);单文件重试 3 次抗瞬时限流。失败清单写 `logs/r2-fails-<ts>.txt`。
 - 安装/查看：`fcrontab -l`（条目 `0 4 * * * .../scripts/daily-refresh.sh`）。改时间：`fcrontab -e` 或重灌。
 - 脚本要点：补 `PATH`(含 `/usr/lib/node-24/bin`，cron 默认 PATH 找不到 node/wrangler) 与 `HOME`(wrangler 读
   `~/.config/.wrangler` 的 **OAuth 凭据**，会自动续期，无需 `.env`)；`flock` 串行锁防重 ingest 撕裂库；

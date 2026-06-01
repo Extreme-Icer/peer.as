@@ -3,7 +3,9 @@ import { S } from './store.svelte.js'
 
 const DUCKDB_VER = '1.32.0'
 // 绝对 URL: DuckDB-WASM 在 Web Worker 里 fetch, 相对路径会相对 worker 脚本 -> 必须绝对。
-export const DATA = new URL('./data', document.baseURI).href.replace(/\/$/, '')
+// VITE_DATA_BASE 可把数据指到独立宿主(如 R2: https://pub-xxx.r2.dev)实现「前端/数据分离」;
+// 留空则回退同源 ./data。注意该宿主须支持 HTTP Range(206) 且 CORS 暴露 Content-Range 等头。
+export const DATA = (import.meta.env.VITE_DATA_BASE || new URL('./data', document.baseURI).href).replace(/\/$/, '')
 export const PQ = `${DATA}/parquet`
 
 let db = null, conn = null

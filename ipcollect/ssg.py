@@ -26,7 +26,7 @@ def _head(title, desc, canonical, lang="zh") -> str:
 <html lang="{lang}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>{_esc(title)}</title>
 <meta name="description" content="{_esc(desc)}">
 <meta name="robots" content="index,follow">

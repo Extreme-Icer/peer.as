@@ -247,6 +247,9 @@ def iter_focus_prefixes(
             addpath = subtype in (ST_RIB_IPV4_UNICAST_ADDPATH, ST_RIB_IPV6_UNICAST_ADDPATH)
             # 先用前缀头字节算出网段, 把(国家/family)过滤提到完整解析之前 — 跳过非目标前缀的昂贵解析
             plen0 = body[4]
+            # 跳过默认路由(0.0.0.0/0 / ::/0): 它不代表任何具体网络的可达性, 入库只会污染搜索/统计。
+            if plen0 == 0:
+                continue
             nb0 = (plen0 + 7) // 8
             start, end, cidr = util.prefix_from_bytes(body[5:5 + nb0], plen0, family)
             if keep_pred and not keep_pred(start, end, family):

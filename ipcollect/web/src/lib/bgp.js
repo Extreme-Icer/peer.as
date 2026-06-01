@@ -3,7 +3,7 @@ import { S } from './store.svelte.js'
 
 const OP_CLS = { '电信': 'op-ct', '联通': 'op-cu', '移动': 'op-cm', '教育': 'op-edu', '科技': 'op-sci', '国际': 'op-intl' }
 export const TIER1 = new Set([174, 701, 702, 1239, 1299, 2828, 2914, 3257, 3320, 3356, 3491,
-  5511, 6453, 6461, 6762, 6830, 7018, 7473, 12956, 1273, 3549, 3551, 209])
+  5511, 6453, 6461, 6762, 6830, 6939, 7018, 7473, 12956, 1273, 3549, 3551, 209])
 
 // 全量名(asnames.json)优先, 回退到 meta 里精选的(注册表)
 export const asnName = a => (S.asnNames && S.asnNames[a]) || (S.meta && S.meta.asn_names && S.meta.asn_names[a]) || ''
@@ -78,7 +78,34 @@ export function classifyQuery(s) {
   }
   const asm = /^(?:asn?\s*)?([0-4]?\d{1,9})$/i.exec(s)  // 纯数字 或 AS/ASN 前缀(大小写均可) -> ASN
   if (asm) return { kind: 'asn', asn: parseInt(asm[1], 10) }
-  return { kind: 'text' }
+  return { kind: 'name', q: s }   // 其余(含字母, 无点/冒号/斜杠) -> 按 AS 名称搜索, 反推 origin ASN
+}
+
+// AS 名称 -> origin ASN 反查。索引(asn -> 小写名)由全量 asnames.json + 注册表(meta.asn_names, 含中文运营商名)
+// 合并而成, 同一 ASN 的多个名都收录(故中/英名都能命中); 按 meta/asnNames 条目数做轻量缓存键, 变了才重建。
+let _nidx = null, _nidxKey = ''
+function nameIndex() {
+  const full = S.asnNames || {}, reg = (S.meta && S.meta.asn_names) || {}
+  const key = Object.keys(full).length + ':' + Object.keys(reg).length
+  if (_nidx && _nidxKey === key) return _nidx
+  const arr = []
+  const add = (k, name) => { if (!name) return; const a = +k; if (a) arr.push({ asn: a, nl: String(name).toLowerCase() }) }
+  for (const k in reg) add(k, reg[k])
+  for (const k in full) add(k, full[k])
+  _nidx = arr; _nidxKey = key; return arr
+}
+// 返回 { asns:[origin...], more } : 子串(忽略大小写)命中, 按 精确=0 / 词首=1 / 子串=2 排序, 同 ASN 去重, 截断到 cap。
+export function asnsMatchingName(query, cap = 200) {
+  const ql = (query || '').trim().toLowerCase()
+  if (!ql) return { asns: [], more: false }
+  const best = new Map()
+  for (const { asn, nl } of nameIndex()) {
+    const i = nl.indexOf(ql); if (i < 0) continue
+    const rank = nl === ql ? 0 : (i === 0 || /\W/.test(nl[i - 1]) ? 1 : 2)
+    const prev = best.get(asn); if (prev == null || rank < prev) best.set(asn, rank)
+  }
+  const hits = [...best.entries()].sort((a, b) => a[1] - b[1] || a[0] - b[0])
+  return { asns: hits.slice(0, cap).map(h => h[0]), more: hits.length > cap }
 }
 
 export function parseSeq(str) {
@@ -96,7 +123,10 @@ export function seqIn(asns, seq) {
   return false
 }
 export function truncToTier1(asns) {
-  for (let i = asns.length - 1; i >= 0; i--) if (TIER1.has(asns[i])) return asns.slice(i)
+  // 从最上游(数组头)往下找**第一个** Tier-1, 保留它到 origin 的整段 ⇒ 图的末端(最上游列)恒为 Tier-1,
+  // 且经多个 Tier-1 转接的链完整保留(如 1299→174→origin、3549→3356→174→origin);
+  // origin 之上、最上游 Tier-1 之前的非 Tier-1(IXP/小上游)被裁掉, 以保证「末端为 Tier-1」。
+  for (let i = 0; i < asns.length; i++) if (TIER1.has(asns[i])) return asns.slice(i)
   return asns.length > 1 ? asns.slice(1) : asns
 }
 

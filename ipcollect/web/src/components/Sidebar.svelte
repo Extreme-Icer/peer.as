@@ -3,7 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue } from '../lib/icons.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog } from '../lib/icons.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -34,6 +34,9 @@
       <a class="lnk" href="https://github.com/Archeb/peer.as/issues" target="_blank" rel="noopener noreferrer">
         <Fa icon={iIssue} /> {t('feedback')}
       </a>
+      <button class="lnk lnkbtn" onclick={() => (S.changelog = true)}>
+        <Fa icon={iChangelog} /> {t('changelog')}
+      </button>
     </nav>
     <div class="ctl">
       <button class="ghost" onclick={toggleLang} title="中 / English">
@@ -93,6 +96,7 @@
   }
   .lnk :global(svg) { color: #4d5a70; width: 12px; transition: color .15s; }
   .lnk:hover, .lnk:hover :global(svg) { color: var(--accent); }
+  .lnkbtn { background: transparent; border: 0; cursor: pointer; text-align: left; font-family: var(--sans); }
   .ctl { display: flex; gap: 6px; }
   .ctl .ghost {
     flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -101,4 +105,9 @@
     transition: all .15s;
   }
   .ctl .ghost:hover { background: #131c2b; color: #fff; border-color: var(--accent); }
+
+  /* 移动端: 桌面侧栏隐藏, 改用 MobileBar(顶栏 logo + 下拉菜单) */
+  @media (max-width: 820px) {
+    .side { display: none; }
+  }
 </style>

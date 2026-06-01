@@ -18,6 +18,10 @@ cache/
 dist/
 # 历史导出样例
 test-ips.csv
+# 每日刷新任务日志（scripts/daily-refresh.sh 产出）
+logs/
+# Claude Code 本地 harness 状态（锁文件等）
+.claude/
 
 # ── 前端 (Vite + Svelte) ─────────────────────────────────
 ipcollect/web/node_modules/

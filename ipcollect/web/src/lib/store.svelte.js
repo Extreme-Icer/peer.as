@@ -13,6 +13,8 @@ export const S = $state({
   selectedPid: null,       // 选中行(高亮 + 展开本段)
   insight: null,           // { prefix, loc, origin_asn, n_paths, lowvis, paths:[{asns,peers,is_best}], sup:[], sub:[], loading }
   about: false,
+  changelog: false,
+  menu: false,                // 移动端下拉菜单开关
   sortKey: 'n_paths',
   sortDir: -1,
   detailW: 42,             // 详情栏宽度 %

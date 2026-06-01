@@ -63,3 +63,17 @@ export function pathsearchFilesForOrigin(originAsn) {
   const hit = idx.filter(e => e.lo != null && e.hi != null && originAsn >= e.lo && originAsn <= e.hi)
   return hit.length ? hit.map(e => e.f) : null   // null: 索引完整但无文件覆盖 -> 该 origin 不存在
 }
+
+// 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(去重)。任一命中即收, 全都无覆盖才返回 null。
+// 无区间索引时回退到全部分片(全表扫)。
+export function pathsearchFilesForOrigins(asns) {
+  const all = S.meta?.files?.pathsearch || []
+  const idx = S.meta?.files?.pathsearch_origin
+  if (!Array.isArray(asns) || !asns.length) return all
+  if (!Array.isArray(idx) || !idx.length) return all
+  const set = new Set()
+  for (const a of asns)
+    for (const e of idx)
+      if (e.lo != null && e.hi != null && a >= e.lo && a <= e.hi) set.add(e.f)
+  return set.size ? [...set] : null
+}

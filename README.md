@@ -141,6 +141,8 @@ are generously **sponsored by [DMIT](https://www.dmit.io)**.
 ## Project notes
 
 - **Data source:** [RIPE RIS](https://ris.ripe.net/) `rrc00` public MRT RIB dumps.
+- **Changelog:** user-facing feature changes are tracked in **[`CHANGELOG.md`](CHANGELOG.md)**
+  (also viewable in-app via the "Changelog" entry).
 - **Maintenance & deployment** details (build steps, Cloudflare Pages specifics,
   the HTTP-Range/caching gotcha, invariants) live in **[`AGENTS.md`](AGENTS.md)**,
   and the data/format contract in **`docs/GLOBAL_DESIGN.md`**.

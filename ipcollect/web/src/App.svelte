@@ -9,10 +9,12 @@
   import { t } from './lib/i18n.js'
   import { iSpinner } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
+  import MobileBar from './components/MobileBar.svelte'
   import Topbar from './components/Topbar.svelte'
   import Results from './components/Results.svelte'
   import InsightDrawer from './components/InsightDrawer.svelte'
   import AboutModal from './components/AboutModal.svelte'
+  import ChangelogModal from './components/ChangelogModal.svelte'
 
   let fatal = $state('')
 
@@ -46,13 +48,14 @@
     S.ready = true; S.loading = false; S.msg = ''
     runSearch()
 
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; if (S.selectedPid != null) closeInsight() } })
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.menu = false; if (S.selectedPid != null) closeInsight() } })
   })
 </script>
 
 <div class="app">
   <Sidebar />
   <main class="main">
+    <MobileBar />
     <Topbar />
     <div class="content">
       {#if fatal}
@@ -67,6 +70,7 @@
   <InsightDrawer />
 </div>
 <AboutModal />
+<ChangelogModal />
 
 <style>
   .app { display: flex; min-height: 100vh; }

@@ -1,10 +1,13 @@
 // 搜索 / insight 逻辑 (从 web_ref/app.js 移植), 结果写入 S。
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
-import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin } from './db.js'
+import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, isLowVis, asnName, classifyQuery,
+  asnsMatchingName,
 } from './bgp.js'
+
+const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
 
 let _ccMap = { lang: null, map: null }
 function ccMap() {
@@ -20,7 +23,7 @@ export function resolveCC(v) {
 }
 
 let _timer = null
-export function scheduleSearch(ms = 350) { clearTimeout(_timer); _timer = setTimeout(runSearch, ms) }
+export function scheduleSearch(ms = 700) { clearTimeout(_timer); _timer = setTimeout(runSearch, ms) }
 export function searchNow() { clearTimeout(_timer); runSearch() }
 
 export async function runSearch() {
@@ -30,13 +33,26 @@ export async function runSearch() {
   const probe = classifyQuery(f.ip)
   if (probe.kind === 'ipv6') { S.rows = []; S.mode = 'subnet'; S.msg = t('v6_soon'); return }
   if (probe.kind === 'ipv4') return runSubnet(probe, f)
-  if (probe.kind === 'text') { S.rows = []; S.mode = 'prompt'; S.msg = t('q_bad'); return }
   const boxAsn = probe.kind === 'asn' ? probe.asn : null   // 纯数字 -> origin AS, 可与国家/城市/AS_PATH 叠加
+
+  // AS 名称搜索: 含字母的查询(name), 或带点但非合法 IP 的串(text, 如 amazon.com) -> 反推匹配的 origin ASN
+  // (可能多个), 作为 origin 过滤集。
+  let nameHit = null
+  const nameQ = probe.kind === 'name' ? probe.q : (probe.kind === 'text' ? f.ip.trim() : null)
+  if (nameQ != null) {
+    nameHit = asnsMatchingName(nameQ, NAME_CAP)
+    if (!nameHit.asns.length) {
+      S.rows = []; S.mode = 'global'
+      S.msg = (S.lang === 'zh' ? `无 ASN 名称匹配 “${nameQ}”` : `no ASN name matches “${nameQ}”`)
+      return
+    }
+  }
 
   const cc = resolveCC(f.cc)
   const seq = parseSeq(f.path)
   const seqLike = seq.length ? sqlStr('% ' + seq.join(' ') + ' %') : null
-  const originAsn = boxAsn   // origin 仅来自精确框(纯数字); 独立 origin 框已移除
+  // origin 过滤集: 来自纯数字框(单个) 或 名称反查(多个); null=不过滤 origin。
+  const originAsns = boxAsn != null ? [boxAsn] : (nameHit ? nameHit.asns : null)
   const city = (f.city || '').trim()
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   const inclLow = !!f.incllow
@@ -50,20 +66,21 @@ export async function runSearch() {
     cols = 'pid, prefix, city, province, plen, origin_asn, n_paths, segs, best_path'
     if (city && S.meta?.cities?.[cc]) w.push(`city = ${sqlStr(city)}`)
   } else {
-    if (!seqLike && originAsn == null) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
+    if (!seqLike && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
     isGlobal = true
-    // origin AS 搜索: 只读覆盖该 ASN 的 pathsearch 分片(按 origin 排序 + 区间索引); 纯 AS_PATH 搜索仍全表扫。
-    const psFiles = pathsearchFilesForOrigin(originAsn)
-    if (psFiles === null) {   // 索引完整且无分片覆盖 -> 该 origin 不存在, 直接空结果, 不下任何文件
+    // origin AS 搜索: 只读覆盖这些 ASN 的 pathsearch 分片(按 origin 排序 + 区间索引); 纯 AS_PATH 搜索仍全表扫。
+    const psFiles = originAsns ? pathsearchFilesForOrigins(originAsns) : pathsearchFilesForOrigin(null)
+    if (psFiles === null) {   // 索引完整且无分片覆盖 -> 这些 origin 都不在库 -> 空结果, 不下任何文件
       S.rows = []; S.mode = 'global'
-      S.msg = (S.lang === 'zh' ? `全表：显示 0 个前缀 · origin AS${originAsn}` : `global: 0 prefixes · origin AS${originAsn}`)
+      const lbl = originLabel(originAsns, nameHit, nameQ)
+      S.msg = (S.lang === 'zh' ? `全表：显示 0 个前缀 · ${lbl}` : `global: 0 prefixes · ${lbl}`)
       return
     }
     fromExpr = rpList(psFiles)
     cols = 'pid, prefix, cc, origin_asn, n_paths, best_path'
   }
   if (seqLike) w.push(`paths_blob LIKE ${seqLike}`)
-  if (originAsn != null) w.push(`origin_asn = ${originAsn}`)
+  if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
   if (!inclLow) w.push(`n_paths >= ${Math.ceil(lowCut())}`)
   const order = (seqLike ? `(best_path LIKE ${seqLike}) DESC, ` : '') + 'n_paths DESC'
   const sql = `SELECT ${cols} FROM ${fromExpr} ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${order} LIMIT ${limit + 1}`
@@ -81,10 +98,23 @@ export async function runSearch() {
 
   const N = `${rows.length}${more ? '+' : ''}`
   const scope = cc ? `${ccLabel(cc)}${city ? ' · ' + city : ''}` : t('global')
-  const oTxt = originAsn != null ? ` · origin AS${originAsn}` : ''
+  const oTxt = originAsns ? ` · ${originLabel(originAsns, nameHit, nameQ)}` : ''
   S.msg = (S.lang === 'zh'
     ? `${scope}：显示 ${N} 个前缀${oTxt}` + (seq.length ? ` · path 含连续 [${seq.join(' ')}]（★=落在最优路径）` : '') + (!inclLow ? ' · 已隐藏低可见' : '')
     : `${scope}: ${N} prefixes${oTxt}` + (seq.length ? ` · path contains [${seq.join(' ')}] (★=on best path)` : '') + (!inclLow ? ' · low-vis hidden' : ''))
+}
+
+// origin 过滤的人类可读标签: 名称搜索显示 “名称→N 个 ASN(列前几个)”, 纯数字显示单个 origin AS。
+function originLabel(asns, nameHit, nameQ) {
+  if (nameHit && nameQ) {
+    const n = asns.length
+    const head = asns.slice(0, 6).map(a => 'AS' + a).join(', ')
+    const tail = (n > 6 || nameHit.more) ? '…' : ''
+    return (S.lang === 'zh'
+      ? `名称 “${nameQ}” → ${n}${nameHit.more ? '+' : ''} 个 origin (${head}${tail})`
+      : `name “${nameQ}” → ${n}${nameHit.more ? '+' : ''} origins (${head}${tail})`)
+  }
+  return `origin AS${asns[0]}`
 }
 
 async function runSubnet(r, f) {

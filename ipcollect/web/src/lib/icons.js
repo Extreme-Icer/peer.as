@@ -31,4 +31,6 @@ export {
   faEraser as iClear,
   faCodeBranch as iRepo,
   faBug as iIssue,
+  faBars as iMenu,
+  faClockRotateLeft as iChangelog,
 } from '@fortawesome/free-solid-svg-icons'

@@ -13,7 +13,7 @@
   // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
   let probe = $derived(classifyQuery(S.filters.ip))
   let pathNA = $derived(probe.kind === 'ipv4')
-  const sched = () => scheduleSearch(350)
+  const sched = () => scheduleSearch(700)
   const noop = () => {}
   function clearAll() {
     Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false })
@@ -108,7 +108,11 @@
   }
   @media (max-width: 820px) {
     .topbar { padding: 10px 12px; }
-    .row :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
-    .gobtn.big { flex: 1 1 100%; }
+    /* 次要筛选行: 两列自适应 */
+    .row.secondary :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
+    /* 主查询行: 输入框独占一行, 搜索按钮(撑开)与清空按钮同行并排 */
+    .row.primary :global(.field) { flex: 1 1 100%; width: auto !important; }
+    .row.primary .gobtn.big { flex: 1 1 auto; }
+    .row.primary .clrbtn { flex: 0 0 auto; }
   }
 </style>

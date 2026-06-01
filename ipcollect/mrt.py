@@ -13,7 +13,7 @@ import struct
 import time
 from typing import Callable, Iterator, Optional
 
-from . import bgp, config, db, geoip, util
+from . import bgp, store, util
 
 # MRT / TABLE_DUMP_V2 常量
 MRT_TABLE_DUMP_V2 = 13
@@ -30,11 +30,19 @@ _HDR = struct.Struct(">IHHI")
 # ----------------------------------------------------------------------------
 # 下载
 # ----------------------------------------------------------------------------
-def latest_bview_url(cfg: dict) -> str:
+def collectors(cfg: dict) -> list[str]:
+    """配置的采集点列表(默认 mrt_collectors; 回退单值 mrt_collector)。"""
+    cs = cfg.get("mrt_collectors") or []
+    if not cs and cfg.get("mrt_collector"):
+        cs = [cfg["mrt_collector"]]
+    return [c for c in cs if c]
+
+
+def latest_bview_url(cfg: dict, collector: Optional[str] = None) -> str:
     import requests
 
     base = cfg["mrt_base_url"].rstrip("/")
-    coll = cfg["mrt_collector"]
+    coll = collector or cfg.get("mrt_collector") or (collectors(cfg) or ["rrc01"])[0]
     root = f"{base}/{coll}/"
     months = _list_links(root, r"20\d\d\.\d\d/")
     if not months:
@@ -57,14 +65,15 @@ def _list_links(url: str, pattern: str) -> list[str]:
     return sorted(set(re.findall(pattern, r.text)))
 
 
-def download(url: str, dest: Optional[str] = None, force: bool = False) -> str:
+def download(url: str, dest: Optional[str] = None, force: bool = False, retries: int = 5) -> str:
+    """下载到 dest, 支持**断点续传 + 重试**(RIPE 大 RIB 易中途断流)。
+    续传: .part 已有字节则发 Range 续; 服务器不支持(回 200)则从头。重试间隔退避。"""
     import requests
 
     util.ensure_dirs()
     if dest is None:
         dest = str(util.MRT_CACHE_DIR / os.path.basename(url))
     if os.path.exists(dest) and not force:
-        # 校验大小
         try:
             head = requests.head(url, timeout=30)
             remote = int(head.headers.get("content-length", 0))
@@ -75,23 +84,38 @@ def download(url: str, dest: Optional[str] = None, force: bool = False) -> str:
             util.log(f"  复用已下载 MRT: {dest} ({util.human_bytes(local)})")
             return dest
         util.log(f"  本地大小 {local} != 远端 {remote}, 重新下载")
+    tmp = dest + ".part"
     util.log(f"  下载 {url}")
-    with requests.get(url, stream=True, timeout=120) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("content-length", 0))
-        done = 0
-        last = time.time()
-        tmp = dest + ".part"
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-                done += len(chunk)
-                if time.time() - last > 2:
-                    pct = f"{done/total*100:.0f}%" if total else "?"
-                    util.log(f"    {util.human_bytes(done)} / {util.human_bytes(total)} ({pct})")
-                    last = time.time()
-        os.replace(tmp, dest)
-    util.log(f"  下载完成: {dest} ({util.human_bytes(done)})")
+    for attempt in range(1, retries + 1):
+        got = os.path.getsize(tmp) if os.path.exists(tmp) else 0
+        headers = {"Range": f"bytes={got}-"} if got else {}
+        try:
+            with requests.get(url, stream=True, timeout=120, headers=headers) as r:
+                if got and r.status_code == 200:   # 服务器忽略 Range -> 从头重写
+                    got = 0
+                elif got and r.status_code == 416:  # 已下全(range 越界) -> 当作完成
+                    r.close(); break
+                r.raise_for_status()
+                total = int(r.headers.get("content-length", 0)) + got
+                done = got
+                last = time.time()
+                with open(tmp, "ab" if got else "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+                        done += len(chunk)
+                        if time.time() - last > 3:
+                            pct = f"{done/total*100:.0f}%" if total else "?"
+                            util.log(f"    {util.human_bytes(done)} / {util.human_bytes(total)} ({pct})")
+                            last = time.time()
+            break   # 流读完未抛 -> 成功
+        except Exception as e:  # noqa: 断流/超时 -> 退避重试(保留 .part 续传)
+            if attempt >= retries:
+                raise
+            wait = min(30, 3 * attempt)
+            util.log(f"  ! 下载中断({type(e).__name__}: {e}); {wait}s 后续传(第 {attempt}/{retries} 次, 已 {util.human_bytes(os.path.getsize(tmp) if os.path.exists(tmp) else 0)})", err=True)
+            time.sleep(wait)
+    os.replace(tmp, dest)
+    util.log(f"  下载完成: {dest} ({util.human_bytes(os.path.getsize(dest))})")
     return dest
 
 
@@ -283,89 +307,26 @@ def iter_focus_prefixes(
 
 
 # ----------------------------------------------------------------------------
-# 入库
+# 入库(DuckDB 工作库; 多采集点; v4+v6)
 # ----------------------------------------------------------------------------
-def ingest(
-    conn,
-    cfg: dict,
-    mrt_file: Optional[str] = None,
-    url: Optional[str] = None,
-    reset: bool = False,
-    limit: Optional[int] = None,
-    all_countries: bool = False,
-    scope: Optional[str] = None,
-) -> dict:
-    util.ensure_dirs()
-    db.init_schema(conn, migrate=True)   # ingest 才允许破坏性迁移 pathobs
+def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
+                limit: Optional[int]) -> tuple[int, int]:
+    """解析单个 collector 的 RIB, 把去重后的 (prefix,path) 行写进 obs。返回 (前缀数, obs 行数)。
 
-    if mrt_file is None:
-        if url is None:
-            url = latest_bview_url(cfg)
-            util.log(f"  最新 RIB: {url}")
-        mrt_file = download(url)
-        db.set_meta(conn, "mrt_url", url)
-    db.set_meta(conn, "mrt_file", mrt_file)
-
-    if reset:
-        util.log("  --reset: 清空 prefix/pathobs/path_asn")
-        for t in ("prefix", "pathobs", "path_asn"):
-            conn.execute(f"DELETE FROM {t}")
-        conn.commit()
-
-    scope = scope or cfg.get("ingest_scope", "global")
-    global_mode = (scope == "global")
-
-    has_geo = db.table_count(conn, "geo") > 0
-    cc = cfg.get("focus_country_code")
-    if not has_geo:
-        util.log("  ! geo 表为空, 跳过地理标注 (建议先 `ipc geo-import`)", err=True)
-    # global: 收全部 v4(不按 ASN/国家); focus: 旧口径(境内 ∩ focus_asns)。
-    do_country_filter = (not global_mode) and has_geo and cc and not all_countries
-
-    gindex = geoip.GeoIndex(conn) if has_geo else None
-
-    # 入库口径见 GLOBAL_DESIGN.md: global=全表 v4(城市在展示时由 ipdb 切段); focus=境内含焦点 ASN。
-    def keep_pred(start: int, end: int, family: int) -> bool:
-        if global_mode:
-            return family == 4          # 全表(v4); v6 deferred(SQLite INTEGER 装不下 128 位)
-        if not has_geo or not do_country_filter:
-            return True
-        return gindex.country_of(start) == cc
-
-    focus = [] if global_mode else bgp.resolve_asns(cfg["focus_asns"])
-    util.log(f"  scope={scope}; 焦点ASN={'(全表)' if global_mode else focus}; "
-             f"国家过滤={cc if do_country_filter else '关闭'}; "
-             f"v6={'跳过' if global_mode else 'n/a'}; 城市过滤=关闭(展示时按 ipdb 切段)")
-
+    去重在 Python 端按 (prefix, path_clean) 做(同 collector 内 n_peers=观测此 path 的 peer 数);
+    跨 collector 的合并留给 store.finalize()。
+    """
     t0 = time.time()
 
     def progress(scanned: int, kept: int):
         rate = scanned / max(time.time() - t0, 1e-6)
-        util.log(f"  扫描 {util.human(scanned)} 前缀, 命中 {kept} ({util.human(rate)}/s)")
+        util.log(f"  [{collector}] 扫描 {util.human(scanned)} 前缀, 命中 {kept} ({util.human(rate)}/s)")
 
-    ins_prefix = (
-        "INSERT INTO prefix(prefix,start_num,end_num,family,plen,origin_asn,n_origins,"
-        "country_code,province,city,isp,geo_isp,n_paths,ingest_ts) "
-        "VALUES(:prefix,:start,:end,:family,:plen,:origin,:n_origins,:cc,:prov,:city,:isp,"
-        ":geo_isp,:np,:ts) "
-        "ON CONFLICT(prefix) DO UPDATE SET start_num=excluded.start_num,end_num=excluded.end_num,"
-        "origin_asn=excluded.origin_asn,n_origins=excluded.n_origins,country_code=excluded.country_code,"
-        "province=excluded.province,city=excluded.city,geo_isp=excluded.geo_isp,"
-        "n_paths=excluded.n_paths,ingest_ts=excluded.ingest_ts"
-    )
-    now = int(time.time())
-    n_prefix = n_path = 0
-    batch = 0
-
-    for rec in iter_focus_prefixes(mrt_file, focus, keep_pred=keep_pred,
-                                   limit=limit, on_progress=progress,
-                                   global_mode=global_mode):
-        geo = gindex.tag(rec["start"]) if gindex else {
-            "country_code": None, "province": None, "city": None, "geo_isp": None}
-
-        # 去重路径: 同前缀同一 clean path 合并, 累加观测它的 peer 数(n_peers)。
-        dedup: dict[str, dict] = {}
-        all_asns: set[int] = set()
+    w = store.ObsWriter(collector)
+    n_prefix = n_rows = 0
+    for rec in iter_focus_prefixes(mrt_file, [], keep_pred=keep_pred,
+                                   limit=limit, on_progress=progress, global_mode=True):
+        dedup: dict[str, list] = {}   # path_clean -> [len, origin, n_peers]
         for p in rec["paths"]:
             clean = bgp.clean_path(p["asns"])
             if not clean:
@@ -373,49 +334,94 @@ def ingest(
             key = " ".join(map(str, clean))
             d = dedup.get(key)
             if d is None:
-                dedup[key] = {"clean": key, "len": len(clean), "origin": clean[-1], "n": 1}
+                dedup[key] = [len(clean), clean[-1], 1]
             else:
-                d["n"] += 1
-            if not global_mode:
-                all_asns.update(p["asns"])
-        origin = max(set(rec["origins"]), key=lambda a: sum(1 for p in rec["paths"] if p["asns"] and p["asns"][-1] == a)) if rec["origins"] else None
-
-        conn.execute(ins_prefix, {
-            "prefix": rec["prefix"], "start": rec["start"], "end": rec["end"],
-            "family": rec["family"], "plen": rec["plen"], "origin": origin,
-            "n_origins": len(rec["origins"]), "cc": geo["country_code"],
-            "prov": geo["province"], "city": geo["city"], "isp": None,
-            "geo_isp": geo["geo_isp"], "np": len(rec["paths"]), "ts": now,
-        })
-        pid_row = conn.execute("SELECT id FROM prefix WHERE prefix=?", (rec["prefix"],)).fetchone()
-        pid = pid_row["id"]
-
-        # pathobs (去重后, 先删旧)
-        conn.execute("DELETE FROM pathobs WHERE prefix_id=?", (pid,))
-        conn.executemany(
-            "INSERT INTO pathobs(prefix_id,path_clean,path_len,origin_asn,n_peers) "
-            "VALUES(?,?,?,?,?)",
-            [(pid, d["clean"], d["len"], d["origin"], d["n"]) for d in dedup.values()],
-        )
-        # path_asn 倒排 (仅 focus 模式; global 全表会爆, 前端/DuckDB 直接查 path 串)
-        if not global_mode:
-            conn.execute("DELETE FROM path_asn WHERE prefix_id=?", (pid,))
-            conn.executemany(
-                "INSERT OR IGNORE INTO path_asn(prefix_id,asn,is_origin) VALUES(?,?,?)",
-                [(pid, a, 1 if a == origin else 0) for a in all_asns],
-            )
-
+                d[2] += 1
+        if not dedup:
+            continue
+        for key, (plen_, origin, n) in dedup.items():
+            w.write(rec["prefix"], rec["start"], rec["end"], rec["family"], rec["plen"],
+                    key, plen_, origin, collector, n)
+            n_rows += 1
         n_prefix += 1
-        n_path += len(dedup)
-        batch += 1
-        if batch >= 500:
-            conn.commit()
-            batch = 0
+    w.close()
+    util.log(f"  [{collector}] 灌入 obs: {n_prefix} 前缀 / {n_rows} 去重路径行")
+    store.load_csv(con, w.path)
+    os.remove(w.path)
+    return n_prefix, n_rows
 
-    conn.commit()
-    db.set_meta(conn, "ingest_ts", now)
-    db.set_meta(conn, "ingest_scope", scope)
-    util.log(f"  入库完成: {n_prefix} 前缀, {n_path} 条去重路径")
-    conn.execute("ANALYZE")
-    conn.commit()
-    return {"prefixes": n_prefix, "pathobs": n_path, "scope": scope}
+
+def ingest(
+    con,
+    cfg: dict,
+    mrt_file: Optional[str] = None,
+    url: Optional[str] = None,
+    reset: bool = False,
+    limit: Optional[int] = None,
+    family: Optional[int] = None,
+    **_legacy,
+) -> dict:
+    """下载并解析各采集点 RIB, 入 DuckDB 工作库(obs), 末尾 finalize 出 pathobs/prefix。
+
+    family: 4 / 6 / None(两者都收)。`mrt_file` 给定时只解析该本地文件(用首个 collector 作标签, 调试用)。
+    """
+    util.ensure_dirs()
+    store.init_schema(con)
+    now = int(time.time())
+
+    if reset:
+        util.log("  --reset: 清空 obs/pathobs/prefix")
+        store.reset(con)
+
+    # geo 跟随 ingest: 检查 GeoLite 是否过期(过期才下), 首次或 GeoLite 更新时重建 geo(否则复用, geo 不随 reset 清)。
+    try:
+        from . import geoip
+        rel = geoip.ensure_geolite(cfg)
+        has_geo = con.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name='geo'").fetchone()[0]
+        if not has_geo or store.get_meta(con, "geo_tag") != (rel.get("tag") or ""):
+            geoip.build_geo(con, cfg, rel)
+            store.set_meta(con, "geo_tag", rel.get("tag") or "")
+        else:
+            util.log(f"  geo 复用(GeoLite {rel.get('tag')} 未变)")
+    except Exception as e:  # noqa: geo 失败不阻断 ingest(导出时 geo 缺则前缀 cc=ZZ)
+        util.log(f"  ! geo 准备失败({e}); 继续 ingest", err=True)
+
+    def keep_pred(start: int, end: int, fam: int) -> bool:
+        return (family is None) or (fam == family)
+
+    util.log(f"  入库口径: 全表(v4+v6); family={'全部' if family is None else 'v'+str(family)}; "
+             f"采集点={collectors(cfg) if mrt_file is None else '本地文件'}")
+
+    total_prefix = total_rows = 0
+    if mrt_file is not None:
+        coll = (collectors(cfg) or ["local"])[0]
+        store.set_meta(con, "mrt_file", mrt_file)
+        p, r = _ingest_one(con, mrt_file, coll, keep_pred, limit)
+        total_prefix += p; total_rows += r
+    else:
+        urls = []
+        coll_list = collectors(cfg)
+        if url is not None:                       # 显式单 URL -> 用首个 collector 标签
+            coll_list = coll_list[:1] or ["rrc01"]
+            urls = [(coll_list[0], url)]
+        else:
+            for c in coll_list:
+                u = latest_bview_url(cfg, c)
+                util.log(f"  [{c}] 最新 RIB: {u}")
+                urls.append((c, u))
+        for c, u in urls:
+            # 各采集点的 bview 文件名相同(bview.<date>.<time>.gz) -> 缓存路径必须按 collector 命名, 否则互相覆盖。
+            dest = str(util.MRT_CACHE_DIR / f"{c}-{os.path.basename(u)}")
+            mf = download(u, dest=dest)
+            store.set_meta(con, f"mrt_url_{c}", u)
+            p, r = _ingest_one(con, mf, c, keep_pred, limit)
+            total_prefix += p; total_rows += r
+
+    fin = store.finalize(con)
+    store.set_meta(con, "ingest_ts", now)
+    store.set_meta(con, "collectors", ",".join(collectors(cfg)))
+    util.log(f"  入库完成: obs {total_rows} 行 -> prefix v4={fin['v4']} v6={fin['v6']}, "
+             f"pathobs {fin['pathobs']}")
+    return {"prefixes_v4": fin["v4"], "prefixes_v6": fin["v6"],
+            "pathobs": fin["pathobs"], "obs_rows": total_rows}

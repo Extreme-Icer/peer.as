@@ -9,21 +9,17 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import build, db, util
+from . import parquet_export, util
 
 
 def serve(cfg: dict, out_dir: str = "dist", port: int = 8787,
           host: str = "127.0.0.1", rebuild: bool = False) -> None:
     out = Path(out_dir)
-    if rebuild or not (out / "index.html").exists():
-        if not rebuild:
-            util.log(f"  {out}/ 不存在或不完整, 先 build…")
-        conn = db.connect()
-        try:
-            r = build.build(cfg, conn, out_dir=out_dir)
-            util.log(f"  build: {r['files']} 文件 / {util.human(r['bytes'])}B -> {r['out']}/")
-        finally:
-            conn.close()
+    if rebuild:                                    # 只重拷前端(数据需 `ipc export-parquet`)
+        n = parquet_export.copy_web(out_dir=out_dir)
+        util.log(f"  sync-web: 拷 {n} 文件 (web/dist -> {out}/)")
+    if not (out / "index.html").exists():
+        util.log(f"  ! {out}/index.html 不存在 —— 先跑 `ipc export-parquet`(出数据) 或 `ipc build`(只前端)", err=True)
 
     handler = partial(_QuietHandler, directory=str(out))
     httpd = ThreadingHTTPServer((host, port), handler)

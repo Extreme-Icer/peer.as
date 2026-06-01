@@ -10,9 +10,9 @@
     <div class="modal-box">
       <button class="close" onclick={close} aria-label="close"><Fa icon={iClose} /></button>
       <h2>PEER.AS · 关于 / About</h2>
-      <p><b>PEER.AS</b> — 全球 IPv4 BGP 表的<b>静态、可复现</b>浏览器：每个前缀、它的 origin ASN，以及真正到达它的
+      <p><b>PEER.AS</b> — 全球 IPv4/IPv6 BGP 表的<b>静态、可复现</b>浏览器：每个前缀、它的 origin ASN，以及真正到达它的
         <b>AS_PATH</b>。全程在浏览器内运行，<b>无后端 / API / 数据库</b>，纯静态文件可自托管或镜像。
-        <span class="en">A static, reproducible in-browser explorer of the global IPv4 BGP table — every prefix, its
+        <span class="en">A static, reproducible in-browser explorer of the global IPv4/IPv6 BGP table — every prefix, its
         origin ASNs, and the real AS_PATHs reaching it. Runs fully client-side; no backend, API or database.</span></p>
 
       <h3>方法 / Approach</h3>
@@ -28,8 +28,8 @@
 
       <h3>数据与架构 / Data &amp; stack</h3>
       <ul>
-        <li><b>数据</b>：RIPE RIS <code>rrc00</code> 全表 IPv4 MRT RIB（入库不过滤），地理按地理库切成各地区子段。
-          <span class="en">RIPE RIS rrc00 full IPv4 RIB; prefixes carved into regions by a geo DB.</span></li>
+        <li><b>数据</b>：RIPE RIS <code>rrc01</code>+<code>rrc06</code> 全表 IPv4/IPv6 MRT RIB（入库不过滤），地理按地理库（ipdb 国内城市 + GeoLite 国际城市）切成各地区子段。
+          <span class="en">RIPE RIS rrc01+rrc06 full IPv4/IPv6 RIB; prefixes carved into regions by geo DBs (ipdb for CN cities + GeoLite for intl cities).</span></li>
         <li><b>查询</b>：导出 <b>Parquet</b>，浏览器内 <b>DuckDB-WASM</b> 直查；靠 <code>meta.json</code> 区间索引只取查询所需的少数分片。
           <span class="en">Parquet queried in-browser by DuckDB-WASM, fetching only the shards a query needs.</span></li>
         <li><b>可复现</b>：数据源公开，任何人都能重跑流水线、重建同一份站点。

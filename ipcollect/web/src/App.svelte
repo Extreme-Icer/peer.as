@@ -47,10 +47,12 @@
     const city0 = qp.get('city'); if (city0) S.filters.city = city0
 
     S.msg = t('loading')
-    // 全量 ASN 名(~1MB)与 DuckDB 初始化并行加载; 失败则降级到 meta 里的精选名。
+    // 全量 ASN 名(~1MB)与 org 表与 DuckDB 初始化并行加载; 失败则降级到 meta 里的精选名。
     const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
+    const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
     try { await initDuck() } catch (e) { fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; return }
     try { await asnP } catch (e) { /* 可选, 忽略 */ }
+    try { await orgP } catch (e) { /* 可选, 忽略 */ }
     S.ready = true; S.loading = false; S.msg = ''
     runSearch()
 

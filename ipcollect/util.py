@@ -12,15 +12,17 @@ from pathlib import Path
 ROOT = Path(os.environ.get("IPC_HOME", Path(__file__).resolve().parent.parent))
 
 CONFIG_PATH = ROOT / "config.json"
-DB_PATH = ROOT / "ipcollect.db"
+DB_PATH = ROOT / "ipcollect.db"            # 旧 SQLite(退役中, Phase C 删)
+DUCK_PATH = ROOT / "ipcollect.duckdb"      # DuckDB 工作库(ingest 中间态; 跑完即弃, 已 gitignore)
 CACHE_DIR = ROOT / "cache"
 MRT_CACHE_DIR = CACHE_DIR / "mrt"
+GEO_CACHE_DIR = CACHE_DIR / "geo"          # GeoLite mmdb 缓存(随过期检查更新, daily-refresh 保留)
 # geo 库路径: 默认项目根的 ipdb.txt, 可用 IPC_IPDB_PATH 覆盖(不入库的私有库)。
 DEFAULT_IPDB = Path(os.environ.get("IPC_IPDB_PATH", ROOT / "ipdb.txt"))
 
 
 def ensure_dirs() -> None:
-    for d in (CACHE_DIR, MRT_CACHE_DIR):
+    for d in (CACHE_DIR, MRT_CACHE_DIR, GEO_CACHE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -43,6 +45,16 @@ def cidr_bounds(cidr: str) -> tuple[int, int, int]:
     """返回 (start_int, end_int, family) ; family: 4 或 6."""
     net = ipaddress.ip_network(cidr, strict=False)
     return int(net.network_address), int(net.broadcast_address), net.version
+
+
+# DuckDB 把 UHUGEINT(128位) 原生转 Python int / VARCHAR 极慢(实测 50k 行 16s, v6 全量分钟级)。
+# 解法: 在 SQL 里把 UHUGEINT 拆成 hi/lo 两个 UBIGINT(64位, 原生快取), Python 端 hi*2^64+lo 还原。
+SH64 = 1 << 64
+
+
+def uhuge_halves(col: str) -> str:
+    """SQL 片段: 把 UHUGEINT 列 col 拆成 (hi, lo) 两个 UBIGINT。配合 SH64 在 Python 端还原。"""
+    return f"({col} // {SH64})::UBIGINT, ({col} % {SH64})::UBIGINT"
 
 
 def prefix_from_bytes(pfx_bytes: bytes, plen: int, family: int) -> tuple[int, int, str]:

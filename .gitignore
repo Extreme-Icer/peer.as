@@ -12,6 +12,9 @@ ipdb.txt
 *.db
 *.db-wal
 *.db-shm
+# DuckDB 工作库(ingest 中间态, 跑完即弃)
+*.duckdb
+*.duckdb.wal
 # 下载的 MRT RIB / autnums / Shodan 等缓存
 cache/
 # 构建产物（由 export-parquet 生成，含全球 Parquet 全表，~700MB）

@@ -7,6 +7,7 @@ export const TIER1 = new Set([174, 701, 702, 1239, 1299, 2828, 2914, 3257, 3320,
 
 // 全量名(asnames.json)优先, 回退到 meta 里精选的(注册表)
 export const asnName = a => (S.asnNames && S.asnNames[a]) || (S.meta && S.meta.asn_names && S.meta.asn_names[a]) || ''
+export const asnOrg = a => (S.asnOrg && S.asnOrg[a]) || ''     // GeoLite organization(全名)
 export const opOf = a => (S.meta && S.meta.asn_ops && S.meta.asn_ops[a]) || ''
 export const opCls = a => OP_CLS[opOf(a)] || ''
 export const isTier1 = a => TIER1.has(+a)
@@ -29,8 +30,10 @@ export function regionName(cc) {
 }
 export const ccLabel = cc => `${regionName(cc)} (${cc})`
 
-export const lowCut = () => Math.max(3, 0.2 * ((S.meta && S.meta.dfz_ref) || 1))
-export const isLowVis = r => !!r && r.n_paths != null && S.meta && S.meta.dfz_ref && r.n_paths < lowCut()
+// 低可见阈值按 family 取(v6 全网 peer 数远少, 自有 dfz_ref_v6)。
+export const lowCutFor = v6 => Math.max(3, 0.2 * ((v6 ? (S.meta && S.meta.dfz_ref_v6) : (S.meta && S.meta.dfz_ref)) || 1))
+export const lowCut = () => lowCutFor(false)
+export const isLowVis = r => !!r && r.n_paths != null && S.meta && r.n_paths < lowCutFor((r.prefix || '').includes(':'))
 
 const short = s => (s && s.length > 22) ? s.slice(0, 21) + '…' : s
 // AS_PATH -> [{asn,name,nameShort,op,cls,tier1}]  (供 <AsPath> 渲染; nameShort 防超长 handle 撑爆路径)
@@ -67,11 +70,50 @@ export function ip2range(s) {
   return { start, end: start + size - 1, plen, isCidr: true }
 }
 
+// IPv6 地址串 -> BigInt(128 位); 支持一个 :: 压缩。非法返回 null。
+export function ip6ToBig(s) {
+  s = (s || '').trim()
+  if (!s.includes(':') || !/^[0-9a-fA-F:]+$/.test(s)) return null
+  if (s.indexOf('::') !== s.lastIndexOf('::')) return null      // 至多一个 ::
+  let groups
+  if (s.includes('::')) {
+    const [h, t] = s.split('::')
+    const hp = h ? h.split(':') : [], tp = t ? t.split(':') : []
+    const fill = 8 - hp.length - tp.length
+    if (fill < 0) return null
+    groups = [...hp, ...Array(fill).fill('0'), ...tp]
+  } else groups = s.split(':')
+  if (groups.length !== 8) return null
+  let n = 0n
+  for (const g of groups) {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null
+    n = (n << 16n) | BigInt(parseInt(g, 16))
+  }
+  return n
+}
+
+// IPv6 地址或 CIDR -> {start,end,plen,isCidr} (start/end 为 BigInt)。非法返回 null。
+export function ip6Range(s) {
+  const m = /^([0-9a-fA-F:]+)(?:\/(\d{1,3}))?$/.exec((s || '').trim())
+  if (!m) return null
+  const base = ip6ToBig(m[1])
+  if (base === null) return null
+  if (m[2] === undefined) return { start: base, end: base, plen: 128, isCidr: false }
+  const plen = +m[2]
+  if (plen > 128) return null
+  const host = 128n - BigInt(plen)
+  const start = (base >> host) << host
+  return { start, end: start | ((1n << host) - 1n), plen, isCidr: true }
+}
+
 // 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / text / empty
 export function classifyQuery(s) {
   s = (s || '').trim()
   if (!s) return { kind: 'empty' }
-  if (s.includes(':')) return { kind: 'ipv6' }                  // 冒号 -> IPv6 (暂未支持)
+  if (s.includes(':')) {                                        // 冒号 -> IPv6
+    const r = ip6Range(s)
+    return r ? { kind: 'ipv6', ...r } : { kind: 'text' }
+  }
   if (s.includes('.') || s.includes('/')) {                     // 点分十进制 / 带掩码 -> IPv4
     const r = ip2range(s)
     return r ? { kind: 'ipv4', ...r } : { kind: 'text' }

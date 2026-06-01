@@ -2,8 +2,9 @@
 # PEER.AS 每日数据刷新 + 部署
 # ──────────────────────────────────────────────────────────────────────────
 # 由 fcron 每天 04:00 触发（见 `fcrontab -l`）。完整工作流（AGENTS.md「数据维护流程」）：
-#   1) ./ipc ingest --reset        下载 rrc00 最新 RIB(~400MB), 全表 v4 入库(~12min, db ~3GB)
-#   2) ./ipc export-parquet --out dist   SQLite -> Parquet + SSG -> dist/(~2.5min)
+#   1) ./ipc ingest --reset        下载 rrc01+rrc06 最新 RIB(各~350MB), 全表 v4+v6 入 DuckDB 工作库;
+#                                   并检查 GeoLite 是否过期(过期才下+重建 geo, 否则复用)
+#   2) ./ipc export-parquet --out dist   DuckDB -> Parquet(v4+v6) + SSG -> dist/
 #   3) 同步 dist/data -> R2 桶 $R2_BUCKET(海外前端读 data.peer.as; 数据先传、meta.json 最后传)
 #   4) 同步 dist/data -> 中国优化 VPS(cn.peer.as, best-effort; CN 前端读它, 见 AGENTS.md「中国优化」)
 #   5) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
@@ -36,11 +37,12 @@ run() {
   # 可选：若有 .env（CF 凭据 / IPC_IPDB_PATH 覆盖）则加载。当前用 wrangler OAuth，无需 .env。
   [ -f "$PROJ/.env" ] && { set -a; . "$PROJ/.env"; set +a; }
 
-  # 0/3 先清缓存：每次新开都把旧 MRT(每版 ~425MB) + duck 溢出残留删掉，否则日积月累撑爆硬盘。
-  # 只删大且每次重生的：cache/mrt 旧 RIB(ingest 会重新下最新) 与 cache/duck_tmp(export 溢出)。
-  # 保留 cache/autnums.txt(12MB, ASN 名表, 复用省下载)。删完再下载 ⇒ 同时只存 1 份 RIB。
-  echo "[$(date -Is)] 0/3 清理旧缓存(mrt/duck_tmp), 防撑爆硬盘"
-  rm -f  "$PROJ"/cache/mrt/*.gz "$PROJ"/cache/mrt/dl.log
+  # 0/3 先清缓存：每次新开都把旧 MRT(每版 ~350MB×2) + duck 溢出残留删掉，否则日积月累撑爆硬盘。
+  # 只删大且每次重生的：cache/mrt 旧 RIB(ingest 会重新下最新) 与 cache/duck_tmp(export/ingest 溢出+obs CSV)。
+  # **保留 cache/geo/(GeoLite mmdb + 版本戳)**：ingest 内按过期检查决定是否重下, 勿每次删(否则每天重下重建 geo)。
+  # 保留 cache/autnums.txt(12MB, ASN 名表, 复用省下载)。
+  echo "[$(date -Is)] 0/3 清理旧缓存(mrt/duck_tmp; 保留 geo), 防撑爆硬盘"
+  rm -f  "$PROJ"/cache/mrt/*.gz "$PROJ"/cache/mrt/*.part "$PROJ"/cache/mrt/dl.log
   rm -rf "$PROJ"/cache/duck_tmp/* 2>/dev/null || true
 
   echo "[$(date -Is)] 1/3 ingest --reset"

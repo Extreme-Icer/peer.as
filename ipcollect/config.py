@@ -100,9 +100,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
     # 数据源
     "ipdb_path": str(util.DEFAULT_IPDB),
-    # geo 双轨: "ipdb"=私有库(城市级, 官方部署) / "rir"=RIR 国家级开放库(OSS 可复现)。
+    # geo 三轨(按优先级合并为非重叠区间, 见 geoip.build_geo_index):
+    #   ipdb   私有库(国内城市级, 官方部署, 最优先)
+    #   geolite GeoLite2-City(全球城市级, 含 v4+v6; 补国际与 v6)
+    #   rir    RIR 国家级开放库(OSS 可复现兜底)
+    # geo_provider: 主来源(ipdb / rir); GeoLite 始终叠加(若可下载), 在 ipdb 之后、rir 之前。
     "geo_provider": "ipdb",
-    "mrt_collector": "rrc00",
+    # GeoLite2 mmdb 来源(P3TERX 镜像, 按日期 tag 发布)。ingest 每次检查最新 release 是否比本地新, 过期才下。
+    "geolite_repo": "P3TERX/GeoLite.mmdb",
+    "geolite_city_asset": "GeoLite2-City.mmdb",
+    "geolite_asn_asset": "GeoLite2-ASN.mmdb",
+    # 采集点(RIPE RIS): 双点互补 —— rrc01(LINX, 伦敦) + rrc06(NSPIXP, 东京)。弃用 rrc00(代表性不足)。
+    # 兼容: 若缺 mrt_collectors 则回退单值 mrt_collector。
+    "mrt_collectors": ["rrc01", "rrc06"],
+    "mrt_collector": "rrc01",
     "mrt_base_url": "https://data.ris.ripe.net",
     # 全球 ASN 名称表(APNIC): 给所有 AS 显示 asname(config.asn_registry 里特别标注的优先)。
     "autnums_url": "https://thyme.apnic.net/current/data-used-autnums",

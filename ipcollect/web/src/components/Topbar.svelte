@@ -12,19 +12,31 @@
   let f = S.filters
   // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
   let probe = $derived(classifyQuery(S.filters.ip))
-  let pathNA = $derived(probe.kind === 'ipv4')
+  let pathNA = $derived(probe.kind === 'ipv4' || probe.kind === 'ipv6')
+  // family 单选: 约束国家/全表搜索只看 v4 或 v6(子网搜索由 IP 本身决定 family, 此时禁用)。
+  const FAM = [{ v: 'all', label: () => t('fam_all') }, { v: '4', label: () => 'IPv4' }, { v: '6', label: () => 'IPv6' }]
+  let famIdx = $derived(Math.max(0, FAM.findIndex(o => o.v === (f.fam || 'all'))))
+  function setFam(v) { f.fam = v; if (!pathNA) searchNow() }
   const sched = () => scheduleSearch(700)
   const noop = () => {}
   function clearAll() {
-    Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false })
+    Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
     searchNow()
   }
 </script>
 
 <header class="topbar">
   <div class="filters">
-    <!-- 第一行: 精确查询 IP / CIDR / ASN — 命中即抢占, 其余筛选禁用 -->
+    <!-- 第一行: family 单选 + 精确查询 IP / CIDR / ASN — 命中即抢占, 其余筛选禁用 -->
     <div class="row primary">
+      <div class="famseg" class:disabled={pathNA} role="radiogroup" aria-label={t('fam_label')}>
+        <span class="fampill" style="transform: translateX({famIdx * 100}%)"></span>
+        {#each FAM as o}
+          <button type="button" class="famopt" class:on={(f.fam || 'all') === o.v}
+            role="radio" aria-checked={(f.fam || 'all') === o.v} disabled={pathNA}
+            title={t('fam_label')} onclick={() => setFam(o.v)}>{o.label()}</button>
+        {/each}
+      </div>
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
         oninput={sched} onenter={searchNow} />
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
@@ -74,6 +86,25 @@
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
   .row.primary { padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
   .gobtn.big { height: 40px; padding: 0 22px; font-size: 13.5px; border-radius: 9px; }
+  /* family 单选(分段控件): 3 段等宽 + 滑动高亮块, 切换时动画。 */
+  .famseg {
+    position: relative; flex: 0 0 auto; display: inline-flex; height: 40px;
+    background: var(--inbg); border: 1px solid var(--line); border-radius: 9px;
+    padding: 3px; gap: 0; user-select: none;
+  }
+  .famseg .fampill {
+    position: absolute; top: 3px; left: 3px; bottom: 3px; width: calc((100% - 6px) / 3);
+    background: var(--accent); border-radius: 7px; box-shadow: 0 2px 8px var(--accent-dim);
+    transition: transform .2s cubic-bezier(.4, 0, .2, 1); will-change: transform; z-index: 0;
+  }
+  .famseg .famopt {
+    position: relative; z-index: 1; flex: 1 0 auto; min-width: 44px; padding: 0 12px;
+    background: transparent; border: 0; border-radius: 7px; cursor: pointer;
+    font: 600 12px var(--sans); color: var(--muted); transition: color .2s; white-space: nowrap;
+  }
+  .famseg .famopt.on { color: var(--accent-fg); }
+  .famseg .famopt:not(.on):hover { color: var(--fg); }
+  .famseg.disabled { opacity: .45; pointer-events: none; }
   .clrbtn {
     display: inline-flex; align-items: center; justify-content: center; height: 40px; width: 40px;
     flex: 0 0 auto; background: transparent; border: 1px solid var(--line); border-radius: 9px;

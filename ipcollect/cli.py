@@ -4,45 +4,22 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import bgp, build, config, db, geoip, mrt, report, serve, util
-
-
-def _conn():
-    util.ensure_dirs()
-    conn = db.connect()
-    db.init_schema(conn)
-    return conn
+from . import bgp, config, geoip, mrt, serve, store, util
 
 
 def _csv_list(s):
     return [x.strip() for x in s.split(",") if x.strip()] if s else None
 
 
-def _int_list(s):
-    return [int(x) for x in _csv_list(s) or []] or None
-
-
-def _seq_list(s):
-    """解析 path 序列: 逗号/空格/箭头分隔均可, 如 '23764 4809' 或 '23764,4809' 或 '23764->4809'。"""
-    if not s:
-        return None
-    s = s.replace("->", " ").replace(",", " ")
-    return [int(x) for x in s.split() if x.strip().isdigit()] or None
-
-
 # ----------------------------------------------------------------------------
-# 子命令实现
+# 子命令实现 (CLI 只做部署/处理快捷入口; 查询入口已退役, source of truth = 原始 MRT)
 # ----------------------------------------------------------------------------
 def cmd_init(args):
     wrote = config.init_default(force=args.force)
     util.ensure_dirs()
-    conn = _conn()
+    con = store.connect(); store.init_schema(con); con.close()
     util.log(f"配置: {util.CONFIG_PATH} ({'已写默认' if wrote else '已存在, 保留'})")
-    util.log(f"数据库: {util.DB_PATH}")
-    if args.geo_import:
-        cfg = config.load()
-        n = geoip.import_ipdb(conn, cfg["ipdb_path"])
-        util.log(f"geo 导入 {n} 行")
+    util.log(f"DuckDB 工作库: {util.DUCK_PATH}")
     print("初始化完成。下一步: ipc geo-import  然后  ipc ingest")
 
 
@@ -66,62 +43,32 @@ def cmd_config(args):
 
 
 def cmd_geo_import(args):
+    """构建 DuckDB geo: ipdb(CN 城市) + GeoLite2-City(非 CN 全球, v4+v6) 合并非重叠 + asn_dim(org)。"""
     cfg = config.load()
-    conn = _conn()
-    provider = args.provider or cfg.get("geo_provider", "ipdb")
-    if provider == "rir":
-        util.log("导入 RIR delegated-extended (国家级开放库)")
-        n = geoip.import_rir(conn)
-    else:
-        path = args.path or cfg["ipdb_path"]
-        util.log(f"导入 ipdb: {path}")
-        n = geoip.import_ipdb(conn, path)
-    print(f"geo 导入完成 ({provider}): {n} 行")
-
-
-def cmd_geo_lookup(args):
-    conn = _conn()
-    row = geoip.lookup(conn, args.ip)
-    if not row:
-        print("未找到"); return
-    print(dict(row))
+    con = store.connect()
+    try:
+        gl = None
+        if not args.no_geolite:
+            try:
+                gl = geoip.ensure_geolite(cfg, force=args.force_download)
+            except Exception as e:  # noqa
+                util.log(f"! GeoLite 不可用({e}); 仅 ipdb", err=True)
+        r = geoip.build_geo(con, cfg, gl)
+        store.set_meta(con, "geo_tag", (gl or {}).get("tag") or "")   # 让后续 ingest 复用 geo
+    finally:
+        con.close()
+    print(f"geo 导入完成: {r}")
 
 
 def cmd_ingest(args):
     cfg = config.load()
-    conn = _conn()
-    r = mrt.ingest(conn, cfg, mrt_file=args.mrt_file, url=args.url,
-                   reset=args.reset, limit=args.limit, all_countries=args.all_countries,
-                   scope=args.scope)
+    con = store.connect()
+    try:
+        r = mrt.ingest(con, cfg, mrt_file=args.mrt_file, url=args.url,
+                       reset=args.reset, limit=args.limit, family=args.family)
+    finally:
+        con.close()
     print(f"ingest 完成: {r}")
-
-
-def cmd_query(args):
-    cfg = config.load()
-    conn = _conn()
-    rows = report.query_prefixes(
-        conn,
-        cities=_csv_list(args.city),
-        provinces=_csv_list(args.province),
-        path_asns=_int_list(args.asn),
-        path_seq=_seq_list(args.path),
-        origin_asn=args.origin,
-        limit=args.limit)
-    out = report.export(rows, fmt=args.format, out=args.out)
-    print(out)
-    if args.format == "table" and not args.out:
-        print(f"\n共 {len(rows)} 个前缀")
-
-
-def cmd_insight(args):
-    conn = _conn()
-    report.print_insight(report.insight(conn, args.target))
-
-
-def cmd_stats(args):
-    cfg = config.load()
-    conn = _conn()
-    report.print_stats(report.stats(conn, cfg))
 
 
 def cmd_build(args):
@@ -142,12 +89,15 @@ def cmd_build(args):
 
 def cmd_export_parquet(args):
     cfg = config.load()
-    conn = _conn()
+    con = store.connect()   # 需可写: export 建 pgeo/pp/seg 等工作表
     from . import parquet_export
-    r = parquet_export.export(cfg, conn, str(util.DB_PATH), out_dir=args.out)
+    try:
+        r = parquet_export.export(cfg, con, out_dir=args.out)
+    finally:
+        con.close()
     print(f"parquet 导出: {r['parquet_files']} 文件 / {util.human(r['parquet_bytes'])}B "
-          f"({r['prefixes']} 前缀, {r['paths']} 去重路径, {r['segments']} 切段, "
-          f"{r['countries']} 国家, dfz_ref={r['dfz_ref']}) -> {r['out']}/data/parquet/")
+          f"(v4={r['v4']} v6={r['v6']} 前缀, {r['paths']} 去重路径, {r['segments']} 切段, "
+          f"{r['countries']} 国家) -> {r['out']}/data/parquet/")
 
 
 def cmd_sync_web(args):
@@ -168,9 +118,8 @@ def build_parser():
     p.add_argument("-q", "--quiet", action="store_true", help="减少日志")
     sub = p.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("init", help="初始化配置与数据库")
+    s = sub.add_parser("init", help="初始化配置与 DuckDB 工作库")
     s.add_argument("--force", action="store_true", help="覆盖已有配置")
-    s.add_argument("--geo-import", action="store_true", help="顺带导入 ipdb")
     s.set_defaults(func=cmd_init)
 
     s = sub.add_parser("config", help="查看/修改配置")
@@ -180,38 +129,18 @@ def build_parser():
     st.set_defaults(func=cmd_config)
     s.set_defaults(func=cmd_config)
 
-    s = sub.add_parser("geo-import", help="导入地理库(ipdb 城市级 / rir 国家级开放)")
-    s.add_argument("--path", help="ipdb 路径(默认取配置)")
-    s.add_argument("--provider", choices=["ipdb", "rir"], help="地理库来源(默认取配置 geo_provider)")
+    s = sub.add_parser("geo-import", help="构建 DuckDB geo: ipdb(CN城市)+GeoLite(非CN全球,v4+v6)+asn_dim(org)")
+    s.add_argument("--no-geolite", action="store_true", help="跳过 GeoLite, 仅 ipdb(CN)")
+    s.add_argument("--force-download", action="store_true", help="强制重下 GeoLite(忽略版本戳)")
     s.set_defaults(func=cmd_geo_import)
 
-    s = sub.add_parser("geo-lookup", help="查单个 IP 的地理/运营商")
-    s.add_argument("ip"); s.set_defaults(func=cmd_geo_lookup)
-
-    s = sub.add_parser("ingest", help="下载并解析 rrc00 RIB 入库(global=全表 v4 / focus=境内含焦点ASN)")
-    s.add_argument("--reset", action="store_true", help="清空旧前缀数据重建")
-    s.add_argument("--limit", type=int, help="最多入库前缀数(调试)")
-    s.add_argument("--mrt-file", help="用本地 MRT 文件而非下载")
-    s.add_argument("--url", help="指定 RIB URL")
-    s.add_argument("--all-countries", action="store_true", help="(focus模式)不按国家过滤")
-    s.add_argument("--scope", choices=["global", "focus"], help="入库范围(默认取配置 ingest_scope)")
+    s = sub.add_parser("ingest", help="下载并解析各采集点 RIB 入 DuckDB 工作库(全表 v4+v6)")
+    s.add_argument("--reset", action="store_true", help="清空旧数据重建")
+    s.add_argument("--limit", type=int, help="每采集点最多入库前缀数(调试)")
+    s.add_argument("--mrt-file", help="用本地 MRT 文件而非下载(单文件, 调试)")
+    s.add_argument("--url", help="指定单个 RIB URL")
+    s.add_argument("--family", type=int, choices=[4, 6], help="只收某族(默认 v4+v6 都收)")
     s.set_defaults(func=cmd_ingest)
-
-    s = sub.add_parser("query", help="按 城市 + path(含ASN/顺序) + origin 筛选前缀")
-    s.add_argument("--city"); s.add_argument("--province")
-    s.add_argument("--asn", help="path 含任一ASN(逗号分隔, 无序)")
-    s.add_argument("--path", help="path 含此连续序列(如 '23764 4809', 有序相邻)")
-    s.add_argument("--origin", type=int, help="origin asn")
-    s.add_argument("--limit", type=int, default=200)
-    s.add_argument("--format", choices=["table", "json", "csv"], default="table")
-    s.add_argument("--out", help="写入文件")
-    s.set_defaults(func=cmd_query)
-
-    s = sub.add_parser("insight", help="某前缀/IP 的 multihome 等价路由")
-    s.add_argument("target"); s.set_defaults(func=cmd_insight)
-
-    s = sub.add_parser("stats", help="数据库统计")
-    s.set_defaults(func=cmd_stats)
 
     s = sub.add_parser("build", help="构建前端(npm run build)并拷进 dist/(改了前端日常用; 不碰数据)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")

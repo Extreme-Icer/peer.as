@@ -2,7 +2,7 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { isLowVis, rangesToCidrs, parseBest, parseSeq, ccLabel } from '../lib/bgp.js'
+  import { isLowVis, parseBest, parseSeq, ccLabel } from '../lib/bgp.js'
   import { sortRows, showInsight, closeInsight } from '../lib/queries.js'
   import { iStar, iSignal, iChevD, iChevR } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
@@ -16,7 +16,7 @@
 
   function rowClick(r) {
     if (S.selectedPid === r.pid) closeInsight()
-    else showInsight(r.pid)
+    else showInsight(r.pid, r.prefix)
   }
   const loc = r => [r.province, r.city].filter(Boolean).join(' ') || (r.cc ? ccLabel(r.cc) : '')
   function arrow(key) { return S.sortKey === key ? (S.sortDir < 0 ? '▾' : '▴') : '' }
@@ -63,7 +63,7 @@
             <tr class="segrow"><td></td><td colspan={cols}>
               <div class="seghdr">{t('segs_title')}</div>
               <div class="segs">
-                {#each rangesToCidrs(r.segs).slice(0, 64) as cidr}<span class="segpill">{cidr}</span>{/each}
+                {#each Array.from(r.segs || []).slice(0, 64) as cidr}<span class="segpill">{cidr}</span>{/each}
               </div>
             </td></tr>
           {/if}

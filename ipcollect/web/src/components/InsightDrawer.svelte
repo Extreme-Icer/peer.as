@@ -52,13 +52,13 @@
           <div class="relbox">
             <b><Fa icon={iUp} /> {t('sup')}</b>
             {#if ins.sup.length}
-              {#each ins.sup as r, i}{#if i}<span class="sub-sep">⊂</span>{/if}<button class="rellink" onclick={() => showInsight(r.pid)}>{r.prefix}</button>{/each}
+              {#each ins.sup as r, i}{#if i}<span class="sub-sep">⊂</span>{/if}<button class="rellink" onclick={() => showInsight(r.pid, r.prefix)}>{r.prefix}</button>{/each}
             {:else}<span class="muted">{t('none_in_db')}</span>{/if}
           </div>
           <div class="relbox">
             <b><Fa icon={iDown} /> {t('sub')}</b>
             {#if ins.sub.length}
-              <div class="rels">{#each ins.sub as r}<button class="rellink" onclick={() => showInsight(r.pid)}>{r.prefix}</button>{/each}</div>
+              <div class="rels">{#each ins.sub as r}<button class="rellink" onclick={() => showInsight(r.pid, r.prefix)}>{r.prefix}</button>{/each}</div>
             {:else}<span class="muted">{t('none_in_db')}</span>{/if}
           </div>
           <div class="relnote">{t('rel_note')}</div>

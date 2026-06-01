@@ -19,8 +19,9 @@
   <section class="sec">
     <h3>{t('overview')}</h3>
     <dl class="stats">
-      <div><dt><Fa icon={iPrefix} /> {t('t_prefix')}</dt><dd>{fmt(counts.prefixes)}</dd></div>
-      <div><dt><Fa icon={iPath} /> {t('t_paths')}</dt><dd>{fmt(counts.paths)}</dd></div>
+      <div><dt><Fa icon={iPrefix} /> {t('t_prefix4')}</dt><dd>{fmt(counts.prefixes)}</dd></div>
+      <div><dt><Fa icon={iPrefix} /> {t('t_prefix6')}</dt><dd>{fmt(counts.prefixes_v6)}</dd></div>
+      <div><dt><Fa icon={iPath} /> {t('t_paths')}</dt><dd>{fmt((counts.paths || 0) + (counts.paths_v6 || 0))}</dd></div>
       <div><dt><Fa icon={iGlobal} /> {t('t_country')}</dt><dd>{nCountry || '—'}</dd></div>
       <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen">{S.meta?.generated_str || '—'}</dd></div>
     </dl>

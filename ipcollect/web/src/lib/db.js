@@ -125,31 +125,31 @@ export async function q(sql) {
 export const rpList = files => `read_parquet([${(files || []).map(f => `'${DATA}/parquet/${f}${dv()}'`).join(',')}])`
 export const rp = name => rpList((S.meta?.files || {})[name])
 
-// paths 分多文件; 用 paths_pid 区间只读命中那 1 个文件
+// paths 分多文件(v4 + v6); pid 全局唯一且两族不交 -> 合查两族 paths_pid 区间, 命中即只读那 1 个文件。
 export function pathsFileFor(pid) {
-  const idx = S.meta?.files?.paths_pid || []
+  const idx = [...(S.meta?.files?.paths_pid || []), ...(S.meta?.files?.paths_pid_v6 || [])]
   const hits = idx.filter(e => pid >= e.lo && pid <= e.hi)
-  return hits.length ? hits.map(e => e.f) : (S.meta?.files?.paths || [])
+  return hits.length ? hits.map(e => e.f)
+    : [...(S.meta?.files?.paths || []), ...(S.meta?.files?.paths_v6 || [])]
 }
 
-// pathsearch 按 origin_asn 排序 + meta.pathsearch_origin 区间索引:
-// origin AS 搜索只读覆盖该 ASN 的文件。返回 null = 库内无该 origin(前端直接给空结果, 不发查询)。
-// 无 origin 过滤(纯 AS_PATH 搜索) -> 返回全部分片(全表扫)。
+// 全局搜索的 pathsearch 文件全集(v4 + v6)。
+const _psAll = () => [...(S.meta?.files?.pathsearch || []), ...(S.meta?.files?.pathsearch_v6 || [])]
+const _psOriginIdx = () => [...(S.meta?.files?.pathsearch_origin || []), ...(S.meta?.files?.pathsearch_origin_v6 || [])]
+
+// pathsearch 按 origin_asn 排序 + 区间索引(两族): origin AS 搜索只读覆盖该 ASN 的文件。
+// 返回 null = 两族都无该 origin(直接给空结果, 不发查询)。无 origin 过滤 -> 返回全部分片(全表扫)。
 export function pathsearchFilesForOrigin(originAsn) {
-  const all = S.meta?.files?.pathsearch || []
-  const idx = S.meta?.files?.pathsearch_origin
-  if (originAsn == null || !Array.isArray(idx) || !idx.length) return all
+  const idx = _psOriginIdx()
+  if (originAsn == null || !idx.length) return _psAll()
   const hit = idx.filter(e => e.lo != null && e.hi != null && originAsn >= e.lo && originAsn <= e.hi)
-  return hit.length ? hit.map(e => e.f) : null   // null: 索引完整但无文件覆盖 -> 该 origin 不存在
+  return hit.length ? hit.map(e => e.f) : null
 }
 
-// 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(去重)。任一命中即收, 全都无覆盖才返回 null。
-// 无区间索引时回退到全部分片(全表扫)。
+// 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(两族)。全都无覆盖才返回 null。
 export function pathsearchFilesForOrigins(asns) {
-  const all = S.meta?.files?.pathsearch || []
-  const idx = S.meta?.files?.pathsearch_origin
-  if (!Array.isArray(asns) || !asns.length) return all
-  if (!Array.isArray(idx) || !idx.length) return all
+  const idx = _psOriginIdx()
+  if (!Array.isArray(asns) || !asns.length || !idx.length) return _psAll()
   const set = new Set()
   for (const a of asns)
     for (const e of idx)

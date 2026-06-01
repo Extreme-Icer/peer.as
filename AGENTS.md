@@ -5,15 +5,18 @@
 > （README 面向人类、偏介绍；本文件面向 agent、偏操作。）
 
 本项目 = 自研 CLI `ipc`（python 包 `ipcollect/`，用同目录 `.venv`）+ 纯静态 Web 看板
-**PEER.AS（全球版 BGP Insights）**。从 RIPE rrc00 MRT **全表(IPv4)** 静态分析回程 AS_PATH，**入库 = 全球全部 v4
-前缀**（`ingest_scope=global`；不按 ASN/国家过滤，focus_* 仅作高亮/导航），导出 **Parquet** 数据集，
-**DuckDB-WASM 在浏览器里发 HTTP Range 查询**（无后端），部署到 Cloudflare Pages。**架构细节见
-`docs/GLOBAL_DESIGN.md`（权威设计契约）。**
+**PEER.AS（全球版 BGP Insights）**。从 RIPE **rrc01+rrc06** 双采集点 MRT **全表(IPv4+IPv6)** 静态分析回程 AS_PATH，
+**入库 = 全球全部 v4+v6 前缀**（不按 ASN/国家过滤，focus_* 仅作高亮/导航），用 **DuckDB 工作库**去重，导出
+**Parquet** 数据集（v4 + v6 两套），**DuckDB-WASM 在浏览器里发 HTTP Range 查询**（无后端），部署到 Cloudflare Pages。
+**重构细节见 `docs/DUCKDB_V6_REFACTOR.md`（DuckDB+v6 设计契约, 含踩坑记录), 旧版见 `docs/GLOBAL_DESIGN.md`。**
 
-> 规模实测(2026-05 rrc00)：**1.13M v4 前缀 / 47.5M 去重路径 / 3.0GB SQLite / ~460MB Parquet**。
-> **v6 暂缓**(SQLite INTEGER 64 位装不下 128 位 v6 start/end)。**4 字节 ASN(>2^31)用 BIGINT**，勿用 INT32。
-> **地理以 geo 库为准**（不靠前缀首 IP）：ingest 不按城市筛；导出时按 geo **切成各国家/城市子段**(carve)，
-> 前缀出现在它覆盖的每个地区里。`geo_provider`: `ipdb`(私有,城市级,官方) / `rir`(国家级开放,OSS 复现)。
+> 规模实测(2026-06 rrc01+rrc06)：**1.10M v4 + 0.26M v6 前缀 / 50.3M 去重路径**。
+> **中间库 = DuckDB**(`ipcollect.duckdb`, 跑完即弃, 已 gitignore；SQLite 已退役)。
+> **IP 列用 `UHUGEINT`**(无符号 128 位, 同时容纳 v4/v6；**比较要 `::UHUGEINT` cast**, 否则 DuckDB 推断成有符号
+> HUGEINT 会让 v6 溢出)。**4 字节 ASN(>2^31)用 BIGINT**，勿用 INT32。
+> **地理以 geo 库为准**（不靠前缀首 IP）：ingest 不打 geo；导出时按 geo **切成各国家/城市子段**(carve, 已算成 CIDR 串)，
+> 前缀出现在它覆盖的每个地区里。geo 三轨合并为**非重叠**区间：`ipdb`(私有, **CN 城市级**) +
+> `GeoLite2-City`(**非 CN 全球城市级**, 含 v4+v6) + `rir`(国家级开放兜底)；另 `GeoLite2-ASN` 出 AS organization。
 
 ## 脱敏约定（重要）
 
@@ -25,35 +28,40 @@
 - 已移除「存活探测」整套（Shodan + ICMP/TCP probe）；勿再引入第三方密钥依赖。
 
 ## 架构 / 文件地图（`ipcollect/`）
-- `cli.py` — `ipc` 子命令入口（argparse）；每个 `cmd_*` 加载 config、连库、调 `report`/`build`。
-- `config.py` — `DEFAULT_CONFIG` + `load/save`；**`asn_registry` 等集中在此（不在代码 hard code）**，
+- `cli.py` — `ipc` 子命令入口（argparse）。**只保留部署/处理快捷入口**：`init`/`config`/`geo-import`/`ingest`/
+  `build`/`export-parquet`/`sync-web`/`serve`。**查询入口(query/stats/insight/geo-lookup)已退役**(source of
+  truth = 原始 MRT, 调试直接用 DuckDB 查工作库或 parquet)。
+- `config.py` — `DEFAULT_CONFIG` + `load/save`；`asn_registry`/`mrt_collectors`(=`[rrc01,rrc06]`)/`geolite_*` 集中在此，
   `load()` 时调 `bgp.set_registry()` 灌入。
-- `bgp.py` — AS_PATH 清洗、ASN 命名（`ASN_REGISTRY/ASN_NAME` 运行时由 config 灌入）、
-  `path_contains_seq`（**连续子序列**匹配）、`collapse_multihome`、`resolve_asns`。
-- `mrt.py` — 自写流式 MRT RIB 解析；`ingest(scope)`：`global`=收全部 v4(跳 v6, 不按 ASN/国家)，去重路径存
-  `pathobs(path_clean,path_len,origin_asn,n_peers)`；`focus`=旧口径。改 scope/focus 需重 ingest。
-- `geoip.py` — `GeoIndex`：`tag()` 点查；`carve_cc(start,end)` 切成各国家/城市子段(导出用)；`import_ipdb`
-  (城市级)/`import_rir`(RIR delegated, 国家级开放)。内存 bisect。
-- `db.py` — SQLite schema + 连接。表：`prefix` / `pathobs`(去重路径+n_peers) / `path_asn`(focus 模式才建) /
-  `geo` / `meta`。`init_schema(migrate=True)` 仅 ingest 调用(破坏性迁移 pathobs)。
-- `report.py` — CLI 查询/统计/渲染（`query_prefixes`、`insight`，读去重 pathobs；`--asn` 走 pathobs LIKE）。
-- **`parquet_export.py`** — `ipc export-parquet`：从 SQLite 导出 Parquet 数据集(`geo/<cc>` 国家分目录 +
-  `prefixes`(ip_start 排序)+ `paths`(pid 排序)+ `asn_dim`)+ `meta.json`，并调 `ssg`。**主战场**。
-  `copy_web()` 只拷前端(供 `ipc build`/`ipc sync-web`：改前端、数据没变时用，免重导出)。
-- **`ssg.py`** — 为每国家生成双语预渲染落地页 `c/<cc>.html` + `countries.html` + `sitemap.xml` + `robots.txt`(SEO)。
-- `build.py` — **旧版** 分片 JSON 导出(仅 focus 城市)，全球版已被 `parquet_export` 取代；保留备查。
-  注：CLI `ipc build` 已**改指现代前端构建**(npm run build + `copy_web`)，不再调 `build.build()`；
-  后者目前仅 `serve.py` 的 rebuild 兜底还在用。
-- `serve.py` — 本地 debug 静态托管(支持 Range)。
+- `bgp.py` — AS_PATH 清洗、ASN 命名（运行时由 config 灌入）、`path_contains_seq`（**连续子序列**）、`resolve_asns`。
+- `mrt.py` — 自写流式 MRT RIB 解析(已支持 v4+v6)；下载**断点续传+重试**；`ingest()`：遍历 `mrt_collectors`,
+  收全表 v4+v6, Python 端按 (prefix,path) 去重写 `obs`(带 collector), 末尾 `store.finalize()` 跨 collector 合并出
+  `pathobs`/`prefix`。ingest 前先 `geoip.ensure_geolite`(过期才下) + 缺/更新时 `build_geo`。`--family 4/6` 调试限族。
+- `store.py` — **DuckDB 工作库**(取代 SQLite)。`connect`(套 IPC_DUCKDB_* + cache/duck_tmp 溢出)、`obs`/`meta` 表、
+  `ObsWriter`(CSV 流式写)+`load_csv`(read_csv+`::UHUGEINT` cast 批量灌)、`finalize`(GROUP BY 去重 → pathobs/prefix + pid)。
+  `util.uhuge_halves` 拆 hi/lo 两个 UBIGINT 取(避开 UHUGEINT→python 慢转换)。
+- `geoip.py` — `ensure_geolite`(查 GitHub release tag, 过期才下 GeoLite mmdb)、`build_geo`(ipdb CN + GeoLite 非 CN
+  合并非重叠 geo + `coalesce_geo` 合并同城段 + `asn_dim`(org) + `country_dim`)、`GeoIndexDuck`(从 DuckDB 按 family
+  内存 bisect, hi/lo 快载)、`carve_cc(start,end,cap)`(超大聚合前缀退化国家级单段防炸)。旧 `import_ipdb/GeoIndex`(读
+  SQLite) 仍在但新管线不用。
+- **`parquet_export.py`** — `ipc export-parquet`：直接读 DuckDB 工作库(无 ATTACH)，按 family 出**两套** Parquet
+  (`prefixes{,_v6}`/`paths{,_v6}`/`pathsearch{,_v6}`/`geo{,_v6}/<cc>`)+ `asnames.json`/`asnorg.json` + `meta.json`，调 `ssg`。
+  v4 IP 列导 BIGINT、v6 导 UHUGEINT；segs **预算成 CIDR 串列表**(前端直接显示, 不必对 v6 做 BigInt)；代表 cc 走 ASOF join。
+  `_forest_duck`/`_subtract`/`_segments_duck` 是 carve(纯 Python, 位宽无关)。`copy_web()` 只拷前端。**主战场**。
+- **`ssg.py`** — 每国家双语 SEO 落地页 `c/<cc>.html` + `countries.html` + sitemap/robots；`_origins` 读导出期建的 `pgeo`。
+- `serve.py` — 本地 debug 静态托管(支持 Range)；`--rebuild` 只重拷前端(数据需 `export-parquet`)。
+- (已删) `db.py`/`report.py`/`build.py` —— SQLite schema / CLI 查询渲染 / 旧 JSON 导出, 随 SQLite 退役删除。
 - **`web/`** — 前端 = **Vite + Svelte 5 项目**(不再是裸 JS)。`src/App.svelte` + `src/components/*`(Sidebar/
   Topbar/Results/InsightDrawer/PathGraph/AboutModal/AsnTag/AsPath/Field) + `src/lib/*`(store.svelte.js 全局
   runes 状态、db.js DuckDB-WASM、queries.js 搜索/insight、bgp.js、i18n.js、icons.js Font Awesome、ui.js)。
   Console 暗色设计 + **系统默认字体**(勿强制自定义 web 字体, 中文会糊) + FA 图标 + teal/amber。**改完要 `npm run build`**(产出 `web/dist/`),
   `export-parquet` 再把 `web/dist/` 拷进 `dist/`。`web/test-e2e.mjs` = puppeteer-core 无头冒烟测试(用系统 Chrome)。
 
-## 数据表（`db.py`）
-`prefix`(焦点前缀+geo+origin+start/end/plen) · `pathobs`(每 peer 去程 AS_PATH) ·
-`path_asn`(ASN→前缀倒排) · `geo`(ipdb) · `meta`。
+## 数据表（DuckDB 工作库 `ipcollect.duckdb`，`store.py`/`geoip.py` 建）
+- `obs` — ingest 中间观测(每 collector 去重后的 (prefix,path) 行 + n_peers + collector)；finalize 后可弃。
+- `pathobs`(pid + 去重 AS_PATH + n_peers, 跨 collector 合并) · `prefix`(每前缀 + pid + ip_start/end `UHUGEINT` +
+  family + 代表 origin + n_paths) · `geo`(非重叠区间 + family + cc/prov/city + provider) · `country_dim`(cc→zh/en 名) ·
+  `asn_dim`(asn→org) · `meta`(kv, 含 `geo_tag` GeoLite 版本)。导出期还建临时 `pgeo`(前缀+代表 cc, ASOF)。
 
 所有命令在仓库根目录下用 `./ipc <子命令>`（启动器自动走 `.venv`，数据/缓存落本目录）。
 
@@ -78,25 +86,29 @@
 
 ## 数据维护流程
 
-### 0) geo 库（首次/库变了才需要）
+### 0) geo 库（**通常不用手动跑** —— ingest 会自动检查 GeoLite 是否过期并按需重建 geo）
 ```bash
-./ipc geo-import                      # 官方: ipdb(城市级); OSS: ./ipc geo-import --provider rir(国家级开放)
+./ipc geo-import                      # 手动重建 geo: ipdb(CN城市)+GeoLite2-City(非CN全球,v4+v6)+asn_dim(org)
+./ipc geo-import --force-download     # 强制重下 GeoLite mmdb(忽略本地版本戳)
+./ipc geo-import --no-geolite         # 只用 ipdb(CN), 不叠 GeoLite
 ```
+GeoLite mmdb 缓存在 `cache/geo/`(+ `geolite.version` 戳)。**首次 geo-import 较慢(~11min: 遍历 5.8M 段 + 非重叠合并)**, 只在 GeoLite 更新时重跑。
 
-### 1) 全表 ingest 最新 RIB（全球版默认 scope=global）
+### 1) 全表 ingest 最新 RIB（双采集点, v4+v6）
 ```bash
-./ipc ingest --reset                  # 下载 rrc00 最新 RIB(~400MB), 全表 v4 入库, 约 12 分钟; db ~3GB
-# 复用本地已下: ./ipc ingest --reset --mrt-file cache/mrt/bview.*.gz
-# 旧口径(境内含 focus): ./ipc ingest --reset --scope focus
+./ipc ingest --reset                  # 下载 rrc01+rrc06 最新 RIB(各~350MB/40MB), 全表 v4+v6 入 DuckDB; 约 15-20 分钟
+# 复用本地已下: ./ipc ingest --reset --mrt-file cache/mrt/<file>.gz   # 单文件, 调试
+# 只收某族: ./ipc ingest --reset --family 6
 ```
-入库 = **全球全部 v4 前缀**(scope=global; 跳 v6; 去重路径存 pathobs)。改 scope 需重 ingest。
+入库 = **全球全部 v4+v6 前缀**(不过滤)。ingest 会**先检查 GeoLite 过期**(过期才下), geo 表缺失或 GeoLite 更新时
+自动 `build_geo`(否则复用; `--reset` 只清 obs/pathobs/prefix, **不清 geo**)。改采集点(`config mrt_collectors`)需重 ingest。
 
 ### 2) 导出 Parquet + SSG（主发布步骤）
 ```bash
-./ipc export-parquet --out dist       # SQLite -> dist/data/parquet/* + meta.json + SSG(c/<cc>.html…), 约 2.5 分钟
+./ipc export-parquet --out dist       # DuckDB -> dist/data/parquet/*(v4+v6) + meta.json + SSG(c/<cc>.html…), 约 3-5 分钟
 ```
-注意: duckdb 溢出目录走真盘(`cache/duck_tmp`, 见 `_duck`; /tmp 是 tmpfs/RAM 会 OOM)。内存紧可设
-`IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。
+注意: duckdb 溢出目录走真盘(`cache/duck_tmp`; /tmp 是 tmpfs/RAM 会 OOM)。内存紧可设
+`IPC_DUCKDB_MEM=8GB IPC_DUCKDB_THREADS=2`。**v6 的 128 位别直接取进 Python**(慢)/取进前端(丢精度)——见 `docs/DUCKDB_V6_REFACTOR.md §8`。
 
 ### 2.5) 只改前端（免重导出）
 
@@ -109,13 +121,14 @@
 `ipc build` 跑 Vite 构建再调 `parquet_export.copy_web`(清旧 assets, 保留 `data/` 与 SSG)；秒级。
 **仅当 ingest/数据/geo/SSG 变了才需要重新 `export-parquet`。** 本地预览同理：`ipc build` 后 `./ipc serve` 刷新即生效。
 
-### 3) 查 / 看（CLI 只读，调试用）
+### 3) 查 / 看（调试）
+CLI 查询入口已退役。调试直接用 DuckDB 查工作库或产物 parquet:
 ```bash
-./ipc query --city 上海 --path "23764 4809"   # 城市+连续序列
-./ipc query --city 上海 --asn 9929            # 城市+含任一ASN(无序)
-./ipc stats
-./ipc insight 101.230.0.0/16                  # 某前缀的 multihome 等价路由
+.venv/bin/python -c "import duckdb;c=duckdb.connect('ipcollect.duckdb',read_only=True);\
+print(c.execute('SELECT family,count(*) FROM prefix GROUP BY family').fetchall())"
+# 或对导出的 parquet: duckdb -c "SELECT * FROM read_parquet('dist/data/parquet/prefixes_v6/*.parquet') LIMIT 5"
 ```
+本地看站: `./ipc serve` 后浏览器开 http://127.0.0.1:8787/(支持 Range, 与生产一致)。
 
 ---
 
@@ -306,9 +319,9 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 - 主题：自动/亮/暗（`data-theme` + localStorage）；移动端有 `@media` 适配。
 - badge/线路配色：电信蓝/联通红/移动绿/教育紫/科技橙/国际灰（`asn_ops` 驱动）。
 - 抽屉显示**更大/更小段**（库内采集到的，可能不全，UI 已标注）。
-- **DFZ 可见性**：`n_paths`(=观测到该前缀的 peer 数) 是现成的可见度信号；`build` 导出全局基准
-  `dfz_ref`(n_paths 的 p90 ≈ 全表 peer 数)。前端 `isLowVis` = `n_paths < 0.2*dfz_ref`
-  判「低可见·疑未入 DFZ」，打 badge；控制栏 checkbox「含低可见」默认**不勾**(隐藏这些)。
+- **DFZ 可见性**：`n_paths`(=观测到该前缀的 peer 数, 跨 rrc01+rrc06) 是可见度信号；export 出**按 family** 的
+  `dfz_ref`/`dfz_ref_v6`(n_paths p90)。前端 `isLowVis`/`lowCutFor(v6)` = `n_paths < 0.2*dfz_ref[_v6]`(v6 自有阈值,
+  其全网 peer 数远少)；控制栏「含低可见」默认**不勾**。
 - 「关于」modal：数据来源/分析方法/免责（仅供学习研究 BGP）/数据更正 issue 链接。
 
 ## 不变量 / 常见坑（改动前必读）
@@ -316,15 +329,16 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 - **`origin asn` 仅展示**，不得参与筛选/排序；命名永远叫 "origin asn"，不叫"回程 asn"。
 - path 搜索是**连续相邻子序列**（`1299 23764 4809` ≠ `1299 4809`），不是"含且无序"。`--asn` 才是无序含任一。
 - **ASN 名称/分组在 `config.json` 的 `asn_registry`**，不在代码里；改名加 ASN 改这里即可。
-- 改 `focus_asns` 后**必须重新 `ingest`** 才生效。`focus_cities` 改动不需 reingest（不入库用）。
-- **城市以 ipdb 为准**：build 用 `GeoIndex.carve` 把前缀切成各城市子段(只切 `focus_cities`)，进它覆盖的每个
-  城市分片(带本城 `segs`/`nseg`)；`pid_city` 给代表城市(供 ipindex/父子段跳转)。
-- **有效路由切段(关键)**：BGP 是最长前缀匹配——前缀的 AS_PATH 只对「**自身范围 − 更具体子段**」有效。build 先
-  `_forest` 建层状森林, 对每前缀用 `_subtract(range, 子段holes)` 得有效范围, **再**按 ipdb 切城市。
-- **build 会先清空 `dist/data/prefixes/`**：城市数/编号每次可能变, 不清会残留过期 `c00xx-*.json` 膨胀产物。
-- 前端改 `ipcollect/web/*` 后**必须 `ipc build`**(= `npm run build` + 拷 web/dist) 才进 `dist/`。
-- 已有的 `ipcollect.db` 可能残留早期 quality / host / candidate / shodan_query 列或表（来自被移除的功能），
-  读时忽略即可；`--reset` 只 DELETE prefix/pathobs/path_asn 行，不 DROP 旧表。
+- 改 `mrt_collectors` 后**必须重新 `ingest`**。`focus_cities` 现仅作前端城市导航集(不再决定 carve 粒度), 改它不需重 ingest/导出。
+- **geo 以合并后 geo 表为准**：export 用 `GeoIndexDuck.carve_cc` 把前缀切成各城市子段(**全球都到城市**,
+  CN 用 ipdb / 国际用 GeoLite)，segs 预算成 **CIDR 串列表**进 `geo{,_v6}/<cc>`。超大聚合前缀(覆盖 geo 段 >`SEG_OVERLAP_CAP`)
+  退化国家级单段防炸。
+- **有效路由切段(关键)**：BGP 是最长前缀匹配——前缀的 AS_PATH 只对「**自身范围 − 更具体子段**」有效。export 先
+  `_forest_duck` 建层状森林, 对每前缀 `_subtract(range, 子段holes)` 得有效范围, **再**按 geo 切城市。
+- **export 会先 `shutil.rmtree(dist/data/parquet)`** 全部重写(文件名/计数每次变)。
+- 前端改 `ipcollect/web/*` 后**必须 `npm run build`**(`ipc build` 会跑) 才进 `web/dist/`→`dist/`。**改 CHANGELOG 也要重 build**(内联)。
+- `ipcollect.duckdb` 是中间态(跑完即弃, 已 gitignore)；`--reset` 清 obs/pathobs/prefix, **保留 geo/asn_dim/country_dim**。
+  旧 `ipcollect.db`(SQLite) 已无用, 可删。
 
 ## 在不烧资源的前提下验证（重要）
 - **JS**：`node --check dist/app.js`（或 `ipcollect/web/app.js`）。**CSS/HTML**：肉眼 + `ipc serve` 本地看。
@@ -338,7 +352,8 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 `~/.claude/projects/-home-aosc-test-ip-collect/memory/`（`MEMORY.md` 为索引）。
 
 ## 路线图（进行中）
-**已完成**：全球全表(v4) PEER.AS，纯静态可复现可镜像，**DuckDB-WASM + Parquet** 分发，geo 双轨
-(官方 ipdb 城市级 / OSS rir 国家级)，i18n(zh/en) + SEO(SSG 双语国家页+sitemap)。
-详见 `docs/GLOBAL_DESIGN.md`。**无 CI**：build/export/deploy 全手动在本机跑(见上「构建 & 部署」), GitHub 仅托管源码。
-**待办/可改进**：v6(需 128 位端到端)；duckdb-wasm 可改 vendored 提升可镜像性。
+**已完成**：全球全表 **v4+v6** PEER.AS(rrc01+rrc06 双采集点)，**DuckDB 工作库**(SQLite 退役)，纯静态可复现，
+**DuckDB-WASM + Parquet**(v4/v6 两套)分发；geo 三轨合并(ipdb CN 城市 + GeoLite 国际城市 + rir 兜底)、**全球城市级** +
+**AS organization**；i18n(zh/en) + SEO。详见 `docs/DUCKDB_V6_REFACTOR.md`。**无 CI**：全手动在本机跑, GitHub 仅托管源码。
+**待办/可改进**：geo-import 的非重叠窗口去重(~分钟级)可优化；duckdb-wasm 可改 vendored 提升可镜像性;
+v6 全表 carve 体量较大(692MB)可视情况收敛国际城市粒度。

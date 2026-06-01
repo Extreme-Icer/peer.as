@@ -50,9 +50,10 @@ background:#2563eb;color:#fff;text-decoration:none;font-weight:600}}
 
 
 def _origins(con, cc: str, asnames: dict) -> list[tuple]:
+    # 读导出期建的 pgeo(前缀 + 代表 cc); v4 为主(SEO 落地页面向 v4 主体)。
     rows = con.execute(
-        "SELECT origin_asn, count(*) c FROM s.prefix "
-        "WHERE country_code=? AND family=4 AND origin_asn IS NOT NULL "
+        "SELECT origin_asn, count(*) c FROM pgeo "
+        "WHERE cc=? AND family=4 AND origin_asn IS NOT NULL "
         "GROUP BY 1 ORDER BY c DESC LIMIT 8", [cc]).fetchall()
     return [(r[0], r[1], asnames.get(r[0]) or "") for r in rows]  # asnames: int -> name
 

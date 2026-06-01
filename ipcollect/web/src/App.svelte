@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import Fa from 'svelte-fa'
   import { S } from './lib/store.svelte.js'
-  import { getJSON, initDuck, DATA, dv } from './lib/db.js'
+  import { getData, initDuck, configure, dv } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
   import { runSearch, closeInsight } from './lib/queries.js'
@@ -34,8 +34,12 @@
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))
     const dw = parseFloat(localStorage.getItem('ipc-detail-w')); if (dw) S.detailW = Math.min(72, Math.max(38, dw))
 
+    // 选定数据/wasm 宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则 CF/jsDelivr。
+    await configure()
+
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
-    try { S.meta = await getJSON(`${DATA}/meta.json`, { cache: 'no-cache' }) }
+    // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。
+    try { S.meta = await getData('/meta.json', { cache: 'no-cache' }) }
     catch (e) { fatal = `meta.json: ${e.message}（先跑 ipc export-parquet）`; S.loading = false; return }
 
     const cc0 = qp.get('cc'); if (cc0) S.filters.cc = ccLabel(cc0.toUpperCase())
@@ -43,7 +47,7 @@
 
     S.msg = t('loading')
     // 全量 ASN 名(~1MB)与 DuckDB 初始化并行加载; 失败则降级到 meta 里的精选名。
-    const asnP = getJSON(`${DATA}/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
+    const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
     try { await initDuck() } catch (e) { fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; return }
     try { await asnP } catch (e) { /* 可选, 忽略 */ }
     S.ready = true; S.loading = false; S.msg = ''

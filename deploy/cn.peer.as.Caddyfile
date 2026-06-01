@@ -1,0 +1,55 @@
+# cn.peer.as — 中国优化数据/wasm 宿主 (Caddy v2.6+, 部署到 /etc/caddy/Caddyfile)
+# 角色: 仅服务 CN 用户(前端按 /cdn-cgi/trace loc=CN 分流到此)。海外仍走 CF/jsDelivr。
+# 提供: /data/* (Parquet, 走 HTTP Range) + /duckdb/* (自托管 DuckDB-WASM bundle)。
+# 前置: cn.peer.as 灰云直指本机; TCP 80/443 + UDP 443(HTTP/3) 放行(无防火墙即可); BBR 已开。
+# 改完: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+cn.peer.as {
+	root * /var/www/cn
+
+	# CORS: 数据全公开、无凭据 -> 用 * 最简, prod(peer.as)/preview(*.pages.dev)/任意源都通。
+	# defer: 确保这些响应头落到 file_server 真正写出的 GET/HEAD(含 206) 响应上, 不被覆盖。
+	# 浏览器对每个跨源响应(含 206)都校验 ACAO; Expose-Headers 让 JS 能读 Content-Range 等。
+	header {
+		Access-Control-Allow-Origin "*"
+		Access-Control-Expose-Headers "Content-Range, Content-Length, Accept-Ranges, ETag"
+		defer
+	}
+
+	# OPTIONS 预检 -> 直接 204, 带齐允许的方法/请求头(含 Range)。
+	@preflight method OPTIONS
+	header @preflight {
+		Access-Control-Allow-Origin "*"
+		Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+		Access-Control-Allow-Headers "Range, Content-Type, If-Range, If-None-Match"
+		Access-Control-Max-Age "86400"
+		defer
+	}
+	respond @preflight 204
+
+	# 缓存: 自托管 duckdb 与 parquet 长缓存 immutable(parquet 带 ?v= 版本, 安全);
+	# meta.json 必校验(它是版本源, 一变即生效); asnames 带 ?v= 可较长缓存。
+	@duckdb path /duckdb/*
+	header @duckdb Cache-Control "public, max-age=31536000, immutable"
+	@parquet path /data/parquet/* /data/prefixes/*
+	header @parquet Cache-Control "public, max-age=31536000, immutable"
+	@meta path /data/meta.json
+	header @meta Cache-Control "no-cache"
+	@asn path /data/asnames.json
+	header @asn Cache-Control "public, max-age=86400"
+
+	# wasm Content-Type 兜底(Caddy 内置 mime 已对, 双保险)。
+	@wasm path *.wasm
+	header @wasm Content-Type "application/wasm"
+
+	# 压缩: 只排除 *.parquet —— 它走 HTTP Range, 压缩会让响应变 200 整传、破坏 206 分段读。
+	# wasm/json/js/css/html 照常压(前端整块取 wasm 入 Cache Storage, 非 Range; 34MB->~9MB 大赚)。
+	@compressible {
+		not path *.parquet
+	}
+	encode @compressible zstd gzip
+
+	file_server
+
+	# 访问日志走 journald(systemd 沙箱下写 /var/log 会被拒): journalctl -u caddy。
+	# 出口流量统计另用 vnstat。如需文件访问日志, 给 caddy.service 配 LogsDirectory=caddy 再开 log。
+}

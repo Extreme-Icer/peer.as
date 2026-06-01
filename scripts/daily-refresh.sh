@@ -4,8 +4,9 @@
 # 由 fcron 每天 04:00 触发（见 `fcrontab -l`）。完整工作流（AGENTS.md「数据维护流程」）：
 #   1) ./ipc ingest --reset        下载 rrc00 最新 RIB(~400MB), 全表 v4 入库(~12min, db ~3GB)
 #   2) ./ipc export-parquet --out dist   SQLite -> Parquet + SSG -> dist/(~2.5min)
-#   3) 同步 dist/data -> R2 桶 $R2_BUCKET(前端读 data.peer.as; 数据先传、meta.json 最后传)
-#   4) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
+#   3) 同步 dist/data -> R2 桶 $R2_BUCKET(海外前端读 data.peer.as; 数据先传、meta.json 最后传)
+#   4) 同步 dist/data -> 中国优化 VPS(cn.peer.as, best-effort; CN 前端读它, 见 AGENTS.md「中国优化」)
+#   5) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
 # 前端已切 R2 数据源(VITE_DATA_BASE=https://data.peer.as)⇒ 步骤 3 不可省, 否则每日新数据进不了 R2。
 # 不跑 npm build：前端源每日不变，web/dist/ 已存在并由 export-parquet 拷进 dist/。
 # 改了前端时需人工先 `cd ipcollect/web && npm run build`（见 AGENTS.md）。
@@ -45,13 +46,13 @@ run() {
   echo "[$(date -Is)] 1/3 ingest --reset"
   ./ipc ingest --reset
 
-  echo "[$(date -Is)] 2/4 export-parquet --out dist"
+  echo "[$(date -Is)] 2/5 export-parquet --out dist"
   ./ipc export-parquet --out dist
 
   # 3/4 同步到 R2：前端已读 data.peer.as ⇒ 新数据必须进桶。R2 逐对象上传非原子，
   # 故「数据先传、meta.json 最后传」：meta 是 version 源，若数据没传全就跳过 meta，
   # R2 维持上一致版本(宁可旧也别 version/分片错位)。单文件最多重试 3 次抗瞬时限流。
-  echo "[$(date -Is)] 3/4 sync dist/data -> R2 (${R2_BUCKET:-未配置})"
+  echo "[$(date -Is)] 3/5 sync dist/data -> R2 (${R2_BUCKET:-未配置})"
   if [ -n "${R2_BUCKET:-}" ]; then
     FAILS="$LOGDIR/r2-fails-$TS.txt"; : > "$FAILS"
     export R2_BUCKET FAILS
@@ -74,7 +75,25 @@ run() {
     echo "  跳过：未设置 R2_BUCKET（前端将回退同源 dist/data）"
   fi
 
-  echo "[$(date -Is)] 4/4 wrangler pages deploy"
+  # 4/5 同步 dist/data -> 中国优化 VPS(cn.peer.as)。best-effort: VPS 只是 CN 加速层, 同步失败
+  # 不阻断部署(CN 用户会自动回退 CF/R2)。数据先传、meta.json 最后传(同 R2 的原子性语义)。
+  # 目标走 .env 的 CN_DEPLOY_SSH(如 root@<ip>)/CN_DEPLOY_PATH, 不写进提交文件(脱敏)。
+  # 注: duckdb wasm(/duckdb)不在 dist 内, 仅 duckdb 版本升级时在 VPS 上手动重置(见 AGENTS.md)。
+  if [ -n "${CN_DEPLOY_SSH:-}" ]; then
+    CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
+    RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+    echo "[$(date -Is)] 4/5 rsync dist/data -> ${CN_DEPLOY_SSH}:${CNPATH}/data"
+    if rsync -a --delete --exclude=meta.json -e "$RSH" "$PROJ/dist/data/" "${CN_DEPLOY_SSH}:${CNPATH}/data/" \
+       && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
+      echo "  ✓ VPS 数据同步完成(meta.json 最后传)"
+    else
+      echo "  ⚠ VPS 数据同步失败(CN 用户将回退 CF/R2), 不阻断部署"
+    fi
+  else
+    echo "[$(date -Is)] 4/5 跳过 VPS 同步：未设置 CN_DEPLOY_SSH"
+  fi
+
+  echo "[$(date -Is)] 5/5 wrangler pages deploy"
   wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
 
   echo "[$(date -Is)] 完成 ✅"

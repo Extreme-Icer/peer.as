@@ -27,3 +27,9 @@
 # /data/*.json, so it never overlaps the meta.json rule above.)
 /data/asnames.json
   Cache-Control: public, max-age=86400
+
+# Service Worker — must revalidate so updates propagate promptly. (Browsers cap
+# SW script HTTP caching at 24h regardless, but be explicit.) Long-caching it
+# would strand users on a stale SW.
+/sw.js
+  Cache-Control: no-cache

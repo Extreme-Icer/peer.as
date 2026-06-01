@@ -221,11 +221,53 @@ curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                       
   上传(前端已不读, 属冗余兜底, 可后续从部署产物剔除以缩小 Pages)。
 - 切换若要回退:把 `.env` 的 `VITE_DATA_BASE` 清空 → `npm run build` → 部署, 前端即回退同源 `dist/data`。
 
+### 中国优化（cn.peer.as）
+
+**问题**：CF Pages/R2 在中国大陆慢(anycast 跨境被限速/丢包，RTT ~450ms)。**方案**：一台中国优化线路的
+VPS(DMIT LAX，`cn.peer.as` 灰云直连)用 **Caddy** 托管**全部数据 + 自托管 DuckDB-WASM**，前端**运行时按
+地区分流**：`loc=CN` 走 VPS、其余走 CF/R2，并带**健康探测 + 自动回退**。
+
+**前端如何分流(`web/src/lib/db.js` `configure()`，App.svelte onMount 最先调)**：
+- 同源 `GET /cdn-cgi/trace`(CF 才有，本地/非CF 取不到 ⇒ 当作非 CN) 解析 `loc=CN`。
+- CN 则**健康探测** `https://cn.peer.as/data/meta.json`(超时 2s)，通了才把数据源 `DATA` 切到
+  `cn.peer.as/data`、wasm 源 `DUCK_SRC` 切到 `cn.peer.as/duckdb`；**探测失败/超时 ⇒ 保持 CF/R2**。
+- `getData()`(meta/asnames)再带一层 try-CN→回退-CF；parquet 的 DuckDB 取数无逐请求回退，靠启动探测把关。
+- 覆盖：`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
+
+**DuckDB-WASM 自托管 + Cache Storage(核心修复)**：`duckdb-eh.wasm` 解压 **34MB**，**超出 Chromium HTTP
+磁盘缓存单资源上限(`max_size/8`) ⇒ 每次刷新都跨境重下 ~9MB**。修法(`initDuck` + `cachedBlobURL`)：手动
+bundle(mvp+eh，无 COI) 指向选定源 → wasm/worker.js **存入 Cache Storage(无单资源上限)**，以 blob: URL 喂给
+duckdb(wasm blob 标 `application/wasm` 走 instantiateStreaming；worker.js 自包含，cached text 直接 `new
+Worker`)。**首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`)，主源失败回退
+jsDelivr。缓存名带版本(`duckdb-wasm-1.32.0`)，升级 duckdb 自动弃旧。加载器 `+esm`(32KB) 仍走 jsDelivr(小、能
+HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。**Service Worker**(`public/sw.js`)只缓存同源壳
+(HTML network-first 防陈旧 hash、`/assets/*` cache-first)，不碰数据/跨源(wasm 由上面的 Cache Storage 管)。
+
+**VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙(UDP443 h3 通)。
+- 目录：`/var/www/cn/data`(parquet，rsync 自 `dist/data`) + `/var/www/cn/duckdb`(4 个 wasm 文件)。
+- 配置：`deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`(Caddy 自动签 LE 证书)。**要点**：
+  CORS `*` + Expose `Content-Range` 等 + OPTIONS 预检 204；`encode` **只排除 `*.parquet`**(它走 Range，压缩
+  破坏 206)，**wasm 照压**(34MB→8MB，整块取非 Range)；parquet/duckdb 长缓存 immutable、meta.json no-cache。
+  访问日志走 journald(`journalctl -u caddy`；systemd 沙箱下写 `/var/log` 被拒，故未用 file log)。
+- 实测：parquet 206+Range+CORS 不压缩；wasm `content-encoding: gzip` 下载 8MB；预检 204；h3 `alt-svc` 已广播；
+  浏览器实测 F5 不再重下 wasm(命中 Cache Storage)、`?cc=CN` 查询 500 行正确。
+
+**VPS 重建/维护**：
+- 数据：daily-refresh **步骤 4/5** rsync(`.env` 的 `CN_DEPLOY_SSH`/`CN_DEPLOY_PATH`；best-effort，失败不阻断)。
+- 首次/换机装 Caddy：官方 apt 源装 `caddy`，scp `deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`，
+  `caddy validate && systemctl reload caddy`。DNS 须先把 `cn.peer.as` 灰云 A 记录指向本机(否则签证书失败)。
+- duckdb wasm(不随 daily 同步，仅**升级 duckdb 版本**时重置)：在 VPS 上
+  `cd /var/www/cn/duckdb && for f in duckdb-mvp.wasm duckdb-browser-mvp.worker.js duckdb-eh.wasm
+  duckdb-browser-eh.worker.js; do curl -sO https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@<VER>/dist/$f; done`，
+  并同步改前端 `DUCKDB_VER`(db.js) + `WASM_CACHE` 缓存名随之失效。
+
 ### 自动化：每天 04:00 自动刷新 + 部署（cron）
 
 数据每日自动刷新：`scripts/daily-refresh.sh` 串起 `ingest --reset` → `export-parquet --out dist` →
-**sync R2** → `wrangler pages deploy`，由 **fcron** 每天 **04:00** 触发。
-- **R2 同步步(步骤 3/4, 切 R2 后关键)**:export 后把 `dist/data/` 镜像到 `$R2_BUCKET`(脚本从 `.env` 读),
+**sync R2** → **sync VPS(cn.peer.as)** → `wrangler pages deploy`，由 **fcron** 每天 **04:00** 触发。
+- **VPS 同步步(步骤 4/5)**：rsync `dist/data` → `$CN_DEPLOY_SSH:$CN_DEPLOY_PATH/data`(数据先、meta 最后，同
+  R2 语义)；best-effort，失败只告警不阻断(CN 用户回退 CF/R2)。未设 `CN_DEPLOY_SSH` 则跳过。
+- **R2 同步步(步骤 3/5, 切 R2 后关键)**:export 后把 `dist/data/` 镜像到 `$R2_BUCKET`(脚本从 `.env` 读),
   `--remote` 必加;**数据先传、`meta.json` 最后传**——R2 逐对象上传非原子, meta 是 version 源, 若数据没传全
   就**跳过 meta**(R2 维持上一致版本, 宁旧勿错位);单文件重试 3 次抗瞬时限流。失败清单写 `logs/r2-fails-<ts>.txt`。
 - 安装/查看：`fcrontab -l`（条目 `0 4 * * * .../scripts/daily-refresh.sh`）。改时间：`fcrontab -e` 或重灌。

@@ -135,10 +135,11 @@
   .prompt p { font-size: 13.5px; line-height: 1.8; }
   .prompt :global(b) { color: var(--fg); font-weight: 600; }
   .empty { color: var(--muted); padding: 40px 6px; font-size: 13px; text-align: center; }
-  /* 中国优化服务器赞助提示: 浅色处理(muted + 半透明), 不抢内容焦点 */
+  /* 中国优化服务器赞助提示: 文字用与 prompt 一致的 muted 色; margin-top:auto 贴到内容区底部,
+     与侧栏底部控制栏(.foot)高度对齐 */
   .cn-accel {
     display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px;
-    margin: 26px auto 0; color: var(--muted); font-size: 11.5px; opacity: .55;
+    margin-top: auto; padding-top: 24px; color: var(--muted); font-size: 11.5px;
   }
   .cn-accel a { line-height: 0; }
   .cn-accel img { height: 15px; display: block; }

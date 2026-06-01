@@ -82,7 +82,8 @@
 <style>
   .app { display: flex; min-height: 100vh; }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-  .content { flex: 1; padding: 6px 18px 30px; }
+  /* flex 列: 让空状态的赞助条用 margin-top:auto 贴到底部; 底 padding 14px 与侧栏 .foot 对齐 */
+  .content { flex: 1; padding: 6px 18px 14px; display: flex; flex-direction: column; }
   .boot { padding: 70px 20px; text-align: center; color: var(--muted); font: 13px var(--mono); display: flex; align-items: center; justify-content: center; gap: 10px; }
   .boot :global(svg) { color: var(--accent); }
   .fatal { padding: 40px 20px; color: #e06c6c; font-size: 13px; }

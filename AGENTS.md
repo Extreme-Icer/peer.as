@@ -39,9 +39,11 @@
 - `report.py` — CLI 查询/统计/渲染（`query_prefixes`、`insight`，读去重 pathobs；`--asn` 走 pathobs LIKE）。
 - **`parquet_export.py`** — `ipc export-parquet`：从 SQLite 导出 Parquet 数据集(`geo/<cc>` 国家分目录 +
   `prefixes`(ip_start 排序)+ `paths`(pid 排序)+ `asn_dim`)+ `meta.json`，并调 `ssg`。**主战场**。
-  `copy_web()` 只拷前端(供 `ipc sync-web`：只改前端、数据没变时用，免重导出)。
+  `copy_web()` 只拷前端(供 `ipc build`/`ipc sync-web`：改前端、数据没变时用，免重导出)。
 - **`ssg.py`** — 为每国家生成双语预渲染落地页 `c/<cc>.html` + `countries.html` + `sitemap.xml` + `robots.txt`(SEO)。
 - `build.py` — **旧版** 分片 JSON 导出(仅 focus 城市)，全球版已被 `parquet_export` 取代；保留备查。
+  注：CLI `ipc build` 已**改指现代前端构建**(npm run build + `copy_web`)，不再调 `build.build()`；
+  后者目前仅 `serve.py` 的 rebuild 兜底还在用。
 - `serve.py` — 本地 debug 静态托管(支持 Range)。
 - **`web/`** — 前端 = **Vite + Svelte 5 项目**(不再是裸 JS)。`src/App.svelte` + `src/components/*`(Sidebar/
   Topbar/Results/InsightDrawer/PathGraph/AboutModal/AsnTag/AsPath/Field) + `src/lib/*`(store.svelte.js 全局
@@ -98,14 +100,14 @@
 
 ### 2.5) 只改前端（免重导出）
 
-前端代码改完、**数据(parquet/meta/SSG)没变**时，不必跑耗时的 `export-parquet`；在 `ipcollect/web` `npm run
-build` 后只把前端拷进 `dist/` 即可：
+前端代码改完、**数据(parquet/meta/SSG)没变**时，不必跑耗时的 `export-parquet`，一条命令搞定：
 ```bash
-./ipc sync-web          # 只拷 web/dist -> dist/(清旧 assets, 保留 data/ 与 SSG); 秒级, 不重导出
-./ipc sync-web --build  # 顺带先在 ipcollect/web 跑 npm run build 再拷
+./ipc build             # = npm run build(ipcollect/web) + 拷 web/dist -> dist/; 不碰数据。日常改前端就用它
+./ipc build --no-npm    # 跳过 npm、只拷已构建的 web/dist(等价旧 sync-web)
+./ipc sync-web          # 同 --no-npm: 只拷 web/dist -> dist/(web 已 build、不想重跑 npm 时用)
 ```
-`sync-web` 就是 `export-parquet` 的「拷前端」那一步(`parquet_export.copy_web`)。**仅当 ingest/数据/geo/SSG
-变了才需要重新 `export-parquet`。** 本地预览同理：`sync-web` 后 `./ipc serve` 刷新即生效。
+`ipc build` 跑 Vite 构建再调 `parquet_export.copy_web`(清旧 assets, 保留 `data/` 与 SSG)；秒级。
+**仅当 ingest/数据/geo/SSG 变了才需要重新 `export-parquet`。** 本地预览同理：`ipc build` 后 `./ipc serve` 刷新即生效。
 
 ### 3) 查 / 看（CLI 只读，调试用）
 ```bash
@@ -130,12 +132,13 @@ build` 后只把前端拷进 `dist/` 即可：
 **维护改动：直接 build + export-parquet + 推，无需再确认（用户已授权直接推）。**
 
 ```bash
-# 1) 改了前端(web/) 必须先构建:
-cd ipcollect/web && npm ci && npm run build && cd ../..
-# 2) 拷前端 + 导出数据 + SSG -> dist/:
+# A) 只改了前端(web/, 含 CSS): 一条命令构建+拷进 dist(npm run build + copy_web), 不碰数据:
+./ipc build                       # 首次/换机若缺依赖: (cd ipcollect/web && npm ci) 再 ./ipc build
+# B) 改了数据(ingest/geo/SSG): 重导出(含拷前端):
 ./ipc export-parquet --out dist
-# 3) 部署(账户/token 走环境变量, 见 .env.example; 或 wrangler login):
-wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
+# 部署(账户/token 走环境变量, 见 .env.example; 或 wrangler login):
+#   --commit-message 用 ASCII: 不带时 wrangler 自动读 git 提交信息, 中文有时报 Invalid UTF-8。
+wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true --commit-message="..."
 # 前端无头自检(可选, 用系统 Chrome): ./ipc serve --port 8812 & ; cd ipcollect/web && node test-e2e.mjs
 ```
 
@@ -319,7 +322,7 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 - **有效路由切段(关键)**：BGP 是最长前缀匹配——前缀的 AS_PATH 只对「**自身范围 − 更具体子段**」有效。build 先
   `_forest` 建层状森林, 对每前缀用 `_subtract(range, 子段holes)` 得有效范围, **再**按 ipdb 切城市。
 - **build 会先清空 `dist/data/prefixes/`**：城市数/编号每次可能变, 不清会残留过期 `c00xx-*.json` 膨胀产物。
-- 前端改 `ipcollect/web/*` 后**必须 `ipc build`** 才进 `dist/`（build 会拷贝 web/）。
+- 前端改 `ipcollect/web/*` 后**必须 `ipc build`**(= `npm run build` + 拷 web/dist) 才进 `dist/`。
 - 已有的 `ipcollect.db` 可能残留早期 quality / host / candidate / shodan_query 列或表（来自被移除的功能），
   读时忽略即可；`--reset` 只 DELETE prefix/pathobs/path_asn 行，不 DROP 旧表。
 

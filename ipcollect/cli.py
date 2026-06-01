@@ -125,13 +125,19 @@ def cmd_stats(args):
 
 
 def cmd_build(args):
-    cfg = config.load()
-    conn = _conn()
-    util.log(f"构建静态看板 -> {args.out}")
-    r = build.build(cfg, conn, out_dir=args.out, pretty=args.pretty)
-    print(f"build 完成: {r['files']} 文件 / {util.human(r['bytes'])}B "
-          f"({r['cities']} 城市, {r['prefixes']} 前缀) -> {r['out']}/")
-    print(f"部署: 把 {r['out']}/ 作为 Cloudflare Pages 输出目录 (无构建命令、无服务器)。")
+    """构建前端(Vite+Svelte: npm run build)并拷进 dist/。改了前端(web/)的日常命令;
+    不碰数据(免重跑 export-parquet)。--no-npm 跳过 npm、只拷已构建的 web/dist。"""
+    from pathlib import Path
+    from . import parquet_export
+    web = Path(__file__).resolve().parent / "web"
+    if not args.no_npm:
+        import subprocess
+        util.log("npm run build (ipcollect/web) …")
+        subprocess.run(["npm", "run", "build"], cwd=str(web), check=True)
+    n = parquet_export.copy_web(out_dir=args.out)
+    print(f"前端构建完成: npm run build + 拷 {n} 文件 (web/dist -> {args.out}/); 数据未动。")
+    print(f"部署: wrangler pages deploy {args.out} --project-name bgp-insights "
+          f"--branch main --commit-dirty=true --commit-message=\"...\"")
 
 
 def cmd_export_parquet(args):
@@ -145,16 +151,10 @@ def cmd_export_parquet(args):
 
 
 def cmd_sync_web(args):
-    """只把已构建前端 web/dist 拷进 out(改了前端但数据没变时用, 免重跑 export-parquet)。"""
-    from pathlib import Path
+    """只把已构建前端 web/dist 拷进 out(数据没变、web 已 build 时用; 要顺带 npm build 用 `ipc build`)。"""
     from . import parquet_export
-    if args.build:
-        import subprocess
-        web = Path(__file__).resolve().parent / "web"
-        util.log("npm run build …")
-        subprocess.run(["npm", "run", "build"], cwd=str(web), check=True)
     n = parquet_export.copy_web(out_dir=args.out)
-    print(f"前端已同步: {n} 文件 (web/dist -> {args.out}/); 未重导出 parquet/SSG。")
+    print(f"前端已同步: {n} 文件 (web/dist -> {args.out}/); 未跑 npm、未重导出 parquet/SSG。")
 
 
 def cmd_serve(args):
@@ -213,18 +213,17 @@ def build_parser():
     s = sub.add_parser("stats", help="数据库统计")
     s.set_defaults(func=cmd_stats)
 
-    s = sub.add_parser("build", help="生成静态看板产物 dist/ (旧版: 分片 JSON, 仅 focus 城市)")
+    s = sub.add_parser("build", help="构建前端(npm run build)并拷进 dist/(改了前端日常用; 不碰数据)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
-    s.add_argument("--pretty", action="store_true", help="JSON 缩进(便于调试, 体积更大)")
+    s.add_argument("--no-npm", action="store_true", help="跳过 npm run build, 只拷已构建的 web/dist(同 sync-web)")
     s.set_defaults(func=cmd_build)
 
     s = sub.add_parser("export-parquet", help="导出 Parquet 数据集(全球, 供 DuckDB-WASM 前端)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
     s.set_defaults(func=cmd_export_parquet)
 
-    s = sub.add_parser("sync-web", help="只把已构建前端 web/dist 拷进 dist(改了前端但数据没变时用, 免重导出)")
+    s = sub.add_parser("sync-web", help="只拷已构建前端 web/dist -> dist(不跑 npm; 要顺带 build 用 `ipc build`)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
-    s.add_argument("--build", action="store_true", help="先在 ipcollect/web 跑 npm run build 再拷")
     s.set_defaults(func=cmd_sync_web)
 
     s = sub.add_parser("serve", help="本地 debug: 静态托管 build 产物")

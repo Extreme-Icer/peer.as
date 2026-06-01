@@ -1,8 +1,17 @@
 # cn.peer.as — 中国优化数据/wasm 宿主 (Caddy v2.6+, 部署到 /etc/caddy/Caddyfile)
 # 角色: 仅服务 CN 用户(前端按 /cdn-cgi/trace loc=CN 分流到此)。海外仍走 CF/jsDelivr。
 # 提供: /data/* (Parquet, 走 HTTP Range) + /duckdb/* (自托管 DuckDB-WASM bundle)。
-# 前置: cn.peer.as 灰云直指本机; TCP 80/443 + UDP 443(HTTP/3) 放行(无防火墙即可); BBR 已开。
+# 前置: cn.peer.as 灰云直指本机; TCP 80/443 放行(无防火墙即可); BBR 已开。
 # 改完: caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+
+# 全局: 只用 h1/h2(TCP), 禁用 HTTP/3(QUIC)。中国网络对 UDP/QUIC 做 QoS 限速, 走 h3 反而更慢;
+# 本机仅服务 CN ⇒ 全局关 h3 即可(海外用 CF, 不受影响)。关后不监听 UDP/443、不广播 alt-svc h3。
+{
+	servers {
+		protocols h1 h2
+	}
+}
+
 cn.peer.as {
 	root * /var/www/cn
 

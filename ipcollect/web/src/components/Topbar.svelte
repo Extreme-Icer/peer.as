@@ -4,7 +4,7 @@
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
   import { resolveCC, scheduleSearch, searchNow } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear } from '../lib/icons.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp } from '../lib/icons.js'
   import Field from './Field.svelte'
 
   let cc = $derived(resolveCC(S.filters.cc))
@@ -38,6 +38,9 @@
         list="citylist" disabled={!cities.length} width="155px" oninput={sched} onenter={searchNow} />
       <Field icon={iPath} bind:value={f.path} placeholder={t('ph_path')}
         grow width="" disabled={pathNA} oninput={noop} onenter={searchNow} />
+      <button class="helpbtn" onclick={() => (S.pathHelp = true)} title={t('path_help')} aria-label={t('path_help')}>
+        <Fa icon={iHelp} />
+      </button>
       <input class="numbox" type="text" bind:value={f.limit} title={t('ph_limit')}
         oninput={sched} onkeydown={(e) => e.key === 'Enter' && searchNow()} />
       <label class="chk" title={t('lowvis')}>
@@ -83,6 +86,12 @@
     font: 12.5px var(--mono); outline: none;
   }
   .numbox:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .helpbtn {
+    display: inline-flex; align-items: center; justify-content: center; height: 32px; width: 32px;
+    flex: 0 0 auto; background: transparent; border: 1px solid var(--line); border-radius: 7px;
+    color: var(--muted); cursor: pointer; transition: all .12s;
+  }
+  .helpbtn:hover { color: var(--accent); border-color: var(--accent); }
   .chk {
     display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
     color: var(--muted); cursor: pointer; white-space: nowrap; user-select: none;

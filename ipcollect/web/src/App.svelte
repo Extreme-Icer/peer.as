@@ -15,6 +15,7 @@
   import InsightDrawer from './components/InsightDrawer.svelte'
   import AboutModal from './components/AboutModal.svelte'
   import ChangelogModal from './components/ChangelogModal.svelte'
+  import PathHelpModal from './components/PathHelpModal.svelte'
 
   let fatal = $state('')
 
@@ -48,7 +49,7 @@
     S.ready = true; S.loading = false; S.msg = ''
     runSearch()
 
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.menu = false; if (S.selectedPid != null) closeInsight() } })
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.selectedPid != null) closeInsight() } })
   })
 </script>
 
@@ -71,6 +72,7 @@
 </div>
 <AboutModal />
 <ChangelogModal />
+<PathHelpModal />
 
 <style>
   .app { display: flex; min-height: 100vh; }

@@ -4,7 +4,7 @@ import { t } from './i18n.js'
 import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, isLowVis, asnName, classifyQuery,
-  asnsMatchingName,
+  asnsMatchingName, compilePathQuery,
 } from './bgp.js'
 
 const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
@@ -49,8 +49,8 @@ export async function runSearch() {
   }
 
   const cc = resolveCC(f.cc)
-  const seq = parseSeq(f.path)
-  const seqLike = seq.length ? sqlStr('% ' + seq.join(' ') + ' %') : null
+  const pq = compilePathQuery(f.path)       // AS_PATH 查询(支持 * ? ! 通配/排除); empty=无 path 条件
+  const hasPath = !pq.empty
   // origin 过滤集: 来自纯数字框(单个) 或 名称反查(多个); null=不过滤 origin。
   const originAsns = boxAsn != null ? [boxAsn] : (nameHit ? nameHit.asns : null)
   const city = (f.city || '').trim()
@@ -66,7 +66,7 @@ export async function runSearch() {
     cols = 'pid, prefix, city, province, plen, origin_asn, n_paths, segs, best_path'
     if (city && S.meta?.cities?.[cc]) w.push(`city = ${sqlStr(city)}`)
   } else {
-    if (!seqLike && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
+    if (!hasPath && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
     isGlobal = true
     // origin AS 搜索: 只读覆盖这些 ASN 的 pathsearch 分片(按 origin 排序 + 区间索引); 纯 AS_PATH 搜索仍全表扫。
     const psFiles = originAsns ? pathsearchFilesForOrigins(originAsns) : pathsearchFilesForOrigin(null)
@@ -79,19 +79,19 @@ export async function runSearch() {
     fromExpr = rpList(psFiles)
     cols = 'pid, prefix, cc, origin_asn, n_paths, best_path'
   }
-  if (seqLike) w.push(`paths_blob LIKE ${seqLike}`)
+  if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
   if (!inclLow) w.push(`n_paths >= ${Math.ceil(lowCut())}`)
-  const order = (seqLike ? `(best_path LIKE ${seqLike}) DESC, ` : '') + 'n_paths DESC'
+  const bestExpr = pq.sqlBest('best_path')
+  const order = (bestExpr ? `(${bestExpr}) DESC, ` : '') + 'n_paths DESC'
   const sql = `SELECT ${cols} FROM ${fromExpr} ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${order} LIMIT ${limit + 1}`
 
-  S.msg = (isGlobal && seqLike) ? t('searching_global') : t('querying')
+  S.msg = (isGlobal && hasPath) ? t('searching_global') : t('querying')
   let rows
   try { rows = await q(sql) } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
-  const tag = ' ' + seq.join(' ') + ' '
-  rows.forEach(r => { r._best = !!(seqLike && r.best_path && r.best_path.includes(tag)) })
-  rows.sort((a, b) => (seq.length ? (b._best ? 1 : 0) - (a._best ? 1 : 0) : 0) || cmpBy('n_paths', -1, a, b))
+  rows.forEach(r => { r._best = !!(pq.hasInclude && pq.testStr(r.best_path)) })
+  rows.sort((a, b) => (pq.hasInclude ? (b._best ? 1 : 0) - (a._best ? 1 : 0) : 0) || cmpBy('n_paths', -1, a, b))
   S.rows = rows
   S.mode = cc ? 'country' : 'global'
   S.sortKey = 'n_paths'; S.sortDir = -1
@@ -99,9 +99,10 @@ export async function runSearch() {
   const N = `${rows.length}${more ? '+' : ''}`
   const scope = cc ? `${ccLabel(cc)}${city ? ' · ' + city : ''}` : t('global')
   const oTxt = originAsns ? ` · ${originLabel(originAsns, nameHit, nameQ)}` : ''
+  const pTxt = hasPath ? (S.lang === 'zh' ? ` · path [${pq.summary()}]${pq.hasInclude ? '（★=落在最优路径）' : ''}` : ` · path [${pq.summary()}]${pq.hasInclude ? ' (★=on best path)' : ''}`) : ''
   S.msg = (S.lang === 'zh'
-    ? `${scope}：显示 ${N} 个前缀${oTxt}` + (seq.length ? ` · path 含连续 [${seq.join(' ')}]（★=落在最优路径）` : '') + (!inclLow ? ' · 已隐藏低可见' : '')
-    : `${scope}: ${N} prefixes${oTxt}` + (seq.length ? ` · path contains [${seq.join(' ')}] (★=on best path)` : '') + (!inclLow ? ' · low-vis hidden' : ''))
+    ? `${scope}：显示 ${N} 个前缀${oTxt}${pTxt}` + (!inclLow ? ' · 已隐藏低可见' : '')
+    : `${scope}: ${N} prefixes${oTxt}${pTxt}` + (!inclLow ? ' · low-vis hidden' : ''))
 }
 
 // origin 过滤的人类可读标签: 名称搜索显示 “名称→N 个 ASN(列前几个)”, 纯数字显示单个 origin AS。

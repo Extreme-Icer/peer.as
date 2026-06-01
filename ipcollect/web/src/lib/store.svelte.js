@@ -14,6 +14,7 @@ export const S = $state({
   insight: null,           // { prefix, loc, origin_asn, n_paths, lowvis, paths:[{asns,peers,is_best}], sup:[], sub:[], loading }
   about: false,
   changelog: false,
+  pathHelp: false,            // AS_PATH 语法帮助弹窗
   menu: false,                // 移动端下拉菜单开关
   sortKey: 'n_paths',
   sortDir: -1,

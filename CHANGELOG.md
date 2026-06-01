@@ -8,6 +8,11 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-01
 
+- **新增：AS_PATH 通配与排除搜索。** AS_PATH 框现支持 `*`（任意间隔）、`?`（正好一跳）与 `!N`/`-N`（排除某 ASN）；
+  搜索框旁的 `?` 图标可打开语法说明弹窗。
+  **New: AS_PATH wildcard & exclusion search.** The AS_PATH box now supports `*` (any gap), `?` (exactly one hop)
+  and `!N`/`-N` (exclude an ASN); a `?` icon beside the box opens a syntax help dialog.
+
 - **改进：过滤默认路由 `0.0.0.0/0`。** 入库与数据集中不再包含默认路由（它不代表任何具体网络的可达性，
   仅会污染搜索与统计）。
   **Improved: filter the default route `0.0.0.0/0`.** The default route is no longer ingested or included in the

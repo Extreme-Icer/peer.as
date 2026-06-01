@@ -122,6 +122,90 @@ export function seqIn(asns, seq) {
   }
   return false
 }
+
+// ── AS_PATH 高级查询: 通配 + 排除 ──────────────────────────────────────────────
+// 语法: 数字=ASN; `*`=任意间隔(含 0 跳, 同一条路径内); `?`=正好一跳; `!N`/`-N`=排除该 ASN(整条路径都不含)。
+//   1299 4538      相邻
+//   1299 * 4538    1299 在 4538 之前(任意间隔, 同一路径)
+//   1299 ? 4538    中间正好 1 跳
+//   4538 !174      含 4538、且全程不经 174
+// paths_blob 形如 ' a b c | d e f ': 用 `[0-9]` 字符类(不含 `|`)保证序列匹配锁在同一条路径内,
+// 不会出现「A 在路径1、B 在路径2」的假命中。
+function _normWild(include) {     // 去首尾通配 + 合并连续通配(任一 * 则为 *, 否则 ? 计数累加)
+  const a = include.slice()
+  while (a.length && (a[0] === '*' || a[0] === '?')) a.shift()
+  while (a.length && (a[a.length - 1] === '*' || a[a.length - 1] === '?')) a.pop()
+  const out = []
+  for (const tok of a) {
+    const prev = out[out.length - 1]
+    if ((tok === '*' || tok === '?') && prev && (prev === '*' || typeof prev === 'object')) {
+      if (tok === '*' || prev === '*') out[out.length - 1] = '*'
+      else prev.q++           // 连续 ? 累加成 {q:n}
+    } else if (tok === '?') out.push({ q: 1 })
+    else out.push(tok)        // 数字 或 '*'
+  }
+  return out
+}
+// 把归一化 include 编译成锚定空格的正则源(对 blob 与单路径串都适用)
+function _reSource(norm) {
+  let re = ' '
+  for (const tok of norm) {
+    if (tok === '*') re += '(?:[0-9]+ )*'
+    else if (typeof tok === 'object') re += '(?:[0-9]+ ){' + tok.q + '}'   // 正好 q 跳
+    else re += tok + ' '
+  }
+  return re
+}
+export function parsePathQuery(str) {
+  const raw = (str || '').trim().replace(/->/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean)
+  const include0 = [], excludes = []
+  for (const tok of raw) {
+    if (/^\*+$/.test(tok)) { include0.push('*'); continue }       // 一个或多个 * 都视作任意间隔
+    if (/^\?+$/.test(tok)) { for (let i = 0; i < tok.length; i++) include0.push('?'); continue }  // ?? = 两跳
+    const ex = /^[!-](\d+)$/.exec(tok); if (ex) { excludes.push(+ex[1]); continue }
+    const m = /^(\d+)$/.exec(tok); if (m) include0.push(+m[1])
+  }
+  const norm = _normWild(include0)
+  const nums = norm.filter(x => typeof x === 'number')
+  const wildcard = norm.some(x => x === '*' || typeof x === 'object')
+  return { include: norm, nums, excludes, wildcard, hasInclude: norm.length > 0, reSource: norm.length ? _reSource(norm) : null }
+}
+// 编译查询: 提供 SQL 条件、best-path 排序表达式、单路径 JS 匹配、状态栏摘要。
+export function compilePathQuery(str) {
+  const q = parsePathQuery(str)
+  const empty = !q.hasInclude && !q.excludes.length
+  const re = q.reSource ? new RegExp(q.reSource) : null
+  return {
+    ...q, empty,
+    // WHERE 条件数组(作用于给定列, 通常 'paths_blob')
+    sqlConds(col) {
+      const c = []
+      if (q.hasInclude) c.push(q.wildcard
+        ? `regexp_matches(${col}, ${sqlStr(q.reSource)})`
+        : `${col} LIKE ${sqlStr('% ' + q.nums.join(' ') + ' %')}`)
+      for (const x of q.excludes) c.push(`${col} NOT LIKE ${sqlStr('% ' + x + ' %')}`)
+      return c
+    },
+    // best_path 命中 include -> 置顶★(排序用); 无 include 返回 null
+    sqlBest(bestCol) {
+      if (!q.hasInclude) return null
+      return q.wildcard
+        ? `regexp_matches(${bestCol}, ${sqlStr(q.reSource)})`
+        : `${bestCol} LIKE ${sqlStr('% ' + q.nums.join(' ') + ' %')}`
+    },
+    // 单条路径(asn 数组)是否命中 include 序列 — 抽屉里高亮用
+    test(asns) { return re ? re.test(' ' + (asns || []).join(' ') + ' ') : true },
+    // 路径字符串(best_path, 已带首尾空格)是否命中 include
+    testStr(s) { return re && s ? re.test(s) : false },
+    // 状态栏可读摘要
+    summary() {
+      const parts = []
+      if (q.hasInclude) parts.push(q.include.map(t => t === '*' ? '*' : typeof t === 'object' ? '?'.repeat(t.q) : t).join(' '))
+      for (const x of q.excludes) parts.push('!' + x)
+      return parts.join(' ')
+    },
+  }
+}
 export function truncToTier1(asns) {
   // 从最上游(数组头)往下找**第一个** Tier-1, 保留它到 origin 的整段 ⇒ 图的末端(最上游列)恒为 Tier-1,
   // 且经多个 Tier-1 转接的链完整保留(如 1299→174→origin、3549→3356→174→origin);

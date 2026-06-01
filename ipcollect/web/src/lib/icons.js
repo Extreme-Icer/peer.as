@@ -33,4 +33,5 @@ export {
   faBug as iIssue,
   faBars as iMenu,
   faClockRotateLeft as iChangelog,
+  faCircleQuestion as iHelp,
 } from '@fortawesome/free-solid-svg-icons'

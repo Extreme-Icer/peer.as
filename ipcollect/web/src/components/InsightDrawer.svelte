@@ -2,14 +2,14 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { parseSeq, seqIn, asnName, parseBest } from '../lib/bgp.js'
+  import { compilePathQuery, asnName, parseBest } from '../lib/bgp.js'
   import { showInsight, closeInsight } from '../lib/queries.js'
   import { iClose, iStar, iUp, iDown, iSpinner } from '../lib/icons.js'
   import PathGraph from './PathGraph.svelte'
   import AsPath from './AsPath.svelte'
 
   let ins = $derived(S.insight)
-  let seq = $derived(parseSeq(S.filters.path))
+  let pq = $derived(compilePathQuery(S.filters.path))
 
   // 拖拽调宽
   let dragging = false
@@ -69,7 +69,7 @@
           <thead><tr><th>#peer</th><th>len</th><th>AS_PATH</th></tr></thead>
           <tbody>
             {#each ins.paths as g}
-              <tr class:hit={seq.length && seqIn(g.asns, seq)}>
+              <tr class:hit={pq.hasInclude && pq.test(g.asns)}>
                 <td class="num">{g.peers}</td>
                 <td class="num">{g.asns.length}</td>
                 <td>{#if g.is_best}<span class="star"><Fa icon={iStar} /></span> {/if}<AsPath asns={g.asns} /></td>

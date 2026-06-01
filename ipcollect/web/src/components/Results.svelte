@@ -139,7 +139,7 @@
      与侧栏底部控制栏(.foot)高度对齐 */
   .cn-accel {
     display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px;
-    margin-top: auto; padding-top: 24px;margin-bototm:8px; color: var(--muted); font-size: 11.5px;
+    margin-top: auto; padding-top: 24px;margin-bottom:8px; color: var(--muted); font-size: 11.5px;
   }
   .cn-accel a { line-height: 0; }
   .cn-accel img { height: 15px; display: block; }

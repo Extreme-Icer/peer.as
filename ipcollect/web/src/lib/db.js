@@ -4,17 +4,20 @@ import { S } from './store.svelte.js'
 const DUCKDB_VER = '1.32.0'
 const JSDELIVR = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VER}/dist`
 
-// 数据/wasm 宿主基址在「运行时」按地区选定(见 configure)。绝对 URL: DuckDB-WASM 在 Web Worker
-// 里 fetch, 相对路径会相对 worker 脚本 -> 必须绝对。
-// - CF/同源 = 默认(海外快, 免费出口); VITE_DATA_BASE 可把数据指到独立宿主(R2 等)。
-// - CN 命中 = 切到中国优化 VPS(cn.peer.as): parquet 走 /data, 自托管 duckdb wasm 走 /duckdb。
-//   该宿主须支持 HTTP Range(206) 且 CORS 暴露 Content-Range 等头(Caddy 已配)。
-const CF_DATA = (import.meta.env.VITE_DATA_BASE || new URL('./data', document.baseURI).href).replace(/\/$/, '')
+// 数据/wasm 宿主在「运行时」按域名/地区选定(见 configure)。绝对 URL: DuckDB-WASM 在 Web Worker 里
+// fetch, 相对路径会相对 worker 脚本 -> 必须绝对。**默认全部走同源**(peer.as 自己的 /data;已弃用 R2,
+// 因为前端实际是整片下载、不靠 Range,R2 只徒增被刷爆的 egress 账单风险)。
+// - 同源 = 默认: 海外走 CF Pages 的 /data; GeoDNS 把境内 peer.as 解到 CN 机器时, 同源即 CN 机器(快)。
+// - cn.peer.as 直连 = 全部同源相对(数据 /data + 自托管 wasm /duckdb)。
+// - 境内但 GeoDNS 没生效(拿到 CF IP): /cdn-cgi/trace=CN 时把数据/wasm 切到 cn.peer.as(带回退同源/jsDelivr)。
+const SAME = new URL('./data', document.baseURI).href.replace(/\/$/, '')       // 同源 /data
+const SAME_DUCK = new URL('./duckdb', document.baseURI).href.replace(/\/$/, '') // 同源 /duckdb(CN 机器有, CF 没有)
 const CN_ORIGIN = (import.meta.env.VITE_CN_BASE || 'https://cn.peer.as').replace(/\/$/, '')
+let CN_HOST = 'cn.peer.as'; try { CN_HOST = new URL(CN_ORIGIN).hostname } catch { /* 默认 cn.peer.as */ }
 
-// 运行时选定(默认 CF/jsDelivr); configure() 探测 geo=CN 且 VPS 健康时改写。
-export let DATA = CF_DATA          // parquet/json 基址。ES module 活绑定: 重新赋值后各处即时生效。
-let DUCK_SRC = null                // null => jsDelivr 官方 bundle; 否则自托管 dist 基址(CN)。
+// 运行时选定(默认同源/jsDelivr); configure() 据域名/geo 改写。
+export let DATA = SAME             // parquet/json 基址。ES module 活绑定: 重新赋值后各处即时生效。
+let DUCK_SRC = null                // null => jsDelivr 官方 bundle; 否则自托管 dist 基址。
 export let edge = 'cf'             // 'cf' | 'cn', 仅诊断用。
 
 let db = null, conn = null
@@ -25,20 +28,26 @@ async function fetchT(url, opts = {}, ms = 2000) {
   try { return await fetch(url, { ...opts, signal: ac.signal }) } finally { clearTimeout(t) }
 }
 
-// 启动时调用一次: 选定数据/wasm 宿主。CN 且 VPS 可达 -> VPS; 否则 CF/jsDelivr 回退。
-// geo 判定走 Cloudflare 同源 /cdn-cgi/trace(loc=CN); 本地/非 CF 环境 trace 不存在 -> 当作非 CN。
+// 启动时调用一次: 选定数据/wasm 宿主。
 export async function configure() {
-  DATA = CF_DATA; DUCK_SRC = null; edge = 'cf'
+  DATA = SAME; DUCK_SRC = null; edge = 'cf'
+  // 1) 直连 CN 机器(host=cn.peer.as): 全部同源相对 —— 数据 /data + 自托管 wasm /duckdb。
+  if (location.hostname === CN_HOST) {
+    DATA = SAME; DUCK_SRC = SAME_DUCK; edge = 'cn'
+    return edge
+  }
+  // 2) 否则在 CF Pages(海外 peer.as / *.pages.dev) 或 GeoDNS 已把 peer.as 解到 CN 机器:
+  //    探 /cdn-cgi/trace(CF 边缘特性)。CN 机器无此 -> 解析不出 loc -> 当作非 CN -> 同源(本机即 CN, 快)。
   let loc = null
   try {
     const r = await fetchT('/cdn-cgi/trace', { cache: 'no-store' }, 1200)
     if (r.ok) loc = (/(?:^|\n)loc=([A-Z]{2})/.exec(await r.text()) || [])[1]
-  } catch { /* 无 trace -> 当作非 CN */ }
-  if (loc === 'CN') {
-    try {                                   // 健康探测 VPS: 通了才切, 失败保持 CF(错误回退)。
+  } catch { /* 无 trace -> 当作非 CN(同源) */ }
+  if (loc === 'CN') {                       // 确在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
+    try {                                   // 健康探测 CN 机器: 通了才切数据+wasm, 失败保持同源 CF/jsDelivr(回退)。
       const r = await fetchT(`${CN_ORIGIN}/data/meta.json`, { cache: 'no-store' }, 2000)
       if (r.ok) { DATA = `${CN_ORIGIN}/data`; DUCK_SRC = `${CN_ORIGIN}/duckdb`; edge = 'cn' }
-    } catch { /* VPS 不可达 -> CF 回退 */ }
+    } catch { /* CN 机器不可达 -> 同源 CF 回退 */ }
   }
   return edge
 }

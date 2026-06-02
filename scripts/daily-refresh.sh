@@ -5,10 +5,11 @@
 #   1) ./ipc ingest --reset        下载 rrc01+rrc06 最新 RIB(各~350MB), 全表 v4+v6 入 DuckDB 工作库;
 #                                   并检查 GeoLite 是否过期(过期才下+重建 geo, 否则复用)
 #   2) ./ipc export-parquet --out dist   DuckDB -> Parquet(v4+v6) + SSG -> dist/
-#   3) 同步 dist/data -> R2 桶 $R2_BUCKET(海外前端读 data.peer.as; 数据先传、meta.json 最后传)
-#   4) 同步 dist/data -> 中国优化 VPS(cn.peer.as, best-effort; CN 前端读它, 见 AGENTS.md「中国优化」)
-#   5) wrangler pages deploy ...    部署到 Cloudflare Pages 项目 bgp-insights(域名 peer.as)
-# 前端已切 R2 数据源(VITE_DATA_BASE=https://data.peer.as)⇒ 步骤 3 不可省, 否则每日新数据进不了 R2。
+#   3a) 同步**整个 dist(前端+数据)** -> CN 机器(cn.peer.as, 与 peer.as 一致的独立整站, 保留 /duckdb)
+#   3b) wrangler pages deploy dist -> CF Pages(peer.as): 前端 + **同源数据 /data**
+# 架构(2026-06 起): **数据全部同源, 不再用 R2**(前端整片下载、不靠 Range, R2 无收益却有被刷爆账单风险)。
+#   海外: peer.as = CF Pages, 数据走自己的 /data。境内(GeoDNS): peer.as 解到 CN 机器, 同源即 CN 机器。
+#   前端 db.js 按域名/geo 选源(见 AGENTS.md)。
 # 不跑 npm build：前端源每日不变，web/dist/ 已存在并由 export-parquet 拷进 dist/。
 # 改了前端时需人工先 `cd ipcollect/web && npm run build`（见 AGENTS.md）。
 set -euo pipefail
@@ -48,54 +49,31 @@ run() {
   echo "[$(date -Is)] 1/3 ingest --reset"
   ./ipc ingest --reset
 
-  echo "[$(date -Is)] 2/5 export-parquet --out dist"
+  echo "[$(date -Is)] 2/3 export-parquet --out dist"
   ./ipc export-parquet --out dist
 
-  # 3/4 同步到 R2：前端已读 data.peer.as ⇒ 新数据必须进桶。R2 逐对象上传非原子，
-  # 故「数据先传、meta.json 最后传」：meta 是 version 源，若数据没传全就跳过 meta，
-  # R2 维持上一致版本(宁可旧也别 version/分片错位)。单文件最多重试 3 次抗瞬时限流。
-  echo "[$(date -Is)] 3/5 sync dist/data -> R2 (${R2_BUCKET:-未配置})"
-  if [ -n "${R2_BUCKET:-}" ]; then
-    FAILS="$LOGDIR/r2-fails-$TS.txt"; : > "$FAILS"
-    export R2_BUCKET FAILS
-    ( cd "$PROJ/dist/data"
-      find . -type f ! -name meta.json -printf '%P\n' | xargs -P 6 -I{} bash -c '
-        k="$1"
-        for i in 1 2 3; do wrangler r2 object put "$R2_BUCKET/$k" --file="$k" --remote >/dev/null 2>&1 && exit 0; sleep 2; done
-        echo "$k" >> "$FAILS"' _ {} )
-    n=$(wc -l < "$FAILS" | tr -d ' ')
-    if [ "$n" -gt 0 ]; then
-      echo "  ⚠ R2 有 $n 个文件失败(见 $FAILS)，跳过 meta.json ⇒ R2 维持上一致版本"
-    else
-      for i in 1 2 3; do
-        wrangler r2 object put "$R2_BUCKET/meta.json" --file="$PROJ/dist/data/meta.json" --remote >/dev/null 2>&1 && break
-        sleep 2
-      done
-      echo "  ✓ R2 同步完成(meta.json 最后传)"; rm -f "$FAILS"
-    fi
-  else
-    echo "  跳过：未设置 R2_BUCKET（前端将回退同源 dist/data）"
-  fi
+  # 架构(2026-06 起): **不再用 R2**。数据全部同源 —— 海外走 CF Pages 的 /data, 境内走 CN 机器(cn.peer.as,
+  # 与 peer.as 目录一致的整站)。前端 db.js 按域名/geo 选源(见 AGENTS.md「同源数据分发」)。
+  # 前端实际整片下载分片、不靠 Range, R2 无收益却有被刷爆 egress 账单风险 -> 弃用。
 
-  # 4/5 同步 dist/data -> 中国优化 VPS(cn.peer.as)。best-effort: VPS 只是 CN 加速层, 同步失败
-  # 不阻断部署(CN 用户会自动回退 CF/R2)。数据先传、meta.json 最后传(同 R2 的原子性语义)。
-  # 目标走 .env 的 CN_DEPLOY_SSH(如 root@<ip>)/CN_DEPLOY_PATH, 不写进提交文件(脱敏)。
-  # 注: duckdb wasm(/duckdb)不在 dist 内, 仅 duckdb 版本升级时在 VPS 上手动重置(见 AGENTS.md)。
+  # 3a) 同步**整个 dist(前端 + 数据)** -> CN 机器, 使 cn.peer.as 成为与 peer.as 完全一致的独立整站。
+  #     best-effort(CN 加速层, 失败不阻断, 境内用户回退 CF)。**保留 /duckdb**(自托管 wasm, 不在 dist 内,
+  #     升级 duckdb 时在 VPS 手动更新)。数据先传、meta.json 最后传(原子: 版本源最后切)。
   if [ -n "${CN_DEPLOY_SSH:-}" ]; then
     CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
     RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
-    echo "[$(date -Is)] 4/5 rsync dist/data -> ${CN_DEPLOY_SSH}:${CNPATH}/data"
-    if rsync -a --delete --exclude=meta.json -e "$RSH" "$PROJ/dist/data/" "${CN_DEPLOY_SSH}:${CNPATH}/data/" \
+    echo "[$(date -Is)] 3a/3 rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/ (保留 /duckdb)"
+    if rsync -a --delete --exclude='/duckdb/' --exclude='data/meta.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
        && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
-      echo "  ✓ VPS 数据同步完成(meta.json 最后传)"
+      echo "  ✓ CN 机器整站同步完成(meta.json 最后传)"
     else
-      echo "  ⚠ VPS 数据同步失败(CN 用户将回退 CF/R2), 不阻断部署"
+      echo "  ⚠ CN 机器同步失败(境内用户将回退 CF), 不阻断部署"
     fi
   else
-    echo "[$(date -Is)] 4/5 跳过 VPS 同步：未设置 CN_DEPLOY_SSH"
+    echo "[$(date -Is)] 3a/3 跳过 CN 同步：未设置 CN_DEPLOY_SSH"
   fi
 
-  echo "[$(date -Is)] 5/5 wrangler pages deploy"
+  echo "[$(date -Is)] 3b/3 wrangler pages deploy(前端 + 同源数据 -> peer.as)"
   wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
 
   echo "[$(date -Is)] 完成 ✅"

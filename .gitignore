@@ -36,3 +36,7 @@ ipcollect/web/dist/
 __pycache__/
 *.pyc
 ipcollect/web/e2e-shot.png
+
+# 临时无头探针脚本(勿提交)
+ipcollect/web/_*.mjs
+ipcollect/web/probe*.mjs

@@ -175,7 +175,21 @@ export async function initDuck() {
   URL.revokeObjectURL(workerUrl)
   URL.revokeObjectURL(wasmUrl)   // instantiate 已读完 wasm, 释放 blob
   conn = await db.connect()
+  await tuneSession()
   await setupExtensions()
+}
+
+// 会话级缓存设置(内存, **仅本会话、不跨刷新**): 减少对同一文件的重复元数据请求 —— 主要是 read_parquet
+// 前为取文件大小发的 HEAD(~200ms RTT), 以及 parquet footer 重复解析。同一会话内重复读同一分片即可跳过。
+// 逐条 try: 不同 duckdb 版本设置名可能有差异, 缺失则忽略, 不影响主流程。
+async function tuneSession() {
+  for (const sql of [
+    `SET enable_http_metadata_cache=true`,   // 缓存 HTTP 文件元数据(HEAD 取的大小/支持 Range 等)
+    `SET enable_object_cache=true`,           // 缓存已解析对象(parquet 元数据), 跨查询复用
+    `SET parquet_metadata_cache=true`,        // 缓存 parquet footer 元数据
+  ]) {
+    try { await conn.query(sql) } catch { /* 该版本无此设置: 忽略 */ }
+  }
 }
 
 // read_parquet 会 autoload **parquet 扩展**(~3MB)。默认从 extensions.duckdb.org 跨境拉, 首查卡 ~2s。

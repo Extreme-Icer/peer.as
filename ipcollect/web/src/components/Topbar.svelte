@@ -160,11 +160,11 @@
     /* 次要筛选行: 两列自适应 */
     .row.secondary :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
     /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行
-       第2行: 搜索(占 50%) + WHOIS(填满余下) + 清空(固定) */
+       第2行: 搜索(占满剩余空间, 内容居中) + WHOIS(自适应内容) + 清空(固定) */
     .row.primary .famseg { flex: 0 0 auto; }
     .row.primary :global(.field) { flex: 1 1 58%; width: auto !important; }
-    .row.primary .gobtn.big:not(.whoisbtn) { flex: 0 0 calc(50% - 6px); }   /* 搜索 = 半行 */
-    .row.primary .whoisbtn { display: inline-flex; flex: 1 1 auto; min-width: 0; }   /* 填满余下 */
-    .row.primary .clrbtn { flex: 0 0 auto; }                                /* 清空固定 */
+    .row.primary .gobtn.big:not(.whoisbtn) { flex: 1 1 auto; justify-content: center; }  /* 搜索撑满剩余 */
+    .row.primary .whoisbtn { display: inline-flex; flex: 0 0 auto; }        /* WHOIS 自适应 */
+    .row.primary .clrbtn { flex: 0 0 auto; }                               /* 清空固定 */
   }
 </style>

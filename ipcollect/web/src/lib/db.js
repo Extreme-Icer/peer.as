@@ -2,7 +2,7 @@
 import { S } from './store.svelte.js'
 // DuckDB-WASM 资产经 Vite `?url` 打包: 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 部署。
 // **wasm 自托管的边界**: CN 镜像(Caddy, 无大小限制)同源托管完整 wasm;**CF Pages 单文件 ≤25MiB,
-// 而 duckdb-eh/mvp.wasm 达 33/39MB 放不下** -> CF 部署排除这俩 wasm(见 daily-refresh / .assetsignore),
+// 而 duckdb-eh/mvp.wasm 达 33/39MB 放不下** -> CF 部署临时移出这俩 wasm(见 daily-refresh 3b),
 // CF 路径下 wasm 同源取不到时回退外部 CDN(见 CDN_DIST / wasmSrcs)。worker(<1MB)与 JS API 始终同源打包。
 import wasmMvp from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
 import workerMvp from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
@@ -33,12 +33,16 @@ export let edge = 'cf'             // 'cf' | 'cn', 仅诊断用。
 
 // 把打包出的 wasm/worker 资产展开成「按序尝试」的候选(cachedBlobURL 逐个 fetch, 首个成功即止):
 // 1) 数据切 CN 镜像时, 同一 hash 资产在 CN 镜像也有(随 dist rsync) -> 优先 CN 优化线;
-// 2) 同源(CN VPS/本地有完整 wasm; CF Pages 只有 worker、大 wasm 被排除 -> 此处 404 后顺延);
-// 3) 末尾附外部 CDN(官方原名)兜底 —— 仅 CF 路径取 wasm 会真正用到。cdnName 形如 `duckdb-eh.wasm`。
-function wasmSrcs(assetUrl, cdnName) {
+// 2) 同源;3) 外部 CDN(官方原名, cdnName 形如 `duckdb-eh.wasm`)兜底。
+// **关键**: CF Pages 对缺失路径回 SPA 200 + index.html(非 404), 故 CF 上被排除的大 wasm 同源会拿到 HTML ——
+// 不能把同源 wasm 列进 CF 路径的候选(否则假阳)。sameOriginMissing=true(wasm 且 edge='cf')时跳过同源直接 CDN;
+// worker(CF 上存在)/CN 路径仍同源优先。cachedBlobURL 另有「拒绝 HTML 响应」双保险兜底。
+function wasmSrcs(assetUrl, cdnName, sameOriginMissing) {
   const abs = new URL(assetUrl, document.baseURI)
-  const same = DATA.startsWith(CN_ORIGIN) ? [`${CN_ORIGIN}${abs.pathname}`, abs.href] : [abs.href]
-  return [...same, ...CDN_DIST.map(d => `${d}/${cdnName}`)]
+  const cdn = CDN_DIST.map(d => `${d}/${cdnName}`)
+  if (DATA.startsWith(CN_ORIGIN)) return [`${CN_ORIGIN}${abs.pathname}`, abs.href, ...cdn]  // 切 CN 镜像: 都有
+  if (sameOriginMissing && edge === 'cf') return cdn   // CF Pages 上大 wasm 不存在 -> 直接 CDN
+  return [abs.href, ...cdn]                             // CN VPS/本地同源有; worker 任何路径同源有
 }
 
 let db = null, conn = null
@@ -113,8 +117,14 @@ async function cachedBlobURL(key, urls, type) {
   if (!resp) {
     let err
     for (const u of urls) {
-      try { const r = await fetch(u); if (r.ok) { resp = r; break } err = new Error(`${u} → ${r.status}`) }
-      catch (e) { err = e }
+      try {
+        const r = await fetch(u)
+        // **双保险**: CF Pages 对缺失路径回 200 + index.html(非 404) -> 必须当失败顺延到 CDN,
+        // 否则 HTML 被当 wasm/worker 喂给 duckdb -> instantiate CompileError(magic word 不符)。
+        const ct = (r.headers.get('content-type') || '').toLowerCase()
+        if (r.ok && !ct.includes('text/html')) { resp = r; break }
+        err = new Error(`${u} → ${r.status} ${ct || '?'}`)
+      } catch (e) { err = e }
     }
     if (!resp) throw err
     try { if (cache) await cache.put(req, resp.clone()) } catch { /* 配额/无痕: 不缓存也能用 */ }
@@ -135,9 +145,9 @@ export async function initDuck() {
   // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给候选: CN 镜像优先 / 同源 / CDN 兜底。
   // cdnName 用 duckdb 官方原名(CDN 上即此名): worker=duckdb-browser-<v>.worker.js, wasm=duckdb-<v>.wasm。
   const workerUrl = await cachedBlobURL(`${variant}.worker.js`,
-    wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`), 'text/javascript')
+    wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`, false), 'text/javascript')
   const wasmUrl = await cachedBlobURL(`${variant}.wasm`,
-    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`), 'application/wasm')
+    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`, true), 'application/wasm')
 
   const worker = new Worker(workerUrl)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)

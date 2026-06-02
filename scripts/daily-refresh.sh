@@ -74,10 +74,13 @@ run() {
     echo "[$(date -Is)] 3a/3 跳过 CN 同步：未设置 CN_DEPLOY_SSH"
   fi
 
-  # 3b) CF Pages 部署。**CF 单文件 ≤25MiB**, 而 duckdb-eh/mvp.wasm 达 33/39MB -> 用 .assetsignore 排除上传
-  #     (CF 路径下前端 wasmSrcs 同源取不到时回退外部 CDN; CN 镜像走 rsync 的完整 wasm, 不受此影响)。
-  echo "[$(date -Is)] 3b/3 wrangler pages deploy(前端 + 同源数据 -> peer.as; 排除超限 wasm)"
-  printf '*.wasm\n' > dist/.assetsignore
+  # 3b) CF Pages 部署。**CF 单文件 ≤25MiB**, 而 duckdb-eh/mvp.wasm 达 33/39MB。`pages deploy` 不认 .assetsignore,
+  #     故**部署前把超限 wasm 临时移出 dist、部署后移回**(trap 保证失败也移回)。CF 路径前端 wasmSrcs 直接走 CDN
+  #     取 wasm(CF 对缺失路径回 SPA 200 HTML, 不能当同源源); CN 镜像走上面 rsync 的完整 wasm, 不受影响。
+  echo "[$(date -Is)] 3b/3 wrangler pages deploy(前端 + 同源数据 -> peer.as; 临时移出超限 wasm)"
+  WASMHOLD="$(mktemp -d)"
+  mv "$PROJ"/dist/assets/*.wasm "$WASMHOLD"/ 2>/dev/null || true
+  trap 'mv "$WASMHOLD"/*.wasm "$PROJ"/dist/assets/ 2>/dev/null || true; rmdir "$WASMHOLD" 2>/dev/null || true' RETURN
   wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
 
   echo "[$(date -Is)] 完成 ✅"

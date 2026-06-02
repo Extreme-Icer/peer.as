@@ -49,11 +49,9 @@ body {
 .op-edu { --c: #a78bfa; } .op-sci { --c: #f59e0b; } .op-intl { --c: #94a3b8; }
 .b-ok { --c: #22c55e; } .b-warn { --c: #f59e0b; } .b-bad { --c: #ef4444; } .b-mute { --c: #94a3b8; }
 
-/* 移动端: iOS Safari 会忽略 user-scalable=no, 但只要输入框字号 >=16px 就不会在聚焦时自动放大。
-   故窄屏统一把输入框字号提到 16px, 彻底消除「打字触发缩放」。 */
-@media (max-width: 820px) {
-  input, textarea, select { font-size: 16px !important; }
-}
+/* 移动端输入框字号: 按需求改回默认(与桌面一致), 不再强制 16px。
+   抑制 iOS 聚焦缩放仅靠 index.html viewport 的 maximum-scale=1/user-scalable=no
+   —— 新版 iOS Safari 可能仍忽略 ⇒ 聚焦输入框时或仍会放大页面(已知取舍, 优先视觉一致)。 */
 
 /* 细滚动条 */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

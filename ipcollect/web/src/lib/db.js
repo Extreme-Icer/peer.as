@@ -104,7 +104,9 @@ export async function getData(path, opts) {
 // 所有 parquet/asnames URL 都带上它; 因此即便 parquet 长缓存(max-age=86400)也不会读到过期数据。
 export const dv = () => { const v = S.meta?.version; return v ? `?v=${encodeURIComponent(v)}` : '' }
 
-const WASM_CACHE = `duckdb-wasm-${DUCKDB_VER}`   // 版本入名: 升级 duckdb 自动弃旧缓存
+// 版本入名: 升级 duckdb 自动弃旧缓存。`-r2`: 早期版本曾把 CF SPA 的 200 HTML 误存进缓存(毒化),
+// bump 版本名让那批毒化缓存被弃用、强制重取(配合下方读缓存时的 HTML 校验, 双重保证自愈)。
+const WASM_CACHE = `duckdb-wasm-${DUCKDB_VER}-r2`
 
 // 把大体积 wasm/worker 存进 Cache Storage, 以 blob: URL 交给 duckdb。
 // 为何不靠浏览器 HTTP 缓存: eh.wasm 解压后 34MB, 超出磁盘缓存单资源上限 -> 每次刷新都重下;
@@ -114,6 +116,8 @@ async function cachedBlobURL(key, urls, type) {
   const req = `${location.origin}/__duckdbwasm__/${key}`
   let cache, resp
   try { cache = await caches.open(WASM_CACHE); resp = await cache.match(req) } catch { /* 无 Cache API */ }
+  // 自愈: 拒绝任何被误存为 HTML 的缓存条目(早期 CF SPA-200 毒化) -> 当未命中、重新取真资源。
+  if (resp && (resp.headers.get('content-type') || '').toLowerCase().includes('text/html')) resp = null
   if (!resp) {
     let err
     for (const u of urls) {

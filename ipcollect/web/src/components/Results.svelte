@@ -2,7 +2,7 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { isLowVis, parseBest, parseSeq, ccLabel } from '../lib/bgp.js'
+  import { isLowVis, parseBest, parseSeq, ccLabel, placeLabel } from '../lib/bgp.js'
   import { sortRows, showInsight, closeInsight } from '../lib/queries.js'
   import { iStar, iSignal, iChevD, iChevR } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
@@ -18,7 +18,7 @@
     if (S.selectedPid === r.pid) closeInsight()
     else showInsight(r.pid, r.prefix)
   }
-  const loc = r => [r.province, r.city].filter(Boolean).join(' ') || (r.cc ? ccLabel(r.cc) : '')
+  const loc = r => placeLabel(r.province, r.city, r.cc)
   function arrow(key) { return S.sortKey === key ? (S.sortDir < 0 ? '▾' : '▴') : '' }
 </script>
 

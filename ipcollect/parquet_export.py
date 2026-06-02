@@ -425,6 +425,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "path_presets": cfg.get("path_presets") or [],
         "focus_asns": bgp.resolve_asns(cfg.get("focus_asns") or []),
         "asn_names": {str(a): v["name"] for a, v in bgp.ASN_REGISTRY.items()},
+        "asn_names_en": {str(a): v["name_en"] for a, v in bgp.ASN_REGISTRY.items() if v.get("name_en")},
         "asn_ops": {str(a): v["op"] for a, v in bgp.ASN_REGISTRY.items() if v.get("op")},
     }
     data.mkdir(parents=True, exist_ok=True)

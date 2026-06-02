@@ -19,7 +19,7 @@ ASN_NAME: dict[int, str] = {}
 
 
 def set_registry(entries: Iterable[dict]) -> None:
-    """从配置 (list of {asn, name, op}) 原地重载 ASN 注册表。"""
+    """从配置 (list of {asn, name, name_en?, op}) 原地重载 ASN 注册表。name_en 为可选英文别名(i18n)。"""
     ASN_REGISTRY.clear()
     ASN_NAME.clear()
     for e in entries or []:
@@ -28,7 +28,7 @@ def set_registry(entries: Iterable[dict]) -> None:
         except (KeyError, TypeError, ValueError):
             continue
         name = str(e.get("name") or "")
-        ASN_REGISTRY[asn] = {"name": name, "op": e.get("op") or ""}
+        ASN_REGISTRY[asn] = {"name": name, "name_en": str(e.get("name_en") or ""), "op": e.get("op") or ""}
         if name:
             ASN_NAME[asn] = name
 

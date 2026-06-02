@@ -2,15 +2,41 @@
 import { S } from './store.svelte.js'
 
 const OP_CLS = { '电信': 'op-ct', '联通': 'op-cu', '移动': 'op-cm', '教育': 'op-edu', '科技': 'op-sci', '国际': 'op-intl' }
+// 运营商(op)分类的英文显示名(i18n)。op 仅 6 个固定类别, 故在前端维护译名(类似 UI 词表), 不进 config。
+const OP_EN = { '电信': 'Telecom', '联通': 'Unicom', '移动': 'Mobile', '教育': 'Education', '科技': 'Research', '国际': 'International' }
 export const TIER1 = new Set([174, 701, 702, 1239, 1299, 2828, 2914, 3257, 3320, 3356, 3491,
   5511, 6453, 6461, 6762, 6830, 6939, 7018, 7473, 12956, 1273, 3549, 3551, 209])
 
-// 全量名(asnames.json)优先, 回退到 meta 里精选的(注册表)
-export const asnName = a => (S.asnNames && S.asnNames[a]) || (S.meta && S.meta.asn_names && S.meta.asn_names[a]) || ''
+// CJK 判断/剥离: 英文界面下从中文别名/地名里滤出拉丁部分, 避免英中混排。
+const CJK_RE = /[㐀-鿿豈-﫿぀-ヿ]/
+export const hasCJK = s => CJK_RE.test(s || '')
+const stripCJK = s => (s || '').replace(/[㐀-鿿豈-﫿぀-ヿ]+/g, '').replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').trim()
+
+// ASN 名(语言感知)。zh: 注册表中文别名优先 → APNIC 全量名。
+// en: 注册表英文别名(asn_names_en) → APNIC 英文名(非中文) → 从中文别名滤出的拉丁部分(CN2/CUII/CERNET…) → 兜底。
+export function asnName(a) {
+  const reg = S.meta && S.meta.asn_names && S.meta.asn_names[a]
+  const full = S.asnNames && S.asnNames[a]
+  if (S.lang === 'zh') return reg || full || ''
+  const en = S.meta && S.meta.asn_names_en && S.meta.asn_names_en[a]
+  if (en) return en
+  if (full && !hasCJK(full)) return full
+  const base = reg || full || ''
+  return stripCJK(base) || full || base
+}
 export const asnOrg = a => (S.asnOrg && S.asnOrg[a]) || ''     // GeoLite organization(全名)
-export const opOf = a => (S.meta && S.meta.asn_ops && S.meta.asn_ops[a]) || ''
+export const opOf = a => (S.meta && S.meta.asn_ops && S.meta.asn_ops[a]) || ''   // 原始分类(中文 key; 用于配色/排序)
+export const opText = a => { const o = opOf(a); return (S.lang !== 'zh' && OP_EN[o]) ? OP_EN[o] : o }   // 显示用(语言感知)
 export const opCls = a => OP_CLS[opOf(a)] || ''
 export const isTier1 = a => TIER1.has(+a)
+
+// 地名(语言感知): 省+市拼接。英文界面滤掉 CJK 段(geo 里日韩等城市可能是中文名 + 英文省 -> 避免混排);
+// 滤空则回退英文国名(ccLabel)。中文界面原样显示。
+export function placeLabel(province, city, cc) {
+  let parts = [province, city].filter(Boolean)
+  if (S.lang !== 'zh') parts = parts.filter(p => !hasCJK(p))
+  return parts.join(' ') || (cc ? ccLabel(cc) : '')
+}
 
 // 国家/地区名覆盖(必须先于 Intl.DisplayNames): CN/TW/HK/MO 的规范表述。
 const CC_OVERRIDE = {
@@ -40,7 +66,7 @@ const short = s => (s && s.length > 22) ? s.slice(0, 21) + '…' : s
 export function pathTokens(asns) {
   return (asns || []).map(a => {
     const name = asnName(a)
-    return { asn: a, name, nameShort: short(name), op: opOf(a), cls: opCls(a), tier1: TIER1.has(+a) }
+    return { asn: a, name, nameShort: short(name), op: opText(a), cls: opCls(a), tier1: TIER1.has(+a) }
   })
 }
 export const parseBest = s => (s ? s.trim().split(/\s+/).map(Number) : [])
@@ -127,12 +153,13 @@ export function classifyQuery(s) {
 // 合并而成, 同一 ASN 的多个名都收录(故中/英名都能命中); 按 meta/asnNames 条目数做轻量缓存键, 变了才重建。
 let _nidx = null, _nidxKey = ''
 function nameIndex() {
-  const full = S.asnNames || {}, reg = (S.meta && S.meta.asn_names) || {}
-  const key = Object.keys(full).length + ':' + Object.keys(reg).length
+  const full = S.asnNames || {}, reg = (S.meta && S.meta.asn_names) || {}, regEn = (S.meta && S.meta.asn_names_en) || {}
+  const key = Object.keys(full).length + ':' + Object.keys(reg).length + ':' + Object.keys(regEn).length
   if (_nidx && _nidxKey === key) return _nidx
   const arr = []
   const add = (k, name) => { if (!name) return; const a = +k; if (a) arr.push({ asn: a, nl: String(name).toLowerCase() }) }
   for (const k in reg) add(k, reg[k])
+  for (const k in regEn) add(k, regEn[k])     // 英文别名(CERNET/CMIN2…)也可搜
   for (const k in full) add(k, full[k])
   _nidx = arr; _nidxKey = key; return arr
 }

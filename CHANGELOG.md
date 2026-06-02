@@ -8,6 +8,14 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-02
 
+- **改进：英文界面国际化。** 英文界面下运营商（电信/联通/移动…→ Telecom/Unicom/Mobile…）、ASN 别名
+  （如 CN2、CUII、CERNET）以及地名不再夹杂中文：日韩等城市过去会显示「英文省+中文市」，现在英文界面统一显示英文，
+  无英文名的（如国内城市）回退到英文国家/地区名。
+  **Improved: English UI internationalization.** In the English UI, operator categories (Telecom/Unicom/Mobile…),
+  ASN aliases (e.g. CN2, CUII, CERNET) and place names no longer mix Chinese in: cities in Japan/Korea etc. used to
+  show “English province + Chinese city”; the English UI now shows English throughout, falling back to the English
+  country/region name where no English name exists (e.g. mainland-China cities).
+
 - **新增：可分享的链接 / 浏览器前进后退。** 现在 ASN 与前缀详情都有独立网址，可直接打开或分享：
   `peer.as/4842`（ASN）、`peer.as/1.1.1.0/24`（前缀，IPv6 同理）会自动填入搜索框、搜索并展开对应详情；
   也支持传统的 `peer.as/?q=关键词` 搜索。在站内切换详情会更新网址，浏览器的前进/后退按钮可在浏览过的详情间穿梭。

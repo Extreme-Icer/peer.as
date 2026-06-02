@@ -4,7 +4,7 @@ import { t } from './i18n.js'
 import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
-  asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest,
+  asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel,
 } from './bgp.js'
 
 const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
@@ -194,7 +194,7 @@ export async function showInsight(pid, prefix) {
   const [sup, sub] = rng ? await relData(pid, rng.start, rng.end, v6) : [[], []]
   S.insight = {
     pid, prefix: det.prefix,
-    loc: [det.province, det.city].filter(Boolean).join(' ') || ccLabel(det.cc),
+    loc: placeLabel(det.province, det.city, det.cc),
     origin_asn: det.origin_asn, origin_name: asnName(det.origin_asn), n_paths: det.n_paths,
     lowvis: isLowVis(det),
     paths: paths.map(p => ({ asns: Array.from(p.path_arr || []).map(Number), peers: p.n_peers, is_best: p.is_best })),

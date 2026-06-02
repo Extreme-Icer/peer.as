@@ -54,7 +54,8 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         import os
         # SPA 回退(与生产 CF/Caddy try_files 一致): 缺失路径(客户端路由 /4842、/1.1.1.0/24 等)改服务 index.html。
         # 真实文件(/assets、/data、/c、wasm 等)存在即原样服务。
-        if not os.path.exists(self.translate_path(self.path)):
+        # 例外: /cdn-cgi/* 不回退(保持 404) —— 前端靠它是否 404 判定是否在 CF(见 db.js configure)。
+        if not os.path.exists(self.translate_path(self.path)) and not self.path.startswith("/cdn-cgi/"):
             self.path = "/index.html"
         rng = self.headers.get("Range")
         if not rng or not rng.startswith("bytes="):

@@ -57,11 +57,17 @@
 	}
 	encode @compressible zstd gzip
 
-	# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)直开/刷新时, 缺失路径回退 index.html(前端 JS 解析路由)。
-	# 真实文件(/assets、/data、/c、wasm 等)存在即原样服务, 不受影响。
-	try_files {path} /index.html
-
-	file_server
+	# 顺序敏感, 用 route 保证按written顺序执行:
+	route {
+		# /cdn-cgi/* 在本机(非 CF)必须返回 404 —— 前端 db.js configure() 靠"探 /cdn-cgi/trace 是否 404"
+		# 判定"不在 CF=在 CN 加速机"。**必须先于 try_files**, 否则会被 SPA 回退成 index.html(200),
+		# 前端误判为海外 CF -> 国内错误走 jsDelivr(而非同源自托管 wasm)。
+		@cdncgi path /cdn-cgi/*
+		respond @cdncgi 404
+		# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)缺失路径回退 index.html(前端 JS 解析)。真实文件原样服务。
+		try_files {path} /index.html
+		file_server
+	}
 
 	# 访问日志走 journald(systemd 沙箱下写 /var/log 会被拒): journalctl -u caddy。
 }

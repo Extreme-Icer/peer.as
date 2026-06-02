@@ -162,34 +162,28 @@ SEO pages).
 Upload `dist/` to any static host (Cloudflare Pages, Netlify, S3, nginx…). Data is
 served same-origin from `dist/data/`. That's it.
 
-**2b. Frontend + object-storage split (what peer.as runs)**
+**2b. Geo acceleration via a mirror (what peer.as runs)**
 
-A ~0.7 GB dataset can exceed a static host's per-file or total limits, and
-re-uploading it on every refresh is wasteful. The hosted site keeps the **frontend on
-Cloudflare Pages** and the **Parquet data on Cloudflare R2** (free egress, no
-file-size cap), selected by one build-time env var (`VITE_DATA_BASE`):
+Data is served **same-origin** — there's no object-storage split (the in-browser
+DuckDB downloads whole shards, never HTTP Range, so an external data host like R2 adds
+egress cost/abuse risk for no transfer benefit). For users far from Cloudflare's edge
+(e.g. mainland China), the hosted site runs a **second complete copy** of the site on a
+well-connected VPS (`cn.peer.as`) and uses **GeoDNS** so `peer.as` resolves to that VPS
+within the region. The frontend's `configure()` picks the data source by hostname/geo
+with health-checked fallback:
 
-```bash
-# one-time: bucket + public custom domain + CORS (allow GET/HEAD from your site origin)
-wrangler r2 bucket create "$R2_BUCKET"
-wrangler r2 bucket domain add "$R2_BUCKET" --domain data.example.com --zone-id <zone-id>
-wrangler r2 bucket cors set "$R2_BUCKET" --file cors.json
+- on the mirror's hostname → same-origin (relative) data + self-hosted DuckDB-WASM;
+- on Cloudflare Pages but detected in-region (GeoDNS missed) → switch data to the mirror
+  (fallback to same-origin Pages + jsDelivr wasm);
+- otherwise → same-origin.
 
-# build the frontend pointing data at the bucket, then deploy the frontend to Pages
-echo 'VITE_DATA_BASE=https://data.example.com' >> .env    # gitignored
-( cd ipcollect/web && npm run build )
-./ipc export-parquet --out dist
-# upload dist/data/* to the bucket (data first, meta.json last), then:
-wrangler pages deploy dist --project-name <your-project>
-```
-
-Leave `VITE_DATA_BASE` empty to fall back to same-origin `dist/data/`. The exact CORS
-JSON, the upload loop, and the caching/version invariants are in **[`AGENTS.md`](AGENTS.md)**.
+So both domains are standalone full sites with identical layout. Details + the GeoDNS /
+TLS-cert caveats are in **[`AGENTS.md`](AGENTS.md)**.
 
 **3. Keep it fresh (optional)**
 
-`scripts/daily-refresh.sh` chains ingest → export → R2 sync → Pages deploy; run it
-from cron (the hosted site refreshes daily). Details in `AGENTS.md`.
+`scripts/daily-refresh.sh` chains ingest → export → rsync the full site to the mirror →
+`wrangler pages deploy`; run it from cron (the hosted site refreshes daily). Details in `AGENTS.md`.
 
 Configuration lives in `config.json` (gitignored; template in `config.example.json`).
 Secrets — Cloudflare credentials, the private geo path, `VITE_DATA_BASE`, `R2_BUCKET`

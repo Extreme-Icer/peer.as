@@ -182,73 +182,42 @@ test -f dist/index.html && grep -oE 'assets/index-[^"]+\.js' dist/index.html   #
 curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                        # 或 bgp-insights.pages.dev
 ```
 
-### 数据分离托管（R2，可选）
+### 数据分发：同源 + CN 整站镜像（2026-06 起；**已弃用 R2**）
 
-把 **前端(Pages)** 与 **Parquet 数据** 拆开:前端仍部署到 Pages,数据放独立宿主(Cloudflare R2)。
-前端只认一个根 URL(`VITE_DATA_BASE`),数据放哪儿都行;留空则回退同源 `dist/data`(默认行为不变)。
+**为什么弃 R2**:DuckDB-WASM 前端实测**不发 Range、整片下载分片**(<25MiB 直接整取;本地带日志服务器 + 对生产用 CDP
+抓 Web Worker 流量两路验证一致)。所以 R2 相对同源 Pages **无传输收益**,反而其公开 egress 是**被刷爆账单的风险**。
+故移除 R2,数据全部**同源**。**真正决定每次查询下载量的是 meta 索引的文件级裁剪**(`read_parquet` 只取相关分片整下;
+单查实测:小国 geo ~10KB、US ~44MB、IP/CIDR ~22MB(5 个 prefixes 分片)、origin-ASN 经 `pathsearch_origin` 索引 ~1/N 分片、
+**纯 AS_PATH 无 origin = 最坏全扫所有 pathsearch**)。优化方向是"减少整下字节"(更细分片/更强压缩),不是 Range。
 
-- **前端开关**:`db.js` 的 `DATA` 取 `import.meta.env.VITE_DATA_BASE || ./data`;`vite.config.js` 设
-  `envDir:'../../'` 让 web 构建读 **仓库根 `.env`**(与 `CLOUDFLARE_*` 同住)。Vite 仅暴露 `VITE_` 前缀 ⇒
-  凭据不入 bundle。**非公开 id 一律走 env**:account id=`CLOUDFLARE_ACCOUNT_ID`、含账号 hash 的
-  `pub-<hash>.r2.dev`=`VITE_DATA_BASE`、桶名=`R2_BUCKET`;真实值只在 `.env`,勿写进任何提交文件。
-- **一次性建桶 + 公开 + CORS**(`$R2_BUCKET` 取自 `.env`):
-  ```bash
-  wrangler r2 bucket create "$R2_BUCKET"
-  wrangler r2 bucket dev-url enable "$R2_BUCKET" -y      # 得 https://pub-<hash>.r2.dev (=VITE_DATA_BASE)
-  # 或改绑自定义域名: wrangler r2 bucket domain add "$R2_BUCKET" --domain data.peer.as
-  wrangler r2 bucket cors set "$R2_BUCKET" --file cors.json -y
-  ```
-  CORS JSON 必须是 `{"rules":[{...}]}` 结构(非 S3 风格):`allowed.{origins,methods:[GET,HEAD],headers:[range]}`
-  + **`exposeHeaders:[Content-Range,Content-Length,ETag,Accept-Ranges]`**(不暴露 Content-Range,DuckDB 拿不到 206)
-  + `maxAgeSeconds`。
-- **上传数据**(把 `dist/data/` 整树镜像到桶,key=相对路径):
-  ```bash
-  cd dist/data && find . -type f -printf '%P\n' | \
-    xargs -P 8 -I{} wrangler r2 object put "$R2_BUCKET/{}" --file={} --remote
-  ```
-  **`--remote` 必加**:`wrangler r2 object put` **默认写本地 miniflare 模拟**(无报错、但远端查无此 key),漏了会 404。
-- **构建 + 部署**:`.env` 填好 `VITE_DATA_BASE` 后照常 `npm run build`(envDir 自动注入)→ `export-parquet`(仍会
-  拷 `dist/data`,但前端不再读它,可后续精简)→ `wrangler pages deploy`。**数据变更后:先重新 export 刷新
-  `meta.version`,再上传 R2,再 deploy**——`?v=` 缓存失效机制对 R2 同样生效(URL 带 `?v=`)。
-- **HTTP Range — 前端实际不用(实测重要结论)**:R2/data.peer.as 支持 `206 Partial Content`(`curl` 带 `Range`
-  可得),但 **DuckDB-WASM 前端并不发 Range 请求**。实测两路验证(本地带日志数据服务器 + 对生产 data.peer.as
-  用 CDP 抓 Web Worker 流量)一致:**每个被触及的 parquet 分片都是 1 次探测 + 1 次无 Range 头的 `200` 整文件下载,
-  零 `206` 部分读**。因 DuckDB-WASM 对 <25MiB 小文件判定"整下比多次 Range 往返快",直接整取。
-  ⇒ **迁 R2 的收益是 egress 免费 / 突破 Pages 25MiB 与文件数限制 / 卸掉 ~633MB,不是 Range 提速;查询传输量
-  与旧 Pages 同(都整下)**。真正决定每次查询下载多少的是**文件级裁剪**(下一条)。
-- **真正的优化 = meta 索引的文件级裁剪**(不是文件内 Range):查询只 `read_parquet` 相关分片再整下。实测单次查询传输:
-  小国 geo ~10KB、大国(US)~44MB(3 分片)、IP/CIDR ~22MB(**全部 5 个 prefixes 分片**)、origin-ASN ~6.7MB
-  (经 `pathsearch_origin` 索引只取 1/18 分片 ≈ 18× 节省)、insight ~一个 paths 分片、**纯 AS_PATH 无 origin = 最坏:
-  全扫 18 个 pathsearch ≈ 119MB**。优化方向应针对"减少整下字节":更细分片 / 更强压缩 / 热路径去列,而非指望 Range。
-- **缓存**:R2 侧 `_headers` 不适用;data.peer.as 实测对所有请求回 `DYNAMIC`(直读 R2、不边缘缓存)⇒ 永远最新、无 stale,
-  `?v=` 对其冗余但无害。
-- **验证**:`curl -s -D - -o /dev/null -H 'Origin: https://peer.as' -H 'Range: bytes=0-1023'
-  "$VITE_DATA_BASE/parquet/prefixes/data_0.parquet"` 应见 `206` + `Content-Range` + `Access-Control-Allow-Origin`;
-  端到端用 `VITE_DATA_BASE=... npm run build` 后起静态服务跑 `web/test-e2e.mjs`(覆盖 geo/paths/pathsearch 三类查询)。
-  注:`test-e2e.mjs` 当前与 UI 字段布局不同步(期望 5 输入框、实测 4——origin 已并入智能框)在国家查询步骤会误报
-  失败,**与 R2 无关**;验证 R2 用 `?cc=CN` 深链更可靠。**抓 DuckDB 真实请求**:`page.on('response')` 抓不到 Web
-  Worker 流量,要用 **CDP `Target.setAutoAttach`(flatten)** 逐 worker 目标 `Network.enable`(见
-  `verify/cdp-capture` 思路);或用带日志的本地数据服务器从服务端记录。
-- **状态(2026-06-01, 已固化)**:生产 `peer.as` 已切到 R2 数据源,`VITE_DATA_BASE=https://data.peer.as`
-  (桶 `peer-as-data` 的**自定义域名**, 走 peer.as 完整 CF CDN, 无 r2.dev 限速; 桶含全量 423 对象)。
-  迁移收益是 egress/限制/架构(见上「HTTP Range」),**非 Range 提速**——前端整下分片,Pages 与 R2 传输量相同。
-  自定义域名绑定:`wrangler r2 bucket domain add peer-as-data --domain data.peer.as --zone-id <peer.as的zoneid> --min-tls 1.2`
-  (zone id 属非公开值, 用 API `GET /zones?name=peer.as` 取, 勿写进提交文件)。`dist/data/` 仍随 Pages deploy
-  上传(前端已不读, 属冗余兜底, 可后续从部署产物剔除以缩小 Pages)。
-- 切换若要回退:把 `.env` 的 `VITE_DATA_BASE` 清空 → `npm run build` → 部署, 前端即回退同源 `dist/data`。
+**两个独立整站,目录完全一致,任一域名都能用:**
+- **`peer.as` = CF Pages**:`wrangler pages deploy dist` 部署前端 + `dist/data`(同源 `/data`)。海外主站。
+- **`cn.peer.as` = CN 优化 VPS(Caddy)**:`daily-refresh` rsync **整个 dist(前端 + 数据)** 过去(`--exclude=/duckdb/`
+  保留自托管 wasm)。境内主站。
+
+**前端选源(`db.js configure()`,App.svelte onMount 最先调;无 `VITE_DATA_BASE` 了)**:
+1. `location.hostname === cn.peer.as` ⇒ 全部**同源相对**(数据 `/data` + 自托管 wasm `/duckdb`)。edge=cn。
+2. 否则(在 CF Pages,或 GeoDNS 把 peer.as 解到 CN 机器):探同源 `GET /cdn-cgi/trace`(CF 才有)。
+   - `loc=CN`(确在 CF Pages 且身处境内,即 **GeoDNS 没生效拿到 CF IP**)⇒ 健康探测 `cn.peer.as/data/meta.json`,
+     通了把数据 + wasm 切到 `cn.peer.as`(**带回退**:不通则保持同源 CF / wasm jsDelivr)。edge=cn。
+   - 否则(海外,或 GeoDNS 已把 peer.as 解到 CN 机器——此时 trace 取不到 ⇒ 当非 CN)⇒ **同源**(本机即正确源)。
+   覆盖:`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
+   - 注:GeoDNS 把 peer.as 解到 CN 机器时,hostname 仍是 peer.as ⇒ 走分支 2 的"否则"= 同源(=CN 机器, 数据快);
+     **wasm 此时仍走 jsDelivr**(无法廉价区分 CF/CN 机器,因 CF Pages 对缺失路径 SPA 回 200 HTML、探测会假阳)。
+     wasm 首次后进 Cache Storage、不再跨境;要 CN 自托管 wasm 直接访问 cn.peer.as 域名即可。
+- **GeoDNS(运维侧,域名解析)**:境内 `peer.as` 解析到 CN 机器 IP、境外解析到 CF Pages。
+  **前置(切 NS 前必须)**:CN 机器 Caddy 要能服务 `peer.as` 这个 Host **且有 peer.as 的 TLS 证书**——LE HTTP-01 会失败
+  (海外验证者解析 peer.as→CF),需 **DNS-01**(或把 CF 的证书同步过去)。否则境内用户被 GeoDNS 引到 CN 机器时 TLS 握手失败。
+
+**数据版本/缓存**:`meta.version` 仍驱动 `?v=` 失效(同源/CN 都生效)。Pages 侧 `web/public/_headers` 管缓存;
+CN 侧 Caddy 管缓存(见下「中国优化」)。**数据变更:export → rsync CN + pages deploy**(daily-refresh 自动)。
 
 ### 中国优化（cn.peer.as）
 
-**问题**：CF Pages/R2 在中国大陆慢(anycast 跨境被限速/丢包，RTT ~450ms)。**方案**：一台中国优化线路的
-VPS(DMIT LAX，`cn.peer.as` 灰云直连)用 **Caddy** 托管**全部数据 + 自托管 DuckDB-WASM**，前端**运行时按
-地区分流**：`loc=CN` 走 VPS、其余走 CF/R2，并带**健康探测 + 自动回退**。
-
-**前端如何分流(`web/src/lib/db.js` `configure()`，App.svelte onMount 最先调)**：
-- 同源 `GET /cdn-cgi/trace`(CF 才有，本地/非CF 取不到 ⇒ 当作非 CN) 解析 `loc=CN`。
-- CN 则**健康探测** `https://cn.peer.as/data/meta.json`(超时 2s)，通了才把数据源 `DATA` 切到
-  `cn.peer.as/data`、wasm 源 `DUCK_SRC` 切到 `cn.peer.as/duckdb`；**探测失败/超时 ⇒ 保持 CF/R2**。
-- `getData()`(meta/asnames)再带一层 try-CN→回退-CF；parquet 的 DuckDB 取数无逐请求回退，靠启动探测把关。
-- 覆盖：`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
+**问题**：CF Pages 在中国大陆慢(anycast 跨境被限速/丢包，RTT ~450ms)。**方案**：一台中国优化线路的
+VPS(DMIT LAX，`cn.peer.as`)用 **Caddy** 托管**与 peer.as 完全一致的整站(前端 + 数据 + 自托管 DuckDB-WASM)**。
+分流见上「数据分发：同源 + CN 整站镜像」(`db.js configure()`)：直连 cn.peer.as / GeoDNS 把 peer.as 解到本机 ⇒ 同源;
+GeoDNS 没生效拿到 CF IP 且 `loc=CN` ⇒ 切 cn.peer.as(带健康探测 + 自动回退)。**已弃用 R2,数据全部同源**。
 
 **DuckDB-WASM 自托管 + Cache Storage(核心修复)**：`duckdb-eh.wasm` 解压 **34MB**，**超出 Chromium HTTP
 磁盘缓存单资源上限(`max_size/8`) ⇒ 每次刷新都跨境重下 ~9MB**。修法(`initDuck` + `cachedBlobURL`)：手动
@@ -262,7 +231,10 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。
 - **HTTP/3 已全局禁用(只留 h1/h2，Caddyfile 顶部 `servers { protocols h1 h2 }`)**：中国对 UDP/QUIC
   做 QoS 限速，走 h3 反而更慢；本机仅服务 CN ⇒ 全局关即可(海外走 CF 不受影响)。关后不监听 UDP/443、不广播 alt-svc h3。
-- 目录：`/var/www/cn/data`(parquet，rsync 自 `dist/data`) + `/var/www/cn/duckdb`(4 个 wasm 文件)。
+- 目录：`/var/www/cn/`(**整站**：前端 index.html/assets + SSG `c/` + `data/`(parquet，rsync 自 `dist/`) +
+  `duckdb/`(4 个 wasm 文件，rsync 时 `--exclude=/duckdb/` 保留，仅 duckdb 升级时手动换))。
+  **Caddy 现需服务 `cn.peer.as` 与 `peer.as` 两个 Host**(GeoDNS 把境内 peer.as 引到本机);peer.as 证书走 DNS-01
+  或同步 CF 证书(LE HTTP-01 会失败,见「数据分发」)。SPA 根 + `/data` + `/duckdb`。
 - 配置：`deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`(Caddy 自动签 LE 证书)。**要点**：
   CORS `*` + Expose `Content-Range` 等 + OPTIONS 预检 204；`encode` **只排除 `*.parquet`**(它走 Range，压缩
   破坏 206)，**wasm 照压**(34MB→8MB，整块取非 Range)；parquet/duckdb 长缓存 immutable、meta.json no-cache。

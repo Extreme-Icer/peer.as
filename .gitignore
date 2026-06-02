@@ -30,6 +30,8 @@ logs/
 ipcollect/web/node_modules/
 # 前端构建产物（npm run build 生成；export-parquet 拷进 dist/）
 ipcollect/web/dist/
+# vendored DuckDB parquet 扩展（scripts/vendor-duckdb-ext.sh 按需下载，pinned，不入库）
+ipcollect/web/public/duckdb-ext/
 
 # ── Python ───────────────────────────────────────────────
 .venv/

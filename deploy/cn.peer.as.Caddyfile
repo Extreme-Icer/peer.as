@@ -38,7 +38,7 @@ cn.peer.as {
 
 	# 缓存: 打包资产(/assets/*, 含 hash, 内容变即换名)与 parquet 长缓存 immutable(parquet 带 ?v= 版本, 安全);
 	# meta.json 必校验(它是版本源, 一变即生效); asnames 带 ?v= 可较长缓存。
-	@assets path /assets/* /duckdb/*
+	@assets path /assets/* /duckdb/* /duckdb-ext/*
 	header @assets Cache-Control "public, max-age=31536000, immutable"
 	@parquet path /data/parquet/* /data/prefixes/*
 	header @parquet Cache-Control "public, max-age=31536000, immutable"

@@ -61,7 +61,8 @@ fi
 # export-parquet 只产数据/SSG、不拷前端（copy_web 在 build/sync-web 里），故前端步骤独立、在数据之后。
 # 默认总是 npm build：保证部署的前端永远是最新源码（消除"改了前端源却忘 build、部署旧前端"的事故类）。
 if [ "$DO_BUILD" = 1 ]; then
-  log "前端: ipc build（npm run build + 拷 web/dist -> dist）"
+  log "前端: vendor duckdb 扩展 + ipc build（npm run build + 拷 web/dist -> dist）"
+  scripts/vendor-duckdb-ext.sh    # 确保 public/duckdb-ext/ 就位（pinned，已存在则秒过）-> vite 拷进 dist
   ./ipc build --out dist
 else
   log "前端: --no-build，仅 ipc sync-web（拷已构建 web/dist -> dist）"
@@ -115,6 +116,20 @@ verify(){
       local ct; ct="$(curl -fsSI --max-time 20 "https://cn.peer.as/assets/$w" 2>/dev/null | grep -i '^content-type:' | tr -d '\r' || true)"
       case "$ct" in *application/wasm*) log "CN: ✓ wasm 自托管（$ct）" ;; *) log "CN: ⚠ wasm $ct（应为 application/wasm）" ;; esac
     fi
+  fi
+  # **关键**: parquet 扩展自托管校验（防 CF SPA-200 把 HTML 当扩展）。校验每个已部署端的扩展实际返回 wasm magic。
+  # rel = duckdb-ext/<引擎版本>/wasm_eh/parquet.duckdb_extension.wasm（从 dist 取实际路径，免硬编码版本）。
+  local rel; rel="$(cd "$PROJ/dist" 2>/dev/null && ls duckdb-ext/*/wasm_eh/parquet.duckdb_extension.wasm 2>/dev/null | head -1 || true)"
+  if [ -n "$rel" ]; then
+    for h in peer.as cn.peer.as; do
+      { [ "$TARGET" = cf ] && [ "$h" = cn.peer.as ]; } && continue
+      { [ "$TARGET" = cn ] && [ "$h" = peer.as ]; } && continue
+      local magic; magic="$(curl -fsS --max-time 25 "https://$h/$rel" 2>/dev/null | head -c4 | xxd -p 2>/dev/null || true)"
+      if [ "$magic" = "0061736d" ]; then log "扩展: ✓ $h parquet 扩展自托管（wasm magic 正确）"
+      else log "扩展: ⚠ $h parquet 扩展 magic=${magic:-空}（非 wasm！前端会回退官方源，请查 $rel 是否部署）"; fi
+    done
+  else
+    log "扩展: ⚠ dist/duckdb-ext 缺失（vendor 未跑?）—— 前端将回退官方 extensions.duckdb.org"
   fi
 }
 verify || true

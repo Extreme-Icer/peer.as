@@ -175,6 +175,30 @@ export async function initDuck() {
   URL.revokeObjectURL(workerUrl)
   URL.revokeObjectURL(wasmUrl)   // instantiate 已读完 wasm, 释放 blob
   conn = await db.connect()
+  await setupExtensions()
+}
+
+// read_parquet 会 autoload **parquet 扩展**(~3MB)。默认从 extensions.duckdb.org 跨境拉, 首查卡 ~2s。
+// 自托管: 把扩展仓库指到同源(海外 CF / 本地 / CN 直连)或 CN 镜像(数据切 CN 时), 启动即预装+加载、首查不卡。
+// 引擎按 `${repo}/<引擎版本>/wasm_<variant>/parquet.duckdb_extension.wasm` 取(版本由引擎自填);
+// 文件 vendor 在 dist/duckdb-ext/(见 scripts/vendor-duckdb-ext.sh)。**带回退**: 我们的源不可用(缺文件/被 CF
+// 当 SPA 回 200 HTML)时, INSTALL 抛错 -> RESET 回退官方 extensions.duckdb.org(退化成默认行为, 不炸)。
+async function setupExtensions() {
+  const repo = DATA.startsWith(CN_ORIGIN)
+    ? `${CN_ORIGIN}/duckdb-ext`
+    : new URL('./duckdb-ext', document.baseURI).href.replace(/\/$/, '')
+  try {
+    await conn.query(`SET custom_extension_repository='${repo}'`)
+    await conn.query(`SET autoinstall_extension_repository='${repo}'`)
+    await conn.query(`INSTALL parquet`)   // 从自托管源装(失败即抛 -> 回退)
+    await conn.query(`LOAD parquet`)       // 预热: 首个 read_parquet 不再触发拉取
+  } catch (e) {
+    // 自托管扩展不可用 -> 重置仓库, 让后续 read_parquet 自行 autoload 自官方源(慢但能用)。
+    try {
+      await conn.query(`RESET custom_extension_repository`)
+      await conn.query(`RESET autoinstall_extension_repository`)
+    } catch { /* ignore */ }
+  }
 }
 
 // 跑 SQL, 返回普通对象数组 (顶层 BigInt -> Number)

@@ -247,6 +247,14 @@ JS API 经 `await import('@duckdb/duckdb-wasm')` 打成**同源惰性 chunk**(`d
 plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes()` 字节级校验(wasm magic `00 61 73 6d`/worker 非空非 HTML),
 读写 Cache Storage 都校验, 命中坏条目即 `cache.delete` 重取(自愈)。两者 + cache 名 bump 共同根治 SPA-200 HTML / 空 / 截断毒化。
 
+**DuckDB parquet 扩展自托管**：`read_parquet` 会 autoload **parquet 扩展**(~3MB)，默认从 `extensions.duckdb.org`
+跨境拉、首查卡 ~2s。改为自托管(`db.js setupExtensions`)：`SET custom_extension_repository` 指到同源(海外 CF /
+本地 / CN 直连)或 CN 镜像(数据切 CN 时)的 `/duckdb-ext`，启动即 `INSTALL+LOAD parquet` 预热(首查不卡)。引擎按
+`${repo}/<引擎版本>/wasm_<variant>/parquet.duckdb_extension.wasm` 取(版本引擎自填)。扩展文件 **vendor**(非 npm 自带)：
+`scripts/vendor-duckdb-ext.sh` 下载 pinned 版(eh+mvp，gitignore 在 `public/duckdb-ext/`)→ vite → dist → 部署两端。
+**带回退**：自托管源不可用(缺文件 / 被 CF 当 SPA 回 200 HTML)时 `INSTALL` 抛错 → `RESET` 回退官方源(退化默认、不炸)。
+deploy.sh 部署后校验两端扩展返回 wasm magic(防 SPA-200)。**升级 duckdb 须同步重 vendor**(见下「升级」)。
+
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。
 - **HTTP/3 已全局禁用(只留 h1/h2，Caddyfile 顶部 `servers { protocols h1 h2 }`)**：中国对 UDP/QUIC
   做 QoS 限速，走 h3 反而更慢；本机仅服务 CN ⇒ 全局关即可(海外走 CF 不受影响)。关后不监听 UDP/443、不广播 alt-svc h3。
@@ -266,7 +274,10 @@ plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes
 - 首次/换机装 Caddy：官方 apt 源装 `caddy`，scp `deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`，
   `caddy validate && systemctl reload caddy`。DNS 须先把 `cn.peer.as` 灰云 A 记录指向本机(否则签证书失败)。
 - duckdb wasm:**已随构建打包到 `/assets/`,随 daily rsync 自动更新**,VPS 无需手动维护。**升级 duckdb 版本** =
-  在 `ipcollect/web` 跑 `npm i @duckdb/duckdb-wasm@<VER>` + 改 `DUCKDB_VER`(db.js,驱动 `WASM_CACHE` 失效)→ 重新构建即可。
+  ① `cd ipcollect/web && npm i @duckdb/duckdb-wasm@<VER>` + 改 `DUCKDB_VER`(db.js,驱动 `WASM_CACHE` 失效);
+  ② **同步升 parquet 扩展**:改 `scripts/vendor-duckdb-ext.sh` 的 `EXTVER`(= 新版对应的**引擎版本**,如 v1.4.3) +
+  `rm -rf ipcollect/web/public/duckdb-ext/`(让 deploy 重下新版;否则引擎请求新版本路径而文件是旧版 → 扩展加载失败、回退官方源);
+  ③ 重新部署(`scripts/deploy.sh`,其 verify 会校验扩展确返回 wasm)。
 
 ### 自动化：每天 04:00 自动刷新 + 部署（cron）
 

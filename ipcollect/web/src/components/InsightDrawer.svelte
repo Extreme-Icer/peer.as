@@ -9,11 +9,18 @@
   import AsPath from './AsPath.svelte'
   import Whois from './Whois.svelte'
   import AsnDetail from './AsnDetail.svelte'
+  import DetailNav from './DetailNav.svelte'
 
   let ins = $derived(S.insight)
   let pq = $derived(compilePathQuery(S.filters.path))
   let canBack = $derived(navCanBack())
   let canFwd = $derived(navCanFwd())
+
+  // 去重路径默认只显示 5 行, 可展开。换前缀时重置。
+  const PATHS_HEAD = 5
+  let pathsOpen = $state(false)
+  $effect(() => { ins?.prefix; pathsOpen = false })
+  let shownPaths = $derived(ins?.paths ? (pathsOpen ? ins.paths : ins.paths.slice(0, PATHS_HEAD)) : [])
 
   // 拖拽调宽
   let dragging = false
@@ -33,12 +40,14 @@
   <aside class="detail open" style:flex-basis="{S.detailW}%" style:width="{S.detailW}%">
     <div class="dragbar" onmousedown={startDrag} role="separator" aria-orientation="vertical"></div>
     <div class="dbody">
-      <div class="dtools">
-        <div class="navbtns">
+      <!-- 右上浮岛: 分区导航(左) + 后退/前进/关闭(右), 随滚动悬浮; 标题在其左侧不被遮挡 -->
+      <div class="dfloat">
+        <DetailNav />
+        <div class="island">
           <button class="navb" disabled={!canBack} onclick={navBack} title={t('nav_back')} aria-label={t('nav_back')}><Fa icon={iArrowL} /></button>
           <button class="navb" disabled={!canFwd} onclick={navForward} title={t('nav_fwd')} aria-label={t('nav_fwd')}><Fa icon={iArrowR} /></button>
+          <button class="navb close" onclick={closeInsight} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
         </div>
-        <button class="close" onclick={closeInsight} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
       </div>
 
       {#if S.detailKind === 'asn'}
@@ -57,10 +66,10 @@
           {/if}
         </div>
 
-        <h3 class="dsec">{t('graph_title')}</h3>
+        <h3 class="dsec" data-sec="graph">{t('graph_title')}</h3>
         <PathGraph rec={{ paths: ins.paths, origin_asn: ins.origin_asn, prefix: ins.prefix }} />
 
-        <div class="rel">
+        <div class="rel" data-sec="rel">
           <div class="relbox">
             <b><Fa icon={iUp} /> {t('sup')}</b>
             {#if ins.sup.length}
@@ -76,11 +85,11 @@
           <div class="relnote">{t('rel_note')}</div>
         </div>
 
-        <h3 class="dsec">{t('paths_all')}</h3>
+        <h3 class="dsec" data-sec="paths">{t('paths_all')}</h3>
         <table class="paths">
           <thead><tr><th>#peer</th><th>len</th><th>AS_PATH</th></tr></thead>
           <tbody>
-            {#each ins.paths as g}
+            {#each shownPaths as g}
               <tr class:hit={pq.hasInclude && pq.test(g.asns)}>
                 <td class="num">{g.peers}</td>
                 <td class="num">{g.asns.length}</td>
@@ -89,6 +98,11 @@
             {/each}
           </tbody>
         </table>
+        {#if ins.paths.length > PATHS_HEAD}
+          <button class="expandrow" onclick={() => (pathsOpen = !pathsOpen)}>
+            {pathsOpen ? t('collapse') : t('show_all').replace('{n}', ins.paths.length)}
+          </button>
+        {/if}
 
         <Whois kind="ip" rkey={ins.prefix} />
       {/if}
@@ -100,15 +114,24 @@
   .detail { flex: 0 0 42%; display: flex; background: var(--inbg); border-left: 1px solid var(--line); position: sticky; top: 0; height: 100vh; overflow: hidden; }
   .dragbar { flex: 0 0 6px; cursor: col-resize; background: var(--line); transition: background .12s; }
   .dragbar:hover, .dragbar:active { background: var(--accent); }
-  .dbody { flex: 1; min-width: 0; overflow: auto; padding: 14px 22px 40px; }
-  /* 顶部工具条: 前进/后退(左) + 关闭(右) */
-  .dtools { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
-  .navbtns { display: inline-flex; gap: 4px; }
-  .navb { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 1px solid var(--line2); border-radius: 7px; color: var(--muted); cursor: pointer; font-size: 12px; transition: all .12s; }
-  .navb:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-  .navb:disabled { opacity: .35; cursor: default; }
-  .close { background: transparent; border: 0; cursor: pointer; color: var(--muted); font-size: 17px; padding: 2px 4px; }
-  .close:hover { color: var(--accent); }
+  .dbody { flex: 1; min-width: 0; overflow: auto; padding: 14px 22px 40px; position: relative; }
+  /* 右上浮岛: 随滚动悬浮(sticky)、右浮(float)让标题在其左侧环绕不被遮挡 */
+  .dfloat { position: sticky; top: 6px; float: right; z-index: 6; display: inline-flex; align-items: center; gap: 8px; margin: 0 0 4px 12px; }
+  .island {
+    display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    border: 1px solid var(--line2); border-radius: 9px;
+    backdrop-filter: blur(6px); box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+  }
+  .navb { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 12px; transition: all .12s; }
+  .navb:hover:not(:disabled) { color: var(--fg); background: var(--line2); }
+  .navb:disabled { opacity: .3; cursor: default; }
+  .navb.close:hover { color: #ef4444; }
+  .expandrow {
+    width: 100%; margin-top: 2px; padding: 6px; background: transparent; border: 1px dashed var(--line);
+    border-radius: 7px; color: var(--link); cursor: pointer; font: 600 11.5px var(--sans); transition: all .12s;
+  }
+  .expandrow:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
   .originlink { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: inherit; }
   .originlink b { color: var(--link); font-family: var(--mono); }
   .originlink:hover:not(:disabled) { text-decoration: underline; }

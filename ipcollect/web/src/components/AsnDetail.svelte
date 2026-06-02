@@ -10,6 +10,12 @@
 
   let a = $derived(S.asnView)
   let total = $derived((a?.count4 || 0) + (a?.count6 || 0))
+
+  // 通告前缀默认只显示 5 行, 可展开。换 ASN 时重置。
+  const HEAD = 5
+  let pfxOpen = $state(false)
+  $effect(() => { a?.asn; pfxOpen = false })
+  let shownPfx = $derived(a?.prefixes ? (pfxOpen ? a.prefixes : a.prefixes.slice(0, HEAD)) : [])
 </script>
 
 {#if a}
@@ -31,24 +37,29 @@
 
     {#if !a.loading}
       <!-- 通告前缀 -->
-      <h3 class="dsec"><Fa icon={iPrefix} /> {t('asn_originated')}{#if total} · {total.toLocaleString()}{/if}</h3>
+      <h3 class="dsec" data-sec="originated"><Fa icon={iPrefix} /> {t('asn_originated')}{#if total} · {total.toLocaleString()}{/if}</h3>
       {#if a.prefixes?.length}
         <div class="plist">
-          {#each a.prefixes as p}
+          {#each shownPfx as p}
             <button class="prow" onclick={() => showInsight(p.pid, p.prefix)}>
               <span class="px">{p.prefix}</span>
               <span class="pm">{ccLabel(p.cc)} · {p.n_paths}</span>
             </button>
           {/each}
         </div>
-        {#if total > a.prefixes.length}<div class="more">… {(total - a.prefixes.length).toLocaleString()} more</div>{/if}
+        {#if a.prefixes.length > HEAD}
+          <button class="expandrow" onclick={() => (pfxOpen = !pfxOpen)}>
+            {pfxOpen ? t('collapse') : t('show_all').replace('{n}', a.prefixes.length)}
+          </button>
+        {/if}
+        {#if total > a.prefixes.length}<div class="more">… {(total - a.prefixes.length).toLocaleString()} more（取样 {a.prefixes.length}）</div>{/if}
       {:else}
         <div class="muted small">{t('asn_no_origin')}</div>
       {/if}
 
       <!-- 观测上游(据通告前缀最优路径) -->
       {#if a.upstreams?.length}
-        <h3 class="dsec"><Fa icon={iUp} /> {t('asn_upstreams')}</h3>
+        <h3 class="dsec" data-sec="upstreams"><Fa icon={iUp} /> {t('asn_upstreams')}</h3>
         <div class="taglist">
           {#each a.upstreams as u}
             <button class="tagbtn" onclick={() => showAsn(u.asn)} title="AS{u.asn}"><AsnTag asn={u.asn} /><span class="cnt">{u.n}</span></button>
@@ -58,7 +69,7 @@
       {/if}
 
       <!-- 完整邻居(按需全表扫) -->
-      <h3 class="dsec"><Fa icon={iNodes} /> {t('asn_neigh')}</h3>
+      <h3 class="dsec" data-sec="neighbors"><Fa icon={iNodes} /> {t('asn_neigh')}</h3>
       {#if !a.neigh}
         <button class="scanbtn" onclick={() => scanNeighbors(a.asn)}><Fa icon={iNodes} /> {t('asn_neigh_btn')}</button>
         <div class="relnote">{t('asn_neigh_note')}</div>
@@ -101,6 +112,8 @@
   .prow .px { font: 12px var(--mono); color: var(--link); }
   .prow .pm { font-size: 11px; color: var(--muted); font-family: var(--sans); white-space: nowrap; }
   .more { font-size: 11px; color: var(--muted); padding: 6px 2px 0; }
+  .expandrow { width: 100%; margin-top: 6px; padding: 6px; background: transparent; border: 1px dashed var(--line); border-radius: 7px; color: var(--link); cursor: pointer; font: 600 11.5px var(--sans); transition: all .12s; }
+  .expandrow:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
   .taglist { display: flex; flex-wrap: wrap; gap: 6px 8px; }
   .tagbtn { display: inline-flex; align-items: center; gap: 4px; background: var(--inbg); border: 1px solid var(--line2); border-radius: 7px; cursor: pointer; padding: 3px 8px; font-size: 11.5px; }
   .tagbtn:hover { border-color: var(--accent); }

@@ -23,7 +23,7 @@
 </script>
 
 <div class="whois">
-  <h3 class="dsec"><Fa icon={iWhois} /> {t('whois_title')}</h3>
+  <h3 class="dsec" data-sec="whois"><Fa icon={iWhois} /> {t('whois_title')}</h3>
   {#if st.loading}
     <div class="wstat"><Fa icon={iSpinner} spin /> {t('querying')}</div>
   {:else if st.error}

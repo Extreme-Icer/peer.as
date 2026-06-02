@@ -30,6 +30,9 @@ export const STRINGS = {
     path_na: '子网模式：AS_PATH 不可筛（国家/城市/可见度可叠加）',
     // ── 详情面板导航 / ASN 视图 / WHOIS ──
     nav_back: '后退', nav_fwd: '前进', detail_close: '关闭',
+    sec_graph: '路由图', sec_rel: '父子段', sec_paths: '去重路径', sec_whois: 'WHOIS',
+    sec_originated: '通告前缀', sec_upstreams: '上游', sec_neighbors: '邻居',
+    show_all: '展开全部 {n} 条', collapse: '收起',
     asn_title: 'ASN 详情', asn_originated: '通告的前缀', asn_upstreams: '观测到的上游',
     asn_no_origin: '库内无以该 ASN 为 origin 的前缀（可能是纯 transit 或不在库）',
     asn_upstream_note: '据通告前缀的最优路径推得的直接上游（origin 左侧一跳）。',
@@ -75,6 +78,9 @@ export const STRINGS = {
     path_na: 'Subnet mode: AS_PATH N/A (country/city/visibility still apply)',
     // ── detail nav / ASN view / WHOIS ──
     nav_back: 'Back', nav_fwd: 'Forward', detail_close: 'Close',
+    sec_graph: 'Route graph', sec_rel: 'Relations', sec_paths: 'Paths', sec_whois: 'WHOIS',
+    sec_originated: 'Prefixes', sec_upstreams: 'Upstreams', sec_neighbors: 'Neighbors',
+    show_all: 'Show all {n}', collapse: 'Collapse',
     asn_title: 'ASN detail', asn_originated: 'Originated prefixes', asn_upstreams: 'Observed upstreams',
     asn_no_origin: 'No prefixes originated by this ASN in DB (pure transit, or not collected)',
     asn_upstream_note: 'Direct upstream (one hop before origin) inferred from best paths of originated prefixes.',

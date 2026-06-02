@@ -3,8 +3,8 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
-  import { resolveCC, scheduleSearch, searchNow } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp } from '../lib/icons.js'
+  import { resolveCC, scheduleSearch, searchNow, openWhoisFromBox } from '../lib/queries.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois } from '../lib/icons.js'
   import Field from './Field.svelte'
 
   let cc = $derived(resolveCC(S.filters.cc))
@@ -13,6 +13,7 @@
   // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
   let probe = $derived(classifyQuery(S.filters.ip))
   let pathNA = $derived(probe.kind === 'ipv4' || probe.kind === 'ipv6')
+  let canWhois = $derived(probe.kind === 'asn')   // 移动端 Whois 按钮: 仅当精确框是 ASN 时可用
   // family 单选: 约束国家/全表搜索只看 v4 或 v6(子网搜索由 IP 本身决定 family, 此时禁用)。
   const FAM = [{ v: 'all', label: () => t('fam_all') }, { v: '4', label: () => 'IPv4' }, { v: '6', label: () => 'IPv6' }]
   let famIdx = $derived(Math.max(0, FAM.findIndex(o => o.v === (f.fam || 'all'))))
@@ -40,6 +41,7 @@
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
         oninput={sched} onenter={searchNow} />
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
+      <button class="gobtn big whoisbtn" onclick={openWhoisFromBox} disabled={!canWhois} title={t('whois_open')}><Fa icon={iWhois} /> WHOIS</button>
       <button class="clrbtn" onclick={clearAll} title={t('clear')}><Fa icon={iClear} /></button>
     </div>
     <!-- 第二行: 其余筛选(AS_PATH 撑满剩余宽度) -->
@@ -136,6 +138,8 @@
   }
   .gobtn:hover { filter: brightness(1.08); }
   .gobtn:active { transform: translateY(1px); }
+  .gobtn:disabled { opacity: .4; cursor: default; filter: none; box-shadow: none; }
+  .whoisbtn { display: none; }   /* 仅移动端显示(见 @media) */
   .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); }
   .numbox:disabled { opacity: .45; cursor: not-allowed; }
   .chk input:disabled ~ span { opacity: .45; }
@@ -150,9 +154,11 @@
     .topbar { padding: 10px 12px; }
     /* 次要筛选行: 两列自适应 */
     .row.secondary :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
-    /* 主查询行: 输入框独占一行, 搜索按钮(撑开)与清空按钮同行并排 */
-    .row.primary :global(.field) { flex: 1 1 100%; width: auto !important; }
+    /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行; 第2行: 搜索 + WHOIS + 清空 */
+    .row.primary .famseg { flex: 0 0 auto; }
+    .row.primary :global(.field) { flex: 1 1 58%; width: auto !important; }
     .row.primary .gobtn.big { flex: 1 1 auto; }
+    .row.primary .whoisbtn { display: inline-flex; }
     .row.primary .clrbtn { flex: 0 0 auto; }
   }
 </style>

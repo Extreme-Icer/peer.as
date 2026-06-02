@@ -276,12 +276,18 @@ export async function scanNeighbors(asn) {
 }
 
 // 精确框 ASN -> 设主体 + 自动开面板(主体变化时); 非 ASN -> 清主体。
+// 移动端: 详情页全屏, 输入即自动弹出会打断输入 -> 只设主体不自动开, 由 Topbar 的「Whois」按钮显式打开。
+const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches
 function setSubjectAsn(asn) {
   if (asn == null) { S.subject = null; return }
   if (S.subject?.kind === 'asn' && S.subject.id === asn && S.detailKind) return  // 已在看, 别打断
   S.subject = { kind: 'asn', id: asn }
   resetNav()
-  showAsn(asn)
+  if (!isMobileViewport()) showAsn(asn)
+}
+// Topbar「Whois」按钮(移动端): 显式打开当前精确框 ASN 的详情面板。
+export function openWhoisFromBox() {
+  if (S.subject?.kind === 'asn') showAsn(S.subject.id)
 }
 
 // ── 导航历史(前进/后退) ──────────────────────────────────────────

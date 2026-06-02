@@ -162,5 +162,7 @@
   @media (max-width: 820px) {
     .detail { position: fixed; inset: 0; width: 100% !important; flex-basis: 100% !important; z-index: 40; }
     .dragbar { display: none; }
+    /* 标题下移一点, 避免顶到右上浮岛 */
+    h2 { margin-top: 16px; }
   }
 </style>

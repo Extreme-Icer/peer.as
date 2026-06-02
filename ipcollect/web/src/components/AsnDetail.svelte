@@ -124,4 +124,6 @@
   .ncol { margin: 10px 0 0; }
   .ncol b { color: var(--muted); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; }
   .ncol b :global(svg) { color: var(--accent); }
+  /* 标题下移一点, 避免顶到右上浮岛(与 InsightDrawer 一致) */
+  @media (max-width: 820px) { h2 { margin-top: 16px; } }
 </style>

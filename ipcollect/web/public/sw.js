@@ -23,7 +23,7 @@ self.addEventListener('fetch', e => {
   const req = e.request
   if (req.method !== 'GET') return
   const url = new URL(req.url)
-  if (url.origin !== location.origin) return         // 跨源(cn.peer.as / jsdelivr): 放行
+  if (url.origin !== location.origin) return         // 跨源(cn.peer.as / wasm CDN 回退): 放行
   if (url.pathname.startsWith('/data/')) return       // 数据(带 ?v=): 放行, 不入壳缓存
   if (url.pathname.startsWith('/cdn-cgi/')) return    // CF trace 等: 放行
   // DuckDB wasm/worker(大, 由 db.js 的 Cache Storage/WASM_CACHE 单独管): 放行, 不入壳缓存避免重复占配额。

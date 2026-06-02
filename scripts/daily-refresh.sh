@@ -74,7 +74,10 @@ run() {
     echo "[$(date -Is)] 3a/3 跳过 CN 同步：未设置 CN_DEPLOY_SSH"
   fi
 
-  echo "[$(date -Is)] 3b/3 wrangler pages deploy(前端 + 同源数据 -> peer.as)"
+  # 3b) CF Pages 部署。**CF 单文件 ≤25MiB**, 而 duckdb-eh/mvp.wasm 达 33/39MB -> 用 .assetsignore 排除上传
+  #     (CF 路径下前端 wasmSrcs 同源取不到时回退外部 CDN; CN 镜像走 rsync 的完整 wasm, 不受此影响)。
+  echo "[$(date -Is)] 3b/3 wrangler pages deploy(前端 + 同源数据 -> peer.as; 排除超限 wasm)"
+  printf '*.wasm\n' > dist/.assetsignore
   wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true
 
   echo "[$(date -Is)] 完成 ✅"

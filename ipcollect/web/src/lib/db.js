@@ -1,21 +1,28 @@
 // DuckDB-WASM 数据层 (从 web_ref/app.js 移植)。无后端: 浏览器对静态 parquet 发 HTTP Range 查询。
 import { S } from './store.svelte.js'
-// DuckDB-WASM 全部自托管(无 jsDelivr 运行时依赖): JS API 经 Vite 动态 import 打成同源 chunk;
-// wasm/worker 用 `?url` 引入 -> Vite 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 一并部署到
-// CF Pages 与 CN 镜像(daily-refresh rsync)。两边 hash 路径一致 -> 境内数据切 CN 时 wasm 也能走 CN 优化线(见 wasmSrcs)。
+// DuckDB-WASM 资产经 Vite `?url` 打包: 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 部署。
+// **wasm 自托管的边界**: CN 镜像(Caddy, 无大小限制)同源托管完整 wasm;**CF Pages 单文件 ≤25MiB,
+// 而 duckdb-eh/mvp.wasm 达 33/39MB 放不下** -> CF 部署排除这俩 wasm(见 daily-refresh / .assetsignore),
+// CF 路径下 wasm 同源取不到时回退外部 CDN(见 CDN_DIST / wasmSrcs)。worker(<1MB)与 JS API 始终同源打包。
 import wasmMvp from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
 import workerMvp from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
 import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
 import workerEh from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url'
 
 const DUCKDB_VER = '1.32.0'
+// CF Pages 路径下 wasm 的外部回退源(同源放不下时按序尝试)。两个全球 CDN 互为备份、均带 CORS。
+// 文件用 duckdb 官方原名(非 hash); 仅 CF 海外/直连节点会用到, 国内主路径走 CN VPS 同源、不碰这里。
+const CDN_DIST = [
+  `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VER}/dist`,
+  `https://unpkg.com/@duckdb/duckdb-wasm@${DUCKDB_VER}/dist`,
+]
 
 // 数据宿主在「运行时」按域名/地区选定(见 configure)。**默认全部走同源**(peer.as 自己的 /data;已弃用 R2,
 // 因为前端实际是整片下载、不靠 Range,R2 只徒增被刷爆的 egress 账单风险)。
 // - 同源 = 默认: 海外走 CF Pages 的 /data; GeoDNS 把境内 peer.as 解到 CN 机器时, 同源即 CN 机器(快)。
 // - cn.peer.as 直连 = 全部同源相对(数据 /data)。
 // - 境内但 GeoDNS 没生效(拿到 CF IP): /cdn-cgi/trace=CN 时把数据切到 cn.peer.as(带回退同源)。
-// wasm/worker 已随构建打包同源, 无需再选宿主; 仅在数据切到 CN 时让 wasm 也优先走 CN 镜像(wasmSrcs)。
+// wasm/worker 由构建打包(详见顶部与 wasmSrcs): worker/JS API 始终同源; wasm 同源优先, CF 节点回退 CDN。
 const SAME = new URL('./data', document.baseURI).href.replace(/\/$/, '')       // 同源 /data
 const CN_ORIGIN = (import.meta.env.VITE_CN_BASE || 'https://cn.peer.as').replace(/\/$/, '')
 let CN_HOST = 'cn.peer.as'; try { CN_HOST = new URL(CN_ORIGIN).hostname } catch { /* 默认 cn.peer.as */ }
@@ -24,12 +31,14 @@ let CN_HOST = 'cn.peer.as'; try { CN_HOST = new URL(CN_ORIGIN).hostname } catch 
 export let DATA = SAME             // parquet/json 基址。ES module 活绑定: 重新赋值后各处即时生效。
 export let edge = 'cf'             // 'cf' | 'cn', 仅诊断用。
 
-// 把打包出的 wasm/worker 资产路径(可能是同源绝对 URL)展开成「按序尝试」的候选: 数据切到 CN 镜像时,
-// 同一 hash 资产在 CN 镜像也存在(随 dist rsync) -> 优先 CN 优化线、回退同源。其余情况只用同源。
-function wasmSrcs(assetUrl) {
+// 把打包出的 wasm/worker 资产展开成「按序尝试」的候选(cachedBlobURL 逐个 fetch, 首个成功即止):
+// 1) 数据切 CN 镜像时, 同一 hash 资产在 CN 镜像也有(随 dist rsync) -> 优先 CN 优化线;
+// 2) 同源(CN VPS/本地有完整 wasm; CF Pages 只有 worker、大 wasm 被排除 -> 此处 404 后顺延);
+// 3) 末尾附外部 CDN(官方原名)兜底 —— 仅 CF 路径取 wasm 会真正用到。cdnName 形如 `duckdb-eh.wasm`。
+function wasmSrcs(assetUrl, cdnName) {
   const abs = new URL(assetUrl, document.baseURI)
-  if (DATA.startsWith(CN_ORIGIN)) return [`${CN_ORIGIN}${abs.pathname}`, abs.href]
-  return [abs.href]
+  const same = DATA.startsWith(CN_ORIGIN) ? [`${CN_ORIGIN}${abs.pathname}`, abs.href] : [abs.href]
+  return [...same, ...CDN_DIST.map(d => `${d}/${cdnName}`)]
 }
 
 let db = null, conn = null
@@ -123,11 +132,12 @@ export async function initDuck() {
     eh:  { mainModule: wasmEh,  mainWorker: workerEh },
   })
   const variant = picked.mainModule === wasmEh ? 'eh' : 'mvp'
-  // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给出 CN 镜像优先/同源回退的候选。
+  // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给候选: CN 镜像优先 / 同源 / CDN 兜底。
+  // cdnName 用 duckdb 官方原名(CDN 上即此名): worker=duckdb-browser-<v>.worker.js, wasm=duckdb-<v>.wasm。
   const workerUrl = await cachedBlobURL(`${variant}.worker.js`,
-    wasmSrcs(picked.mainWorker), 'text/javascript')
+    wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`), 'text/javascript')
   const wasmUrl = await cachedBlobURL(`${variant}.wasm`,
-    wasmSrcs(picked.mainModule), 'application/wasm')
+    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`), 'application/wasm')
 
   const worker = new Worker(workerUrl)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)

@@ -202,8 +202,10 @@ curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                       
    - 否则(海外,或 GeoDNS 已把 peer.as 解到 CN 机器——此时 trace 取不到 ⇒ 当非 CN)⇒ **同源**(本机即正确源)。
    覆盖:`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
    - 注:GeoDNS 把 peer.as 解到 CN 机器时,hostname 仍是 peer.as ⇒ 走分支 2 的"否则"= 同源(=CN 机器, 数据快)。
-   - **wasm/worker 已随构建打包同源(`/assets/*`,见下)** ⇒ 任何分支下都不跨境取 wasm;数据切到 `cn.peer.as` 时,
-     `wasmSrcs()` 让 wasm 也优先走 CN 镜像上的同一 hash 资产(回退同源)。**已无 jsDelivr 运行时依赖。**
+   - **wasm/worker 随构建打包(`/assets/*`,见下)**:CN VPS/本地同源托管完整 wasm ⇒ 国内零跨境;
+     数据切 `cn.peer.as` 时 `wasmSrcs()` 让 wasm 优先走 CN 镜像同 hash 资产。**唯一例外**:CF Pages 单文件 ≤25MiB
+     放不下 33/39MB 的 wasm(`.assetsignore` 排除上传)⇒ **CF 节点的 wasm 回退外部 CDN**(jsDelivr→unpkg,见 `CDN_DIST`);
+     worker(<1MB)与 JS API 仍同源。即:**国内主路径(CN VPS)完全自托管;CF 海外/直连节点的 wasm 走 CDN**。
 - **GeoDNS(运维侧,域名解析)**:境内 `peer.as` 解析到 CN 机器 IP、境外解析到 CF Pages。
   **前置(切 NS 前必须)**:CN 机器 Caddy 要能服务 `peer.as` 这个 Host **且有 peer.as 的 TLS 证书**——LE HTTP-01 会失败
   (海外验证者解析 peer.as→CF),需 **DNS-01**(或把 CF 的证书同步过去)。否则境内用户被 GeoDNS 引到 CN 机器时 TLS 握手失败。
@@ -218,15 +220,18 @@ VPS(DMIT LAX，`cn.peer.as`)用 **Caddy** 托管**与 peer.as 完全一致的整
 分流见上「数据分发：同源 + CN 整站镜像」(`db.js configure()`)：直连 cn.peer.as / GeoDNS 把 peer.as 解到本机 ⇒ 同源;
 GeoDNS 没生效拿到 CF IP 且 `loc=CN` ⇒ 切 cn.peer.as(带健康探测 + 自动回退)。**已弃用 R2,数据全部同源**。
 
-**DuckDB-WASM 完全自托管(vendored 打包,零 jsDelivr 运行时依赖)**：`@duckdb/duckdb-wasm`(版本钉 `DUCKDB_VER`)
-是 npm 依赖。`db.js` 顶部用 Vite **`?url`** 引入 4 个资产(`duckdb-{mvp,eh}.wasm` + `duckdb-browser-{mvp,eh}.worker.js`)
-⇒ Vite 输出**带内容 hash 的独立资源**到 `dist/assets/`(不内联进 JS),随 dist 一并部署到 CF Pages 与 CN 镜像。
+**DuckDB-WASM vendored 打包(JS API/worker 零外部依赖;wasm 仅 CF 节点回退 CDN)**：`@duckdb/duckdb-wasm`
+(版本钉 `DUCKDB_VER`)是 npm 依赖。`db.js` 顶部用 Vite **`?url`** 引入 4 个资产(`duckdb-{mvp,eh}.wasm` +
+`duckdb-browser-{mvp,eh}.worker.js`)⇒ Vite 输出**带内容 hash 的独立资源**到 `dist/assets/`(不内联进 JS)。
 JS API 经 `await import('@duckdb/duckdb-wasm')` 打成**同源惰性 chunk**(`duckdb-browser-<hash>.js`,~46KB gz)。
 `selectBundle` 仍按浏览器特性挑 mvp/eh(其内置 `getJsDelivrBundles` 因走手动 bundle 而成死代码、不触发)。
+**wasm 托管的硬约束**:**CF Pages 单文件 ≤25MiB**,而 eh/mvp.wasm 达 33/39MB ⇒ CF 部署 `.assetsignore` 排除上传,
+CF 节点的 wasm 经 `wasmSrcs()` 末尾的 `CDN_DIST`(jsDelivr→unpkg, 官方原名)回退取。**CN VPS(Caddy 无限制)
+同源托管完整 wasm**,国内主路径完全自托管、不碰 CDN;worker(<1MB)与 JS API 任何路径都同源。
 
 **+ Cache Storage(核心修复)**：`duckdb-eh.wasm` 解压 **34MB**,**超出 Chromium HTTP 磁盘缓存单资源上限
-(`max_size/8`) ⇒ 每次刷新都重下 ~8MB**。修法(`initDuck` + `cachedBlobURL`):`wasmSrcs()` 给出候选源(数据切 CN 时
-CN 镜像优先、回退同源)→ wasm/worker.js **存入 Cache Storage(无单资源上限)**,以 blob: URL 喂给 duckdb
+(`max_size/8`) ⇒ 每次刷新都重下 ~8MB**。修法(`initDuck` + `cachedBlobURL`):`wasmSrcs()` 给出候选源(CN 镜像优先 →
+同源 → CDN 兜底, 按序 fetch 首个成功即止)→ wasm/worker.js **存入 Cache Storage(无单资源上限)**,以 blob: URL 喂给 duckdb
 (wasm blob 标 `application/wasm` 走 instantiateStreaming;worker.js 自包含,cached text 直接 `new Worker`)。
 **首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`),缓存名带版本
 (`duckdb-wasm-1.32.0`)、升级 duckdb 自动弃旧。**Service Worker**(`public/sw.js`)只缓存同源壳

@@ -3,7 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { compilePathQuery, asnName, parseBest } from '../lib/bgp.js'
-  import { showInsight, showAsn, closeInsight, navBack, navForward, navCanBack, navCanFwd } from '../lib/queries.js'
+  import { showInsight, showAsn, closeInsight, hardCloseDetail, navBack, navForward, navCanBack, navCanFwd } from '../lib/queries.js'
   import { iClose, iStar, iUp, iDown, iSpinner, iArrowL, iArrowR } from '../lib/icons.js'
   import PathGraph from './PathGraph.svelte'
   import AsPath from './AsPath.svelte'
@@ -21,6 +21,12 @@
   let pathsOpen = $state(false)
   $effect(() => { ins?.prefix; pathsOpen = false })
   let shownPaths = $derived(ins?.paths ? (pathsOpen ? ins.paths : ins.paths.slice(0, PATHS_HEAD)) : [])
+
+  // 关闭: 移动端直接全关; 桌面端沿用智能关闭(看 prefix 且主体是 ASN 时先返回 ASN)。
+  function onClose() {
+    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches) hardCloseDetail()
+    else closeInsight()
+  }
 
   // 拖拽调宽
   let dragging = false
@@ -46,7 +52,7 @@
         <div class="island">
           <button class="navb" disabled={!canBack} onclick={navBack} title={t('nav_back')} aria-label={t('nav_back')}><Fa icon={iArrowL} /></button>
           <button class="navb" disabled={!canFwd} onclick={navForward} title={t('nav_fwd')} aria-label={t('nav_fwd')}><Fa icon={iArrowR} /></button>
-          <button class="navb close" onclick={closeInsight} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
+          <button class="navb close" onclick={onClose} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
         </div>
       </div>
 
@@ -164,5 +170,7 @@
     .dragbar { display: none; }
     /* 标题下移一点, 避免顶到右上浮岛 */
     h2 { margin-top: 16px; }
+    /* 底部留白, 防止被底部居中的分区导航遮挡 */
+    .dbody { padding-bottom: 76px; }
   }
 </style>

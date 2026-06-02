@@ -65,4 +65,12 @@
   }
   .sn:hover { color: var(--fg); background: var(--line2); }
   .sn.on { color: var(--accent-fg); background: var(--accent); }
+  /* 移动端: 分区导航移到底部居中浮动(三个按钮仍在右上角的岛里) */
+  @media (max-width: 820px) {
+    .secnav {
+      position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 45;
+      padding: 4px; gap: 3px; box-shadow: 0 4px 20px rgba(0, 0, 0, .3);
+    }
+    .sn { width: 34px; height: 34px; font-size: 13px; }
+  }
 </style>

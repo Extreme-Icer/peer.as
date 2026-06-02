@@ -1,0 +1,173 @@
+{
+  "endAutnum" : 174,
+  "entities" : [ {
+    "entities" : [ {
+      "events" : [ {
+        "eventAction" : "last changed",
+        "eventDate" : "2025-07-08T11:30:01-04:00"
+      }, {
+        "eventAction" : "registration",
+        "eventDate" : "2002-11-13T17:21:33-05:00"
+      } ],
+      "handle" : "COGEN-ARIN",
+      "links" : [ {
+        "href" : "https://rdap.arin.net/registry/entity/COGEN-ARIN",
+        "rel" : "self",
+        "type" : "application/rdap+json",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      }, {
+        "href" : "https://whois.arin.net/rest/poc/COGEN-ARIN",
+        "rel" : "alternate",
+        "type" : "application/xml",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      } ],
+      "objectClassName" : "entity",
+      "port43" : "whois.arin.net",
+      "roles" : [ "abuse" ],
+      "status" : [ "validated" ],
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+        "label" : "2450 N street, NW\nWashington\nDC\n20037\nUnited States"
+      }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "Cogent Abuse" ], [ "org", { }, "text", "Cogent Abuse" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "abuse@cogentco.com" ], [ "tel", {
+        "type" : [ "work", "voice" ]
+      }, "text", "+1-877-875-4311" ] ] ]
+    }, {
+      "events" : [ {
+        "eventAction" : "last changed",
+        "eventDate" : "2025-07-08T11:30:20-04:00"
+      }, {
+        "eventAction" : "registration",
+        "eventDate" : "2001-01-24T13:40:39-05:00"
+      } ],
+      "handle" : "ZC108-ARIN",
+      "links" : [ {
+        "href" : "https://rdap.arin.net/registry/entity/ZC108-ARIN",
+        "rel" : "self",
+        "type" : "application/rdap+json",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      }, {
+        "href" : "https://whois.arin.net/rest/poc/ZC108-ARIN",
+        "rel" : "alternate",
+        "type" : "application/xml",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      } ],
+      "objectClassName" : "entity",
+      "port43" : "whois.arin.net",
+      "roles" : [ "noc" ],
+      "status" : [ "validated" ],
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+        "label" : "2450 N Street NW\nWashington\nDC\n20037\nUnited States"
+      }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "Cogent Communications" ], [ "org", { }, "text", "Cogent Communications" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "noc@cogentco.com" ], [ "tel", {
+        "type" : [ "work", "voice" ]
+      }, "text", "+1-877-875-4311" ] ] ]
+    }, {
+      "events" : [ {
+        "eventAction" : "last changed",
+        "eventDate" : "2025-07-08T11:30:14-04:00"
+      }, {
+        "eventAction" : "registration",
+        "eventDate" : "2002-11-13T17:21:33-05:00"
+      } ],
+      "handle" : "IPALL-ARIN",
+      "links" : [ {
+        "href" : "https://rdap.arin.net/registry/entity/IPALL-ARIN",
+        "rel" : "self",
+        "type" : "application/rdap+json",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      }, {
+        "href" : "https://whois.arin.net/rest/poc/IPALL-ARIN",
+        "rel" : "alternate",
+        "type" : "application/xml",
+        "value" : "https://rdap.arin.net/registry/autnum/174"
+      } ],
+      "objectClassName" : "entity",
+      "port43" : "whois.arin.net",
+      "remarks" : [ {
+        "description" : [ "THIS CONTACT DOES NOT RESPOND TO ABUSE OR OPERATIONAL ISSUES\r", "For abuse issues contact abuse@cogentco.com\r", "For operational issues contact noc@cogentco.com" ],
+        "title" : "Registration Comments"
+      } ],
+      "roles" : [ "administrative", "technical" ],
+      "status" : [ "validated" ],
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+        "label" : "2450 N Street NW\nWashington\nDC\n20037\nUnited States"
+      }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "IP Allocation" ], [ "org", { }, "text", "IP Allocation" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "ipalloc@cogentco.com" ], [ "tel", {
+        "type" : [ "work", "voice" ]
+      }, "text", "+1-877-875-4311" ] ] ]
+    } ],
+    "events" : [ {
+      "eventAction" : "last changed",
+      "eventDate" : "2025-09-23T12:07:44-04:00"
+    }, {
+      "eventAction" : "registration",
+      "eventDate" : "2000-05-30T00:00:00-04:00"
+    } ],
+    "handle" : "COGC",
+    "links" : [ {
+      "href" : "https://rdap.arin.net/registry/entity/COGC",
+      "rel" : "self",
+      "type" : "application/rdap+json",
+      "value" : "https://rdap.arin.net/registry/autnum/174"
+    }, {
+      "href" : "https://whois.arin.net/rest/org/COGC",
+      "rel" : "alternate",
+      "type" : "application/xml",
+      "value" : "https://rdap.arin.net/registry/autnum/174"
+    } ],
+    "objectClassName" : "entity",
+    "port43" : "whois.arin.net",
+    "remarks" : [ {
+      "description" : [ "Geofeed https://geofeed.cogentco.com/geofeed.csv" ],
+      "title" : "Registration Comments"
+    } ],
+    "roles" : [ "registrant" ],
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Cogent Communications, LLC" ], [ "adr", {
+      "label" : "2450 N Street NW\nWashington\nDC\n20037\nUnited States"
+    }, "text", [ "", "", "", "", "", "", "" ] ], [ "kind", { }, "text", "org" ] ] ]
+  } ],
+  "events" : [ {
+    "eventAction" : "last changed",
+    "eventDate" : "2012-03-02T08:03:18-05:00"
+  }, {
+    "eventAction" : "registration",
+    "eventDate" : "1996-05-16T00:00:00-04:00"
+  } ],
+  "handle" : "AS174",
+  "links" : [ {
+    "href" : "https://rdap.arin.net/registry/autnum/174",
+    "rel" : "self",
+    "type" : "application/rdap+json",
+    "value" : "https://rdap.arin.net/registry/autnum/174"
+  }, {
+    "href" : "https://whois.arin.net/rest/asn/AS174",
+    "rel" : "alternate",
+    "type" : "application/xml",
+    "value" : "https://rdap.arin.net/registry/autnum/174"
+  } ],
+  "name" : "COGENT-174",
+  "notices" : [ {
+    "description" : [ "By using the ARIN RDAP/Whois service, you are agreeing to the RDAP/Whois Terms of Use" ],
+    "links" : [ {
+      "href" : "https://www.arin.net/resources/registry/whois/tou/",
+      "rel" : "terms-of-service",
+      "type" : "text/html",
+      "value" : "https://rdap.arin.net/registry/autnum/174"
+    } ],
+    "title" : "Terms of Service"
+  }, {
+    "description" : [ "If you see inaccuracies in the results, please visit: " ],
+    "links" : [ {
+      "href" : "https://www.arin.net/resources/registry/whois/inaccuracy_reporting/",
+      "rel" : "inaccuracy-report",
+      "type" : "text/html",
+      "value" : "https://rdap.arin.net/registry/autnum/174"
+    } ],
+    "title" : "Whois Inaccuracy Reporting"
+  }, {
+    "description" : [ "Copyright 1997-2026, American Registry for Internet Numbers, Ltd." ],
+    "title" : "Copyright Notice"
+  } ],
+  "objectClassName" : "autnum",
+  "port43" : "whois.arin.net",
+  "rdapConformance" : [ "nro_rdap_profile_0", "rdap_level_0", "nro_rdap_profile_asn_flat_0" ],
+  "startAutnum" : 174,
+  "status" : [ "active" ]
+}

@@ -1,0 +1,207 @@
+// RDAP / WHOIS 客户端(纯前端直连)。
+// - bootstrap: 构建期内置 IANA RFC 9224 表(rdap-bootstrap.json), 把 ASN/IP 直接映射到对应 RIR 的
+//   RDAP base, 直连查询; 命中失败/出错回退 rdap.org 重定向器。
+// - 各 RIR 与 rdap.org 在 GET 上均回 Access-Control-Allow-Origin:* (实测), 重定向每跳都过 CORS,
+//   简单 GET 无预检 —— 故浏览器可直连。
+// - 返回值已把 jCard/嵌套 entity 拍平成 {key,value} 行 + entity 树, 供 Whois.svelte 做扁平 whois 渲染。
+// - 缓存: 内存(去重 in-flight) + sessionStorage(跨刷新), key = `autnum:<n>` / `ip:<cidr>`。
+// 详见 docs/RDAP_WHOIS_RESEARCH.md。
+import BOOT from './rdap-bootstrap.json'
+import { S } from './store.svelte.js'
+import { ip2int, ip6ToBig } from './bgp.js'
+
+const FALLBACK = 'https://rdap.org/'
+// CN 优化: 数据切到 cn.peer.as 时可走同源反代(留接口, 未部署则仍直连)。见研究文档 §5.1。
+function cnProxy() {
+  return (S.edge === 'cn' && typeof location !== 'undefined') ? null : null  // 预留: 返回反代 base 即启用
+}
+
+// ── bootstrap 查找 ────────────────────────────────────────────────
+// service 条目 = [ [范围串...], [base url...] ]; 取第一个 https base, 保证以 '/' 结尾。
+function pickBase(svc) {
+  const urls = svc[1] || []
+  let u = urls.find(x => x.startsWith('https://')) || urls[0]
+  if (!u) return null
+  return u.endsWith('/') ? u : u + '/'
+}
+function asnBase(asn) {
+  for (const svc of BOOT.asn || []) {
+    for (const r of svc[0]) {
+      const dash = r.indexOf('-')
+      const lo = +(dash < 0 ? r : r.slice(0, dash))
+      const hi = +(dash < 0 ? r : r.slice(dash + 1))
+      if (asn >= lo && asn <= hi) return pickBase(svc)
+    }
+  }
+  return null
+}
+// IPv4 CIDR "41.0.0.0/8" 是否含地址整数 n
+function v4Has(cidr, n) {
+  const sl = cidr.indexOf('/'); const net = ip2int(cidr.slice(0, sl)); const plen = +cidr.slice(sl + 1)
+  if (net == null) return false
+  const size = Math.pow(2, 32 - plen)
+  return n >= net && n <= net + size - 1
+}
+function v6Has(cidr, n) {
+  const sl = cidr.indexOf('/'); const net = ip6ToBig(cidr.slice(0, sl)); const plen = BigInt(cidr.slice(sl + 1))
+  if (net == null) return false
+  const host = 128n - plen
+  const start = (net >> host) << host
+  return n >= start && n <= (start | ((1n << host) - 1n))
+}
+// IP/前缀(取网络起始地址)定位 RIR base。addr 形如 '1.1.1.0/24' 或 '2001:db8::/32' 或裸 IP。
+function ipBase(addr, v6) {
+  const a = addr.split('/')[0]
+  if (v6) {
+    const n = ip6ToBig(a); if (n == null) return null
+    for (const svc of BOOT.ipv6 || []) for (const c of svc[0]) if (v6Has(c, n)) return pickBase(svc)
+  } else {
+    const n = ip2int(a); if (n == null) return null
+    for (const svc of BOOT.ipv4 || []) for (const c of svc[0]) if (v4Has(c, n)) return pickBase(svc)
+  }
+  return null
+}
+
+// ── jCard / 响应拍平 ──────────────────────────────────────────────
+// 行 = {key, value}; key 是规范语义串(Whois.svelte 映射到图标+i18n 标签), 未知 key 原样显示。
+const VCARD_KEY = { fn: 'fullname', org: 'org', adr: 'address', tel: 'phone', email: 'email', kind: 'kind', role: 'role', title: 'title', url: 'url' }
+const EVENT_KEY = { registration: 'registration', 'last changed': 'lastchanged', expiration: 'expiration', reregistration: 'lastchanged', 'last update of RDAP database': 'rdapupdated' }
+
+function vcardRows(entity) {
+  const arr = entity?.vcardArray?.[1]
+  if (!Array.isArray(arr)) return []
+  const rows = []
+  for (const item of arr) {
+    const [prop, params, , value] = item
+    if (prop === 'version') continue
+    let key = VCARD_KEY[prop] || prop
+    let v
+    if (prop === 'adr') v = (params && params.label) ? params.label.replace(/\s*\n+\s*/g, ', ') : (Array.isArray(value) ? value.filter(Boolean).join(', ') : value)
+    else if (Array.isArray(value)) v = value.filter(Boolean).join(' ')
+    else v = value
+    if (prop === 'tel' && params && /fax/i.test(params.type || '')) key = 'fax'
+    v = (v == null ? '' : String(v)).trim()
+    if (v && !rows.some(r => r.key === key && r.value === v)) rows.push({ key, value: v })
+  }
+  return rows
+}
+
+function entityName(e) {
+  const fn = e?.vcardArray?.[1]?.find(x => x[0] === 'fn')
+  return (fn && fn[3]) || e.handle || (e.roles && e.roles[0]) || '?'
+}
+
+function normEntity(e, depth = 0) {
+  return {
+    handle: e.handle || null,
+    roles: e.roles || [],
+    name: entityName(e),
+    rows: vcardRows(e),
+    entities: depth < 4 ? (e.entities || []).map(s => normEntity(s, depth + 1)) : [],
+  }
+}
+
+function eventsRows(d) {
+  const out = []
+  for (const ev of d.events || []) {
+    const k = EVENT_KEY[ev.eventAction]
+    if (k && k !== 'rdapupdated') out.push({ key: k, value: fmtDate(ev.eventDate) })
+  }
+  return out
+}
+function fmtDate(s) {
+  if (!s) return ''
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
+  return m ? m[1] : s
+}
+
+// 把原始 RDAP 对象规范化成渲染模型
+export function normalize(kind, key, d) {
+  const head = []
+  if (kind === 'autnum') {
+    head.push({ key: 'handle', value: d.handle || `AS${key}` })
+    if (d.name) head.push({ key: 'name', value: d.name })
+    if (d.startAutnum != null) head.push({ key: 'asrange', value: d.startAutnum === d.endAutnum ? `AS${d.startAutnum}` : `AS${d.startAutnum} – AS${d.endAutnum}` })
+  } else {
+    if (d.name) head.push({ key: 'name', value: d.name })
+    head.push({ key: 'handle', value: d.handle || key })
+    if (d.startAddress) head.push({ key: 'iprange', value: `${d.startAddress} – ${d.endAddress}` })
+    const cidr = (d.cidr0_cidrs || []).map(c => `${c.v4prefix || c.v6prefix}/${c.length}`).join(', ')
+    if (cidr) head.push({ key: 'cidr', value: cidr })
+    if (d.type) head.push({ key: 'iptype', value: d.type })
+    if (d.parentHandle) head.push({ key: 'parent', value: d.parentHandle })
+  }
+  if (d.country) head.push({ key: 'country', value: d.country })
+  if (d.status && d.status.length) head.push({ key: 'status', value: d.status.join(', ') })
+  head.push(...eventsRows(d))
+  const remarks = []
+  for (const r of d.remarks || []) {
+    const txt = (r.description || []).join('\n').trim()
+    if (txt) remarks.push({ key: 'remark', title: r.title || '', value: txt })
+  }
+  return {
+    kind, key,
+    title: kind === 'autnum' ? (d.handle || `AS${key}`) : (d.handle || key),
+    head,
+    entities: (d.entities || []).map(e => normEntity(e)),
+    remarks,
+    port43: d.port43 || null,
+    raw: d,
+  }
+}
+
+// ── fetch + 缓存 ──────────────────────────────────────────────────
+const mem = new Map()   // `${kind}:${key}` -> Promise<normalized>
+
+async function httpGet(url) {
+  const res = await fetch(url, { headers: { Accept: 'application/rdap+json' }, redirect: 'follow' })
+  let body = null
+  try { body = await res.json() } catch (e) { /* 非 JSON */ }
+  if (!res.ok) {
+    const msg = body && (body.title || (body.description || [])[0]) ? (body.title || body.description[0]) : `HTTP ${res.status}`
+    const err = new Error(msg); err.status = res.status; throw err
+  }
+  return { body, host: (() => { try { return new URL(res.url).host } catch { return '' } })() }
+}
+
+async function doFetch(kind, key) {
+  const ssKey = `rdap:${kind}:${key}`
+  try {
+    const cached = sessionStorage.getItem(ssKey)
+    if (cached) { const o = JSON.parse(cached); const n = normalize(kind, key, o.body); n.source = o.host; return n }
+  } catch (e) { /* ignore */ }
+
+  const v6 = kind === 'ip' && String(key).includes(':')
+  const base = kind === 'autnum' ? asnBase(+key) : ipBase(String(key), v6)
+  const path = kind === 'autnum' ? `autnum/${key}` : `ip/${key}`
+  const tries = []
+  const proxy = cnProxy()
+  if (proxy) tries.push(proxy + path)
+  if (base) tries.push(base + path)
+  tries.push(FALLBACK + path)   // rdap.org 兜底
+
+  let lastErr
+  for (const url of tries) {
+    try {
+      const { body, host } = await httpGet(url)
+      try { sessionStorage.setItem(ssKey, JSON.stringify({ body, host })) } catch (e) { /* 配额/隐私模式忽略 */ }
+      const n = normalize(kind, key, body); n.source = host; return n
+    } catch (e) {
+      lastErr = e
+      if (e.status === 404) throw e   // 明确不存在: 不必再试兜底
+    }
+  }
+  throw lastErr || new Error('RDAP fetch failed')
+}
+
+// 公共入口: 返回规范化模型(带 .source 主机名)。同 key 并发去重、跨刷新走 sessionStorage。
+export function fetchRdap(kind, key) {
+  const k = `${kind}:${key}`
+  if (mem.has(k)) return mem.get(k)
+  const p = doFetch(kind, key).catch(e => { mem.delete(k); throw e })
+  mem.set(k, p)
+  return p
+}
+
+export const rdapAsn = asn => fetchRdap('autnum', String(asn))
+export const rdapIp = prefix => fetchRdap('ip', String(prefix))

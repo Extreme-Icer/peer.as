@@ -1,0 +1,165 @@
+{
+  "endAutnum" : 6939,
+  "entities" : [ {
+    "entities" : [ {
+      "events" : [ {
+        "eventAction" : "last changed",
+        "eventDate" : "2026-03-04T15:05:52-05:00"
+      }, {
+        "eventAction" : "registration",
+        "eventDate" : "2000-02-23T10:29:04-05:00"
+      } ],
+      "handle" : "ZH17-ARIN",
+      "links" : [ {
+        "href" : "https://rdap.arin.net/registry/entity/ZH17-ARIN",
+        "rel" : "self",
+        "type" : "application/rdap+json",
+        "value" : "https://rdap.arin.net/registry/autnum/6939"
+      }, {
+        "href" : "https://whois.arin.net/rest/poc/ZH17-ARIN",
+        "rel" : "alternate",
+        "type" : "application/xml",
+        "value" : "https://rdap.arin.net/registry/autnum/6939"
+      } ],
+      "objectClassName" : "entity",
+      "port43" : "whois.arin.net",
+      "roles" : [ "administrative", "technical" ],
+      "status" : [ "validated" ],
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+        "label" : "760 Mission Court\nFremont\nCA\n94539\nUnited States"
+      }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "Hurricane Electric" ], [ "org", { }, "text", "Hurricane Electric" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "hostmaster@he.net" ], [ "tel", {
+        "type" : [ "work", "voice" ]
+      }, "text", "+1-510-580-4100" ] ] ]
+    }, {
+      "events" : [ {
+        "eventAction" : "last changed",
+        "eventDate" : "2023-12-27T14:33:07-05:00"
+      }, {
+        "eventAction" : "registration",
+        "eventDate" : "2005-11-03T21:30:06-05:00"
+      } ],
+      "handle" : "ABUSE1036-ARIN",
+      "links" : [ {
+        "href" : "https://rdap.arin.net/registry/entity/ABUSE1036-ARIN",
+        "rel" : "self",
+        "type" : "application/rdap+json",
+        "value" : "https://rdap.arin.net/registry/autnum/6939"
+      }, {
+        "href" : "https://whois.arin.net/rest/poc/ABUSE1036-ARIN",
+        "rel" : "alternate",
+        "type" : "application/xml",
+        "value" : "https://rdap.arin.net/registry/autnum/6939"
+      } ],
+      "objectClassName" : "entity",
+      "port43" : "whois.arin.net",
+      "remarks" : [ {
+        "description" : [ "ARIN has attempted to validate the data for this POC, but has received no response from the POC since 2024-12-26" ],
+        "title" : "Unvalidated POC"
+      } ],
+      "roles" : [ "abuse" ],
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+        "label" : "760 Mission Court\nFremont\nCA\n94539\nUnited States"
+      }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "Abuse Department" ], [ "org", { }, "text", "Abuse Department" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "abuse@he.net" ], [ "tel", {
+        "type" : [ "work", "voice" ]
+      }, "text", "+1-510-580-4100" ] ] ]
+    } ],
+    "events" : [ {
+      "eventAction" : "last changed",
+      "eventDate" : "2024-11-25T11:09:46-05:00"
+    } ],
+    "handle" : "HURC",
+    "links" : [ {
+      "href" : "https://rdap.arin.net/registry/entity/HURC",
+      "rel" : "self",
+      "type" : "application/rdap+json",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    }, {
+      "href" : "https://whois.arin.net/rest/org/HURC",
+      "rel" : "alternate",
+      "type" : "application/xml",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    } ],
+    "objectClassName" : "entity",
+    "port43" : "whois.arin.net",
+    "roles" : [ "registrant" ],
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Hurricane Electric LLC" ], [ "adr", {
+      "label" : "760 Mission Court\nFremont\nCA\n94539\nUnited States"
+    }, "text", [ "", "", "", "", "", "", "" ] ], [ "kind", { }, "text", "org" ] ] ]
+  }, {
+    "events" : [ {
+      "eventAction" : "last changed",
+      "eventDate" : "2026-03-04T15:05:52-05:00"
+    }, {
+      "eventAction" : "registration",
+      "eventDate" : "2000-02-23T10:29:04-05:00"
+    } ],
+    "handle" : "ZH17-ARIN",
+    "links" : [ {
+      "href" : "https://rdap.arin.net/registry/entity/ZH17-ARIN",
+      "rel" : "self",
+      "type" : "application/rdap+json",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    }, {
+      "href" : "https://whois.arin.net/rest/poc/ZH17-ARIN",
+      "rel" : "alternate",
+      "type" : "application/xml",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    } ],
+    "objectClassName" : "entity",
+    "port43" : "whois.arin.net",
+    "roles" : [ "technical" ],
+    "status" : [ "validated" ],
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "adr", {
+      "label" : "760 Mission Court\nFremont\nCA\n94539\nUnited States"
+    }, "text", [ "", "", "", "", "", "", "" ] ], [ "fn", { }, "text", "Hurricane Electric" ], [ "org", { }, "text", "Hurricane Electric" ], [ "kind", { }, "text", "group" ], [ "email", { }, "text", "hostmaster@he.net" ], [ "tel", {
+      "type" : [ "work", "voice" ]
+    }, "text", "+1-510-580-4100" ] ] ]
+  } ],
+  "events" : [ {
+    "eventAction" : "last changed",
+    "eventDate" : "2003-11-04T02:00:04-05:00"
+  }, {
+    "eventAction" : "registration",
+    "eventDate" : "1996-06-28T00:00:00-04:00"
+  } ],
+  "handle" : "AS6939",
+  "links" : [ {
+    "href" : "https://rdap.arin.net/registry/autnum/6939",
+    "rel" : "self",
+    "type" : "application/rdap+json",
+    "value" : "https://rdap.arin.net/registry/autnum/6939"
+  }, {
+    "href" : "https://whois.arin.net/rest/asn/AS6939",
+    "rel" : "alternate",
+    "type" : "application/xml",
+    "value" : "https://rdap.arin.net/registry/autnum/6939"
+  } ],
+  "name" : "HURRICANE",
+  "notices" : [ {
+    "description" : [ "By using the ARIN RDAP/Whois service, you are agreeing to the RDAP/Whois Terms of Use" ],
+    "links" : [ {
+      "href" : "https://www.arin.net/resources/registry/whois/tou/",
+      "rel" : "terms-of-service",
+      "type" : "text/html",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    } ],
+    "title" : "Terms of Service"
+  }, {
+    "description" : [ "If you see inaccuracies in the results, please visit: " ],
+    "links" : [ {
+      "href" : "https://www.arin.net/resources/registry/whois/inaccuracy_reporting/",
+      "rel" : "inaccuracy-report",
+      "type" : "text/html",
+      "value" : "https://rdap.arin.net/registry/autnum/6939"
+    } ],
+    "title" : "Whois Inaccuracy Reporting"
+  }, {
+    "description" : [ "Copyright 1997-2026, American Registry for Internet Numbers, Ltd." ],
+    "title" : "Copyright Notice"
+  } ],
+  "objectClassName" : "autnum",
+  "port43" : "whois.arin.net",
+  "rdapConformance" : [ "nro_rdap_profile_0", "rdap_level_0", "nro_rdap_profile_asn_flat_0" ],
+  "startAutnum" : 6939,
+  "status" : [ "active" ]
+}

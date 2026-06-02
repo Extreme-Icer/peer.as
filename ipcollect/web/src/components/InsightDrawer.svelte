@@ -3,13 +3,17 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { compilePathQuery, asnName, parseBest } from '../lib/bgp.js'
-  import { showInsight, closeInsight } from '../lib/queries.js'
-  import { iClose, iStar, iUp, iDown, iSpinner } from '../lib/icons.js'
+  import { showInsight, showAsn, closeInsight, navBack, navForward, navCanBack, navCanFwd } from '../lib/queries.js'
+  import { iClose, iStar, iUp, iDown, iSpinner, iArrowL, iArrowR } from '../lib/icons.js'
   import PathGraph from './PathGraph.svelte'
   import AsPath from './AsPath.svelte'
+  import Whois from './Whois.svelte'
+  import AsnDetail from './AsnDetail.svelte'
 
   let ins = $derived(S.insight)
   let pq = $derived(compilePathQuery(S.filters.path))
+  let canBack = $derived(navCanBack())
+  let canFwd = $derived(navCanFwd())
 
   // 拖拽调宽
   let dragging = false
@@ -25,20 +29,28 @@
   }
 </script>
 
-{#if ins}
+{#if S.detailKind}
   <aside class="detail open" style:flex-basis="{S.detailW}%" style:width="{S.detailW}%">
     <div class="dragbar" onmousedown={startDrag} role="separator" aria-orientation="vertical"></div>
     <div class="dbody">
-      <button class="close" onclick={closeInsight} aria-label="close"><Fa icon={iClose} /></button>
+      <div class="dtools">
+        <div class="navbtns">
+          <button class="navb" disabled={!canBack} onclick={navBack} title={t('nav_back')} aria-label={t('nav_back')}><Fa icon={iArrowL} /></button>
+          <button class="navb" disabled={!canFwd} onclick={navForward} title={t('nav_fwd')} aria-label={t('nav_fwd')}><Fa icon={iArrowR} /></button>
+        </div>
+        <button class="close" onclick={closeInsight} title={t('detail_close')} aria-label={t('detail_close')}><Fa icon={iClose} /></button>
+      </div>
 
-      {#if ins.loading}
+      {#if S.detailKind === 'asn'}
+        <AsnDetail />
+      {:else if ins?.loading}
         <div class="dload"><Fa icon={iSpinner} spin /> {t('querying')}</div>
-      {:else if ins.error}
+      {:else if ins?.error}
         <div class="dload err">{ins.error}</div>
-      {:else}
+      {:else if ins}
         <h2>{ins.prefix} <span class="loc">· {ins.loc}</span></h2>
         <div class="pill">
-          origin asn <b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}
+          origin asn <button class="originlink" onclick={() => showAsn(ins.origin_asn)} disabled={!ins.origin_asn}><b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}</button>
           · {ins.paths.length} {t('distinct')} / {ins.n_paths || 0} {t('peers')}
           {#if S.meta?.dfz_ref}
             · <span class="badge {ins.lowvis ? 'b-warn' : 'b-ok'}">{ins.n_paths || 0}/{S.meta.dfz_ref} {ins.lowvis ? t('lowvis') : 'DFZ'}</span>
@@ -77,6 +89,8 @@
             {/each}
           </tbody>
         </table>
+
+        <Whois kind="ip" rkey={ins.prefix} />
       {/if}
     </div>
   </aside>
@@ -86,9 +100,20 @@
   .detail { flex: 0 0 42%; display: flex; background: var(--inbg); border-left: 1px solid var(--line); position: sticky; top: 0; height: 100vh; overflow: hidden; }
   .dragbar { flex: 0 0 6px; cursor: col-resize; background: var(--line); transition: background .12s; }
   .dragbar:hover, .dragbar:active { background: var(--accent); }
-  .dbody { flex: 1; min-width: 0; overflow: auto; padding: 20px 22px 40px; }
-  .close { float: right; background: transparent; border: 0; cursor: pointer; color: var(--muted); font-size: 17px; padding: 2px 4px; }
+  .dbody { flex: 1; min-width: 0; overflow: auto; padding: 14px 22px 40px; }
+  /* 顶部工具条: 前进/后退(左) + 关闭(右) */
+  .dtools { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
+  .navbtns { display: inline-flex; gap: 4px; }
+  .navb { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; background: transparent; border: 1px solid var(--line2); border-radius: 7px; color: var(--muted); cursor: pointer; font-size: 12px; transition: all .12s; }
+  .navb:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .navb:disabled { opacity: .35; cursor: default; }
+  .close { background: transparent; border: 0; cursor: pointer; color: var(--muted); font-size: 17px; padding: 2px 4px; }
   .close:hover { color: var(--accent); }
+  .originlink { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: inherit; }
+  .originlink b { color: var(--link); font-family: var(--mono); }
+  .originlink:hover:not(:disabled) { text-decoration: underline; }
+  .originlink:disabled { cursor: default; color: var(--muted); }
+  .originlink:disabled b { color: var(--fg); }
   .dload { color: var(--muted); padding: 30px 0; font-size: 13px; }
   .dload.err { color: var(--bad, #dc2626); }
   h2 { font: 600 15px var(--mono); margin: 0 0 7px; color: var(--fg); }

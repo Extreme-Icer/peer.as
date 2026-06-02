@@ -8,6 +8,19 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-02
 
+- **新增：WHOIS / 注册信息（RDAP）+ ASN 详情面板。** 前缀详情面板新增「WHOIS / 注册信息」区块（持有者、
+  netname、分配类型、abuse 联系人、注册/变更时间），浏览器直连各 RIR RDAP 实时获取；在精确框输入一个
+  ASN（如 `AS4809`）会自动展开该 ASN 的详情面板——含 WHOIS、通告的前缀、观测到的上游，并可一键全表扫描完整
+  上下游邻居。详情面板新增前进/后退导航，可在 ASN 与前缀之间来回；点击前缀详情里的 origin ASN 即可跳到它的
+  ASN 页。WHOIS 以传统扁平风格呈现（一行一项、常见字段带图标，嵌套联系人可点击展开）。
+  **New: WHOIS / registration (RDAP) + ASN detail panel.** The prefix panel now has a “WHOIS / registration”
+  section (holder, netname, allocation type, abuse contact, registration/change dates), fetched live straight
+  from the RIRs’ RDAP in your browser. Typing an ASN (e.g. `AS4809`) into the precise box auto-opens that ASN’s
+  detail panel — WHOIS, originated prefixes, observed upstreams, with an on-demand full-table scan for complete
+  up/downstream neighbors. The detail panel gains back/forward navigation to move between ASN and prefix views;
+  click the origin ASN in a prefix panel to jump to its ASN page. WHOIS is shown in a flat, classic style
+  (one line per field, icons on common keys, nested contacts expand on click).
+
 - **新增：IPv6 支持。** 现可搜索 IPv6 地址 / CIDR（如 `2001:db8::/32`）、按国家浏览 v6 前缀、查 v6 父子段;
   v4 与 v6 结果在国家/全表搜索里一并呈现。
   **New: IPv6 support.** Search IPv6 addresses/CIDRs (e.g. `2001:db8::/32`), browse v6 prefixes by country,

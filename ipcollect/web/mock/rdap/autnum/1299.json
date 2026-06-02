@@ -1,0 +1,200 @@
+{
+  "handle" : "AS1299",
+  "startAutnum" : 1299,
+  "endAutnum" : 1299,
+  "name" : "TWELVE99",
+  "status" : [ "active" ],
+  "entities" : [ {
+    "handle" : "ORG-TCA32-RIPE",
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Arelion Sweden AB" ], [ "kind", { }, "text", "org" ], [ "adr", {
+      "label" : "Box 3095\n169 03\nSolna\nSWEDEN"
+    }, "text", [ "", "", "", "", "", "", "" ] ], [ "tel", {
+      "type" : "voice"
+    }, "text", "+46771191170" ] ] ],
+    "roles" : [ "registrant" ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "self",
+      "href" : "https://rdap.db.ripe.net/entity/ORG-TCA32-RIPE"
+    }, {
+      "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+      "rel" : "copyright",
+      "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+    } ],
+    "objectClassName" : "entity"
+  }, {
+    "handle" : "RIPE-NCC-END-MNT",
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "RIPE-NCC-END-MNT" ], [ "kind", { }, "text", "individual" ], [ "org", { }, "text", "ORG-NCC1-RIPE" ] ] ],
+    "roles" : [ "registrant" ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "self",
+      "href" : "https://rdap.db.ripe.net/entity/RIPE-NCC-END-MNT"
+    }, {
+      "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+      "rel" : "copyright",
+      "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+    } ],
+    "objectClassName" : "entity"
+  }, {
+    "handle" : "TRR2-RIPE",
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Twelve99 Routing Registry" ], [ "kind", { }, "text", "group" ], [ "adr", {
+      "label" : "Arelion Sweden AB\nEvenemangsgatan 2C\nSE-169 79 SOLNA\nSweden"
+    }, "text", [ "", "", "", "", "", "", "" ] ] ] ],
+    "roles" : [ "administrative", "technical" ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "self",
+      "href" : "https://rdap.db.ripe.net/entity/TRR2-RIPE"
+    }, {
+      "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+      "rel" : "copyright",
+      "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+    } ],
+    "objectClassName" : "entity"
+  }, {
+    "handle" : "Twelve99-IRR-MNT",
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Twelve99-IRR-MNT" ], [ "kind", { }, "text", "individual" ] ] ],
+    "roles" : [ "registrant" ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "self",
+      "href" : "https://rdap.db.ripe.net/entity/Twelve99-IRR-MNT"
+    }, {
+      "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+      "rel" : "copyright",
+      "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+    } ],
+    "objectClassName" : "entity"
+  }, {
+    "handle" : "AR61450-RIPE",
+    "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "Twelve99 Abuse-C Role" ], [ "kind", { }, "text", "group" ], [ "adr", {
+      "label" : "Box 3095\nSE-169 03 SOLNA\nSweden"
+    }, "text", [ "", "", "", "", "", "", "" ] ], [ "email", {
+      "type" : "abuse"
+    }, "text", "abuse@twelve99.net" ] ] ],
+    "roles" : [ "abuse" ],
+    "entities" : [ {
+      "handle" : "se-twelve99-1-MNT",
+      "vcardArray" : [ "vcard", [ [ "version", { }, "text", "4.0" ], [ "fn", { }, "text", "se-twelve99-1-MNT" ], [ "kind", { }, "text", "individual" ] ] ],
+      "roles" : [ "registrant" ],
+      "links" : [ {
+        "value" : "https://rdap.db.ripe.net/autnum/1299",
+        "rel" : "self",
+        "href" : "https://rdap.db.ripe.net/entity/se-twelve99-1-MNT"
+      }, {
+        "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+        "rel" : "copyright",
+        "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+      } ],
+      "objectClassName" : "entity"
+    } ],
+    "objectClassName" : "entity"
+  } ],
+  "remarks" : [ {
+    "description" : [ "Arelion, f/k/a Telia Carrier", "------------------------------------------------------", "", "As of June 1 2021, Arelion and its affiliates are no", "longer part of or affiliated with Telia Company.", "Helpdesk/NOC: support@arelion.com", "Peering: peering@twelve99.net", "BGP COMMUNITY SUPPORT FOR AS1299 TRANSIT CUSTOMERS:", "Community Action (default local pref 200)", "-----------------------------------------", "1299:50 Set local pref 50 within AS1299 (lowest possible)", "1299:150 Set local pref 150 within AS1299 (equal to peer, backup)", "1299:1y050 Set local pref 50 in region y", "1299:1y150 Set local pref 150 in region y", "Where y is:", "0= outside own continent", "2= Europe", "5= North America", "7= Asia Pacific", "Note!", "Not possible to increase LP only decrease. Not possible to have", "low LP in own continent and higher in other continents.", "We remove communities not possible to combine or communities that", "not have effect in certain combination.", "European peers", "Community Action", "--------- ------", "1299:200x All peers Europe incl:", "1299:253x Zayo/6461", "1299:254x Orange/5511", "1299:256x Lumen/3356", "1299:257x Verizon/702", "1299:258x AT&T/2686", "1299:259x Telxius/12956", "1299:263x TATA/6453", "1299:264x DTAG/3320", "1299:269x GTT/3257", "1299:270x Liberty Global/6830", "1299:273x Cogent/174", "1299:274x Telecom Italia/6762", "1299:284x Vodafone/1273", "1299:287x China Unicom/4837", "1299:288x China Telecom/4134", "North American peers", "1299:500x All peers North America incl:", "1299:552x NTT/2914", "1299:553x Zayo/6461", "1299:554x Orange/5511", "1299:556x Lumen/3356", "1299:557x Verizon/701", "1299:558x AT&T/7018", "1299:559x Telxius/12956", "1299:563x TATA/6453", "1299:564x DTAG/3320", "1299:566x Comcast/7922", "1299:569x GTT/3257", "1299:570x Liberty Global/6830", "1299:573x Cogent/174", "1299:574x Telecom Italia/6762", "1299:587x China Unicom/4837", "1299:588x China Telecom/4134", "Asia peers", "1299:700x All peers Asia incl:", "1299:754x Orange/5511", "1299:756x Lumen/3356", "1299:757x Verizon/703", "1299:758x AT&T/2687", "1299:763x TATA/6453", "1299:764x DTAG/3320", "1299:769x GTT/3257", "1299:774x Telecom Italia/6762", "1299:784x Vodafone/1273", "1299:794x PCCW/3491", "Where x is number of prepends (x=0,1,2,3) or do NOT announce (x=9)", "We are listening to community GRACEFUL_SHUTDOWN according to", "https://datatracker.ietf.org/doc/rfc8326/", "Route Flap Damping Policy is applied.", "AS1299 is matching RPKI validation state and reject", "invalid prefixes from peers and customers.", "Our looking-glass at https://lg.twelve99.net/ marks", "validation state for all prefixes.", "Please review your registered ROAs to reduce number", "of invalid prefixes." ]
+  } ],
+  "links" : [ {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-up",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS1299",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-up rdap-active",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-up/AS1299?status=active",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-down",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-down/AS1299",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-top",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS1299",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-top rdap-active",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-top/AS1299?status=active",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "rdap-bottom",
+    "href" : "https://rdap.db.ripe.net/autnums/rirSearch1/rdap-bottom/AS1299",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "https://rdap.db.ripe.net/autnum/1299",
+    "rel" : "self",
+    "href" : "https://rdap.db.ripe.net/autnum/1299",
+    "type" : "application/rdap+json"
+  }, {
+    "value" : "http://www.ripe.net/data-tools/support/documentation/terms",
+    "rel" : "copyright",
+    "href" : "http://www.ripe.net/data-tools/support/documentation/terms"
+  } ],
+  "events" : [ {
+    "eventAction" : "registration",
+    "eventDate" : "2002-09-19T08:19:14Z"
+  }, {
+    "eventAction" : "last changed",
+    "eventDate" : "2026-06-02T07:14:53Z"
+  } ],
+  "rdapConformance" : [ "nro_rdap_profile_asn_flat_0", "rirSearch1", "autnums", "cidr0", "rdap_level_0", "nro_rdap_profile_0", "redacted" ],
+  "notices" : [ {
+    "title" : "Filtered",
+    "description" : [ "This output has been filtered." ]
+  }, {
+    "title" : "Whois Inaccuracy Reporting",
+    "description" : [ "If you see inaccuracies in the results, please visit:" ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "inaccuracy-report",
+      "href" : "https://www.ripe.net/contact-form?topic=ripe_dbm&show_form=true",
+      "type" : "text/html"
+    } ]
+  }, {
+    "title" : "Source",
+    "description" : [ "Objects returned came from source", "RIPE" ]
+  }, {
+    "title" : "Terms and Conditions",
+    "description" : [ "This is the RIPE Database query service. The objects are in RDAP format." ],
+    "links" : [ {
+      "value" : "https://rdap.db.ripe.net/autnum/1299",
+      "rel" : "terms-of-service",
+      "href" : "http://www.ripe.net/db/support/db-terms-conditions.pdf",
+      "type" : "application/pdf"
+    } ]
+  } ],
+  "port43" : "whois.ripe.net",
+  "objectClassName" : "autnum",
+  "redacted" : [ {
+    "name" : {
+      "description" : "Personal e-mail information"
+    },
+    "reason" : {
+      "description" : "Personal data"
+    },
+    "prePath" : "$.entities[?(@.handle=='ORG-TCA32-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+    "method" : "removal"
+  }, {
+    "name" : {
+      "description" : "Personal e-mail information"
+    },
+    "reason" : {
+      "description" : "Personal data"
+    },
+    "prePath" : "$.entities[?(@.handle=='TRR2-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+    "method" : "removal"
+  }, {
+    "name" : {
+      "description" : "Personal e-mail information"
+    },
+    "reason" : {
+      "description" : "Personal data"
+    },
+    "prePath" : "$.entities[?(@.handle=='AR61450-RIPE')].vcardArray[1][?(@[0]=='e-mail')]",
+    "method" : "removal"
+  } ]
+}

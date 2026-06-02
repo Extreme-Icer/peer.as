@@ -4,7 +4,7 @@ import { t } from './i18n.js'
 import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
-  asnsMatchingName, compilePathQuery, ip2range, ip6Range,
+  asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest,
 } from './bgp.js'
 
 const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
@@ -39,6 +39,9 @@ export async function runSearch() {
   const f = S.filters
   // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
   const probe = classifyQuery(f.ip)
+  // 精确框是 ASN 时: 设为「主体」并自动展开右侧 ASN 详情面板(whois + 上下游)。其它输入(含 IP/空)清空
+  // 主体上下文(影响关闭语义)。已在展示同一 ASN 则不打断(避免点开 prefix 后被搜索拽回)。放在子网早返回之前。
+  setSubjectAsn(probe.kind === 'asn' ? probe.asn : null)
   if (probe.kind === 'ipv6' || probe.kind === 'ipv4') return runSubnet(probe, f)
   const boxAsn = probe.kind === 'asn' ? probe.asn : null   // 纯数字 -> origin AS, 可与国家/城市/AS_PATH 叠加
 
@@ -171,9 +174,12 @@ export function sortRows(key) {
   S.rows = [...S.rows].sort((a, b) => cmpBy(S.sortKey, S.sortDir, a, b))
 }
 
-// ---- insight ----
-export async function showInsight(pid, prefix) {
+// ---- 详情面板: prefix / asn 视图 + 导航历史 ----
+export async function showInsight(pid, prefix, { push = true } = {}) {
+  S.detailKind = 'prefix'
+  S.asnView = null
   S.selectedPid = pid
+  if (push) pushNav({ kind: 'prefix', pid, prefix })
   S.insight = { loading: true }
   const v6 = (prefix || '').includes(':')
   const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
@@ -205,4 +211,104 @@ async function relData(pid, s, e, v6) {
     return [sup, sub]
   } catch (e) { return [[], []] }
 }
-export function closeInsight() { S.selectedPid = null; S.insight = null }
+// ── ASN 详情视图(whois 由 Whois.svelte 自取; 这里只算本地 BGP: 通告前缀 + 观测上游) ──────
+export async function showAsn(asn, { push = true } = {}) {
+  asn = +asn
+  S.detailKind = 'asn'
+  S.selectedPid = null
+  S.insight = null
+  S.asnView = { asn, name: asnName(asn), loading: true }
+  if (push) pushNav({ kind: 'asn', asn })
+  if (!S.ready) { return }
+  try {
+    const psAll = pathsearchFilesForOrigin(asn)
+    const psFiles = psAll === null ? [] : byFam(psAll)
+    if (!psFiles.length) {   // 该 ASN 不是库内任何前缀的 origin(可能是纯 transit / 不在库)
+      S.asnView = { asn, name: asnName(asn), count4: 0, count6: 0, prefixes: [], upstreams: [], neigh: null }
+      return
+    }
+    const from = rpList(psFiles)
+    const [rows, cnt] = await Promise.all([
+      q(`SELECT pid, prefix, cc, n_paths, best_path FROM ${from} WHERE origin_asn=${asn} ORDER BY n_paths DESC LIMIT 400`),
+      q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`),
+    ])
+    S.asnView = {
+      asn, name: asnName(asn),
+      count4: Number(cnt[0]?.c4 || 0), count6: Number(cnt[0]?.c6 || 0),
+      prefixes: rows, upstreams: deriveUpstreams(rows, asn), neigh: null,
+    }
+  } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }
+}
+// 从通告前缀的 best_path 推「直接上游」(origin 左侧那一跳), 廉价、随通告前缀一起拿到。
+function deriveUpstreams(rows, asn) {
+  const m = new Map()
+  for (const r of rows) {
+    const arr = parseBest(r.best_path)
+    const i = arr.lastIndexOf(asn)
+    if (i > 0) { const u = arr[i - 1]; if (u && u !== asn) m.set(u, (m.get(u) || 0) + 1) }
+  }
+  return [...m.entries()].map(([a, n]) => ({ asn: a, n })).sort((a, b) => b.n - a.n).slice(0, 30)
+}
+// 按需「完整邻居」分析: 全表扫 pathsearch 里所有含该 ASN 的路径, 同时得上游(左)与下游(右)。
+// 重(大 transit ASN 命中分片多), 故不自动触发, 由面板按钮触发; LIMIT 兜底防超大。
+export async function scanNeighbors(asn) {
+  asn = +asn
+  if (!S.asnView || S.asnView.asn !== asn) return
+  S.asnView = { ...S.asnView, neigh: { loading: true } }
+  try {
+    const psAll = pathsearchFilesForOrigin(null)
+    const psFiles = psAll === null ? [] : byFam(psAll)
+    if (!psFiles.length) { S.asnView = { ...S.asnView, neigh: { up: [], down: [], scanned: 0 } }; return }
+    const rows = await q(`SELECT paths_blob FROM ${rpList(psFiles)} WHERE paths_blob LIKE '% ${asn} %' LIMIT 20000`)
+    const up = new Map(), down = new Map()
+    for (const r of rows) {
+      for (const path of String(r.paths_blob || '').trim().split('|')) {
+        const arr = path.trim().split(/\s+/).map(Number)
+        for (let i = 0; i < arr.length; i++) if (arr[i] === asn) {
+          if (i > 0 && arr[i - 1] !== asn) up.set(arr[i - 1], (up.get(arr[i - 1]) || 0) + 1)
+          if (i < arr.length - 1 && arr[i + 1] !== asn) down.set(arr[i + 1], (down.get(arr[i + 1]) || 0) + 1)
+        }
+      }
+    }
+    const top = mp => [...mp.entries()].map(([a, n]) => ({ asn: a, n })).sort((x, y) => y.n - x.n).slice(0, 40)
+    S.asnView = { ...S.asnView, neigh: { up: top(up), down: top(down), scanned: rows.length, capped: rows.length >= 20000 } }
+  } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
+}
+
+// 精确框 ASN -> 设主体 + 自动开面板(主体变化时); 非 ASN -> 清主体。
+function setSubjectAsn(asn) {
+  if (asn == null) { S.subject = null; return }
+  if (S.subject?.kind === 'asn' && S.subject.id === asn && S.detailKind) return  // 已在看, 别打断
+  S.subject = { kind: 'asn', id: asn }
+  resetNav()
+  showAsn(asn)
+}
+
+// ── 导航历史(前进/后退) ──────────────────────────────────────────
+function pushNav(entry) {
+  const n = S.nav
+  n.stack = n.stack.slice(0, n.idx + 1)
+  n.stack.push(entry)
+  n.idx = n.stack.length - 1
+}
+function resetNav() { S.nav = { stack: [], idx: -1 } }
+export function navCanBack() { return S.nav.idx > 0 }
+export function navCanFwd() { return S.nav.idx < S.nav.stack.length - 1 }
+function renderEntry(e) {
+  if (!e) return
+  if (e.kind === 'asn') showAsn(e.asn, { push: false })
+  else showInsight(e.pid, e.prefix, { push: false })
+}
+export function navBack() { if (navCanBack()) { S.nav.idx--; renderEntry(S.nav.stack[S.nav.idx]) } }
+export function navForward() { if (navCanFwd()) { S.nav.idx++; renderEntry(S.nav.stack[S.nav.idx]) } }
+
+// 智能关闭: 看 prefix 且有 ASN 主体上下文 -> 先返回该 ASN 信息页; 否则真正关闭(再点即关)。
+export function closeInsight() {
+  if (S.detailKind === 'prefix' && S.subject?.kind === 'asn') { showAsn(S.subject.id); return }
+  hardCloseDetail()
+}
+// 彻底关闭(Esc 用): 不走「先返回 ASN」语义。
+export function hardCloseDetail() {
+  S.detailKind = null; S.selectedPid = null; S.insight = null; S.asnView = null
+  resetNav()
+}

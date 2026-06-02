@@ -5,7 +5,7 @@
   import { getData, initDuck, configure, dv } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
-  import { runSearch, closeInsight } from './lib/queries.js'
+  import { runSearch, hardCloseDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
   import { iSpinner } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
@@ -57,7 +57,7 @@
     S.ready = true; S.loading = false; S.msg = ''
     runSearch()
 
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.selectedPid != null) closeInsight() } })
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.detailKind) hardCloseDetail() } })
   })
 </script>
 

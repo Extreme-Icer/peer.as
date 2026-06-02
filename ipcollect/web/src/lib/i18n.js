@@ -28,6 +28,23 @@ export const STRINGS = {
     v6_soon: 'IPv6 暂未支持（计划中）', q_bad: '无法识别：请输入 IP / CIDR / ASN',
     lock_note: '精确查询已启用 · 其余筛选暂时禁用',
     path_na: '子网模式：AS_PATH 不可筛（国家/城市/可见度可叠加）',
+    // ── 详情面板导航 / ASN 视图 / WHOIS ──
+    nav_back: '后退', nav_fwd: '前进', detail_close: '关闭',
+    asn_title: 'ASN 详情', asn_originated: '通告的前缀', asn_upstreams: '观测到的上游',
+    asn_no_origin: '库内无以该 ASN 为 origin 的前缀（可能是纯 transit 或不在库）',
+    asn_upstream_note: '据通告前缀的最优路径推得的直接上游（origin 左侧一跳）。',
+    asn_neigh: '完整邻居（上游 / 下游）', asn_neigh_btn: '全表扫描邻居',
+    asn_neigh_note: '扫描全表 AS_PATH 求该 ASN 两侧邻居，较慢（大型骨干尤甚）。',
+    asn_neigh_up: '上游 / 对端', asn_neigh_down: '下游 / 客户',
+    asn_scanned: '扫描了 {n} 条前缀记录', asn_capped: '（已截断）',
+    whois_title: 'WHOIS / 注册信息（RDAP）', whois_src: '来源', whois_more: '展开', whois_none: '无注册信息',
+    w_handle: '标识', w_name: '名称', w_asrange: 'AS 区间', w_iprange: 'IP 区间', w_cidr: 'CIDR',
+    w_iptype: '分配类型', w_parent: '母段', w_country: '国家/地区', w_status: '状态',
+    w_registration: '注册时间', w_lastchanged: '最近变更', w_expiration: '到期',
+    w_fullname: '名称', w_org: '组织', w_address: '地址', w_phone: '电话', w_fax: '传真',
+    w_email: '邮箱', w_kind: '类型', w_role: '角色', w_title: '头衔', w_url: '链接', w_remark: '备注',
+    role_administrative: '管理', role_technical: '技术', role_abuse: '滥用举报',
+    role_registrant: '注册人', role_registrar: '注册商', role_noc: 'NOC', role_reseller: '分销',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -56,10 +73,33 @@ export const STRINGS = {
     v6_soon: 'IPv6 not supported yet (planned)', q_bad: 'Unrecognized — enter an IP / CIDR / ASN',
     lock_note: 'Precise lookup active · other filters disabled',
     path_na: 'Subnet mode: AS_PATH N/A (country/city/visibility still apply)',
+    // ── detail nav / ASN view / WHOIS ──
+    nav_back: 'Back', nav_fwd: 'Forward', detail_close: 'Close',
+    asn_title: 'ASN detail', asn_originated: 'Originated prefixes', asn_upstreams: 'Observed upstreams',
+    asn_no_origin: 'No prefixes originated by this ASN in DB (pure transit, or not collected)',
+    asn_upstream_note: 'Direct upstream (one hop before origin) inferred from best paths of originated prefixes.',
+    asn_neigh: 'Full neighbors (upstream / downstream)', asn_neigh_btn: 'Scan neighbors (full table)',
+    asn_neigh_note: 'Scans all AS_PATHs for neighbors on both sides of this ASN — slow (esp. large backbones).',
+    asn_neigh_up: 'Upstream / peers', asn_neigh_down: 'Downstream / customers',
+    asn_scanned: 'scanned {n} prefix records', asn_capped: ' (capped)',
+    whois_title: 'WHOIS / registration (RDAP)', whois_src: 'source', whois_more: 'expand', whois_none: 'no registration data',
+    w_handle: 'Handle', w_name: 'Name', w_asrange: 'AS range', w_iprange: 'IP range', w_cidr: 'CIDR',
+    w_iptype: 'Type', w_parent: 'Parent', w_country: 'Country', w_status: 'Status',
+    w_registration: 'Registered', w_lastchanged: 'Last changed', w_expiration: 'Expires',
+    w_fullname: 'Name', w_org: 'Org', w_address: 'Address', w_phone: 'Phone', w_fax: 'Fax',
+    w_email: 'Email', w_kind: 'Kind', w_role: 'Role', w_title: 'Title', w_url: 'URL', w_remark: 'Remark',
+    role_administrative: 'admin', role_technical: 'tech', role_abuse: 'abuse',
+    role_registrant: 'registrant', role_registrar: 'registrar', role_noc: 'NOC', role_reseller: 'reseller',
   },
 }
 
 export function t(k) {
   const s = STRINGS[S.lang] || STRINGS.zh
   return s[k] ?? STRINGS.zh[k] ?? k
+}
+// WHOIS 字段/角色标签: 有本地化用之, 否则原样返回 canonical key(如未知 vcard 属性名)。
+export function tw(prefix, key) {
+  const kk = prefix + key
+  const s = STRINGS[S.lang] || STRINGS.zh
+  return s[kk] ?? STRINGS.zh[kk] ?? key
 }

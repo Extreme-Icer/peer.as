@@ -13,7 +13,15 @@ export const S = $state({
   mode: 'prompt',          // prompt | country | global | subnet
   filters: { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' },
   selectedPid: null,       // 选中行(高亮 + 展开本段)
+  // ── 右侧详情面板 ──────────────────────────────────────────────
+  // detailKind: 当前面板视图 'prefix' | 'asn' | null(关闭)。prefix 载荷在 insight, asn 载荷在 asnView。
+  detailKind: null,
   insight: null,           // { prefix, loc, origin_asn, n_paths, lowvis, paths:[{asns,peers,is_best}], sup:[], sub:[], loading }
+  asnView: null,           // { asn, name, loading, error, count4, count6, prefixes:[], upstreams:[{asn,n}], neigh:null|{up,down,scanned} }
+  // 主体上下文: 精确框是 ASN 时 = {kind:'asn',id}; 用于「关闭 prefix 时先返回该 ASN」语义。非 ASN 输入则 null。
+  subject: null,
+  // 面板导航历史(前进/后退): stack=[{kind:'prefix',pid,prefix}|{kind:'asn',asn}], idx 指向当前。
+  nav: { stack: [], idx: -1 },
   about: false,
   changelog: false,
   pathHelp: false,            // AS_PATH 语法帮助弹窗

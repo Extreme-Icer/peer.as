@@ -139,7 +139,12 @@
   .gobtn:hover { filter: brightness(1.08); }
   .gobtn:active { transform: translateY(1px); }
   .gobtn:disabled { opacity: .4; cursor: default; filter: none; box-shadow: none; }
-  .whoisbtn { display: none; }   /* 仅移动端显示(见 @media) */
+  /* WHOIS = 次要按钮(仅移动端显示, 见 @media): 与主搜索按钮的 accent 实色区分 */
+  .whoisbtn {
+    display: none;
+    background: var(--inbg); color: var(--fg); border: 1px solid var(--line); box-shadow: none;
+  }
+  .whoisbtn:hover:not(:disabled) { filter: none; border-color: var(--accent); color: var(--accent); }
   .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); }
   .numbox:disabled { opacity: .45; cursor: not-allowed; }
   .chk input:disabled ~ span { opacity: .45; }
@@ -154,11 +159,12 @@
     .topbar { padding: 10px 12px; }
     /* 次要筛选行: 两列自适应 */
     .row.secondary :global(.field) { flex: 1 1 calc(50% - 9px); width: auto !important; }
-    /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行; 第2行: 搜索 + WHOIS + 清空 */
+    /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行
+       第2行: 搜索(占 50%) + WHOIS(填满余下) + 清空(固定) */
     .row.primary .famseg { flex: 0 0 auto; }
     .row.primary :global(.field) { flex: 1 1 58%; width: auto !important; }
-    .row.primary .gobtn.big { flex: 1 1 auto; }
-    .row.primary .whoisbtn { display: inline-flex; }
-    .row.primary .clrbtn { flex: 0 0 auto; }
+    .row.primary .gobtn.big:not(.whoisbtn) { flex: 0 0 calc(50% - 6px); }   /* 搜索 = 半行 */
+    .row.primary .whoisbtn { display: inline-flex; flex: 1 1 auto; min-width: 0; }   /* 填满余下 */
+    .row.primary .clrbtn { flex: 0 0 auto; }                                /* 清空固定 */
   }
 </style>

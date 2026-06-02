@@ -34,4 +34,9 @@
     font-family: inherit; width: 100%; min-width: 0; padding: 0; outline: none;
   }
   input::placeholder { color: var(--muted); opacity: .8; }
+  /* 移动端: 主搜索框(big)字号改回默认, 与其它输入框一致(高度仍保留, 便于触控) */
+  @media (max-width: 820px) {
+    .field.big input { font-size: 12.5px; }
+    .field.big .fi { font-size: 12px; }
+  }
 </style>

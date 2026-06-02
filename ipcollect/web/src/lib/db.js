@@ -104,36 +104,51 @@ export async function getData(path, opts) {
 // 所有 parquet/asnames URL 都带上它; 因此即便 parquet 长缓存(max-age=86400)也不会读到过期数据。
 export const dv = () => { const v = S.meta?.version; return v ? `?v=${encodeURIComponent(v)}` : '' }
 
-// 版本入名: 升级 duckdb 自动弃旧缓存。`-r2`: 早期版本曾把 CF SPA 的 200 HTML 误存进缓存(毒化),
-// bump 版本名让那批毒化缓存被弃用、强制重取(配合下方读缓存时的 HTML 校验, 双重保证自愈)。
-const WASM_CACHE = `duckdb-wasm-${DUCKDB_VER}-r2`
+// 版本入名: 升级 duckdb 自动弃旧缓存。`-r3`: 早期版本曾把坏响应(CF SPA-200 HTML / 空/截断的大 wasm)
+// 误存进缓存导致持续空白; 配合下方「字节级校验」从源头堵死, bump 版本名再弃一次历史毒化缓存。
+const WASM_CACHE = `duckdb-wasm-${DUCKDB_VER}-r3`
+
+// 校验取到的字节确实是预期资源, 而非空/截断/被 CF SPA 回的 HTML。坏数据一律不入缓存、不喂 duckdb。
+// wasm: 必须以 magic `00 61 73 6d` 开头; worker(JS): 非空且不以 '<'(0x3c, HTML)开头。
+function validBytes(buf, isWasm) {
+  if (!buf || buf.byteLength < 8) return false
+  const u = new Uint8Array(buf, 0, 4)
+  if (isWasm) return u[0] === 0x00 && u[1] === 0x61 && u[2] === 0x73 && u[3] === 0x6d
+  return u[0] !== 0x3c
+}
 
 // 把大体积 wasm/worker 存进 Cache Storage, 以 blob: URL 交给 duckdb。
-// 为何不靠浏览器 HTTP 缓存: eh.wasm 解压后 34MB, 超出磁盘缓存单资源上限 -> 每次刷新都重下;
-// Cache Storage 无此限制, 存一次后每次加载本地命中(资产同源打包; CN 时首装走 VPS 优化线)。
-// 键与宿主无关(稳定), 切换地区不会重复缓存; urls 按序尝试, 主源(可能是 CN 镜像)失败回退同源。
-async function cachedBlobURL(key, urls, type) {
+// 为何不靠浏览器 HTTP 缓存: eh.wasm 解压后 34MB, 超出磁盘缓存单资源上限 -> 易缓存失败/截断、每刷新重下;
+// 故 fetch 一律 `no-store`(不读不写 HTTP 缓存), 改由 Cache Storage(无单资源上限)持久化。
+// urls 按序尝试(CN 镜像/同源/CDN), 每个候选都做字节级校验, 首个合法即止并存入。键与宿主无关(稳定)。
+async function cachedBlobURL(key, urls, type, isWasm) {
   const req = `${location.origin}/__duckdbwasm__/${key}`
-  let cache, resp
-  try { cache = await caches.open(WASM_CACHE); resp = await cache.match(req) } catch { /* 无 Cache API */ }
-  // 自愈: 拒绝任何被误存为 HTML 的缓存条目(早期 CF SPA-200 毒化) -> 当未命中、重新取真资源。
-  if (resp && (resp.headers.get('content-type') || '').toLowerCase().includes('text/html')) resp = null
-  if (!resp) {
+  let cache, buf
+  try {
+    cache = await caches.open(WASM_CACHE)
+    const hit = await cache.match(req)
+    if (hit) {
+      const b = await hit.arrayBuffer()
+      if (validBytes(b, isWasm)) buf = b          // 命中且合法: 用缓存
+      else await cache.delete(req).catch(() => {}) // 命中但坏(历史毒化): 删除并回退到重新取
+    }
+  } catch { /* 无 Cache API */ }
+  if (!buf) {
     let err
     for (const u of urls) {
       try {
-        const r = await fetch(u)
-        // **双保险**: CF Pages 对缺失路径回 200 + index.html(非 404) -> 必须当失败顺延到 CDN,
-        // 否则 HTML 被当 wasm/worker 喂给 duckdb -> instantiate CompileError(magic word 不符)。
-        const ct = (r.headers.get('content-type') || '').toLowerCase()
-        if (r.ok && !ct.includes('text/html')) { resp = r; break }
-        err = new Error(`${u} → ${r.status} ${ct || '?'}`)
+        const r = await fetch(u, { cache: 'no-store' })
+        if (!r.ok) { err = new Error(`${u} → ${r.status}`); continue }
+        const b = await r.arrayBuffer()
+        if (!validBytes(b, isWasm)) { err = new Error(`${u} → 非法内容(${b.byteLength}B)`); continue }
+        buf = b
+        try { if (cache) await cache.put(req, new Response(b, { headers: { 'content-type': type } })) }
+        catch { /* 配额/无痕: 不缓存也能用 */ }
+        break
       } catch (e) { err = e }
     }
-    if (!resp) throw err
-    try { if (cache) await cache.put(req, resp.clone()) } catch { /* 配额/无痕: 不缓存也能用 */ }
+    if (!buf) throw err
   }
-  const buf = await resp.arrayBuffer()
   return URL.createObjectURL(new Blob([buf], type ? { type } : undefined))
 }
 
@@ -149,9 +164,9 @@ export async function initDuck() {
   // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给候选: CN 镜像优先 / 同源 / CDN 兜底。
   // cdnName 用 duckdb 官方原名(CDN 上即此名): worker=duckdb-browser-<v>.worker.js, wasm=duckdb-<v>.wasm。
   const workerUrl = await cachedBlobURL(`${variant}.worker.js`,
-    wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`, false), 'text/javascript')
+    wasmSrcs(picked.mainWorker, `duckdb-browser-${variant}.worker.js`, false), 'text/javascript', false)
   const wasmUrl = await cachedBlobURL(`${variant}.wasm`,
-    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`, true), 'application/wasm')
+    wasmSrcs(picked.mainModule, `duckdb-${variant}.wasm`, true), 'application/wasm', true)
 
   const worker = new Worker(workerUrl)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)

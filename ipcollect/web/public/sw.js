@@ -3,7 +3,7 @@
 // DuckDB wasm/worker(34MB+, 现也在 /assets/)由前端 Cache Storage 单独管(见 db.js cachedBlobURL),
 // 本 SW 放行不入壳缓存, 免与 WASM_CACHE 重复占用配额。
 // 升级策略: 改 VERSION 即弃旧壳缓存; skipWaiting + clients.claim 让新版立即接管。
-const VERSION = 'v1'
+const VERSION = 'v2'   // bump: 清理可能残留坏 wasm 条目的旧 shell 缓存
 const SHELL = `shell-${VERSION}`
 const PRECACHE = ['./', './index.html', './favicon.svg', './icons.svg']
 

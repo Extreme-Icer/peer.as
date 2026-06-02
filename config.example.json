@@ -326,6 +326,10 @@
     }
   ],
   "ipdb_path": "ipdb.txt",
-  "mrt_collector": "rrc00",
+  "mrt_collectors": [
+    "rrc01",
+    "rrc06"
+  ],
+  "mrt_collector": "rrc01",
   "mrt_base_url": "https://data.ris.ripe.net"
 }

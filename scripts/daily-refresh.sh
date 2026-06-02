@@ -5,7 +5,7 @@
 #   1) ./ipc ingest --reset        下载 rrc01+rrc06 最新 RIB(各~350MB), 全表 v4+v6 入 DuckDB 工作库;
 #                                   并检查 GeoLite 是否过期(过期才下+重建 geo, 否则复用)
 #   2) ./ipc export-parquet --out dist   DuckDB -> Parquet(v4+v6) + SSG -> dist/
-#   3a) 同步**整个 dist(前端+数据)** -> CN 机器(cn.peer.as, 与 peer.as 一致的独立整站, 保留 /duckdb)
+#   3a) 同步**整个 dist(前端+数据+打包的 duckdb wasm)** -> CN 机器(cn.peer.as, 与 peer.as 一致的独立整站)
 #   3b) wrangler pages deploy dist -> CF Pages(peer.as): 前端 + **同源数据 /data**
 # 架构(2026-06 起): **数据全部同源, 不再用 R2**(前端整片下载、不靠 Range, R2 无收益却有被刷爆账单风险)。
 #   海外: peer.as = CF Pages, 数据走自己的 /data。境内(GeoDNS): peer.as 解到 CN 机器, 同源即 CN 机器。
@@ -56,14 +56,15 @@ run() {
   # 与 peer.as 目录一致的整站)。前端 db.js 按域名/geo 选源(见 AGENTS.md「同源数据分发」)。
   # 前端实际整片下载分片、不靠 Range, R2 无收益却有被刷爆 egress 账单风险 -> 弃用。
 
-  # 3a) 同步**整个 dist(前端 + 数据)** -> CN 机器, 使 cn.peer.as 成为与 peer.as 完全一致的独立整站。
-  #     best-effort(CN 加速层, 失败不阻断, 境内用户回退 CF)。**保留 /duckdb**(自托管 wasm, 不在 dist 内,
-  #     升级 duckdb 时在 VPS 手动更新)。数据先传、meta.json 最后传(原子: 版本源最后切)。
+  # 3a) 同步**整个 dist(前端 + 数据 + 打包的 duckdb wasm/worker, 在 dist/assets)** -> CN 机器,
+  #     使 cn.peer.as 成为与 peer.as 完全一致的独立整站。best-effort(CN 加速层, 失败不阻断, 境内回退 CF)。
+  #     wasm 现随 dist 自动同步, 无需保留 /duckdb(旧自托管目录已废, --delete 会清掉)。
+  #     数据先传、meta.json 最后传(原子: 版本源最后切)。
   if [ -n "${CN_DEPLOY_SSH:-}" ]; then
     CNPATH="${CN_DEPLOY_PATH:-/var/www/cn}"
     RSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
-    echo "[$(date -Is)] 3a/3 rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/ (保留 /duckdb)"
-    if rsync -a --delete --exclude='/duckdb/' --exclude='data/meta.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
+    echo "[$(date -Is)] 3a/3 rsync 整站 dist/ -> ${CN_DEPLOY_SSH}:${CNPATH}/"
+    if rsync -a --delete --exclude='data/meta.json' -e "$RSH" "$PROJ/dist/" "${CN_DEPLOY_SSH}:${CNPATH}/" \
        && rsync -a -e "$RSH" "$PROJ/dist/data/meta.json" "${CN_DEPLOY_SSH}:${CNPATH}/data/meta.json"; then
       echo "  ✓ CN 机器整站同步完成(meta.json 最后传)"
     else

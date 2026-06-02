@@ -1,24 +1,36 @@
 // DuckDB-WASM 数据层 (从 web_ref/app.js 移植)。无后端: 浏览器对静态 parquet 发 HTTP Range 查询。
 import { S } from './store.svelte.js'
+// DuckDB-WASM 全部自托管(无 jsDelivr 运行时依赖): JS API 经 Vite 动态 import 打成同源 chunk;
+// wasm/worker 用 `?url` 引入 -> Vite 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 一并部署到
+// CF Pages 与 CN 镜像(daily-refresh rsync)。两边 hash 路径一致 -> 境内数据切 CN 时 wasm 也能走 CN 优化线(见 wasmSrcs)。
+import wasmMvp from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
+import workerMvp from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
+import wasmEh from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
+import workerEh from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url'
 
 const DUCKDB_VER = '1.32.0'
-const JSDELIVR = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VER}/dist`
 
-// 数据/wasm 宿主在「运行时」按域名/地区选定(见 configure)。绝对 URL: DuckDB-WASM 在 Web Worker 里
-// fetch, 相对路径会相对 worker 脚本 -> 必须绝对。**默认全部走同源**(peer.as 自己的 /data;已弃用 R2,
+// 数据宿主在「运行时」按域名/地区选定(见 configure)。**默认全部走同源**(peer.as 自己的 /data;已弃用 R2,
 // 因为前端实际是整片下载、不靠 Range,R2 只徒增被刷爆的 egress 账单风险)。
 // - 同源 = 默认: 海外走 CF Pages 的 /data; GeoDNS 把境内 peer.as 解到 CN 机器时, 同源即 CN 机器(快)。
-// - cn.peer.as 直连 = 全部同源相对(数据 /data + 自托管 wasm /duckdb)。
-// - 境内但 GeoDNS 没生效(拿到 CF IP): /cdn-cgi/trace=CN 时把数据/wasm 切到 cn.peer.as(带回退同源/jsDelivr)。
+// - cn.peer.as 直连 = 全部同源相对(数据 /data)。
+// - 境内但 GeoDNS 没生效(拿到 CF IP): /cdn-cgi/trace=CN 时把数据切到 cn.peer.as(带回退同源)。
+// wasm/worker 已随构建打包同源, 无需再选宿主; 仅在数据切到 CN 时让 wasm 也优先走 CN 镜像(wasmSrcs)。
 const SAME = new URL('./data', document.baseURI).href.replace(/\/$/, '')       // 同源 /data
-const SAME_DUCK = new URL('./duckdb', document.baseURI).href.replace(/\/$/, '') // 同源 /duckdb(CN 机器有, CF 没有)
 const CN_ORIGIN = (import.meta.env.VITE_CN_BASE || 'https://cn.peer.as').replace(/\/$/, '')
 let CN_HOST = 'cn.peer.as'; try { CN_HOST = new URL(CN_ORIGIN).hostname } catch { /* 默认 cn.peer.as */ }
 
-// 运行时选定(默认同源/jsDelivr); configure() 据域名/geo 改写。
+// 运行时选定(默认同源); configure() 据域名/geo 改写。
 export let DATA = SAME             // parquet/json 基址。ES module 活绑定: 重新赋值后各处即时生效。
-let DUCK_SRC = null                // null => jsDelivr 官方 bundle; 否则自托管 dist 基址。
 export let edge = 'cf'             // 'cf' | 'cn', 仅诊断用。
+
+// 把打包出的 wasm/worker 资产路径(可能是同源绝对 URL)展开成「按序尝试」的候选: 数据切到 CN 镜像时,
+// 同一 hash 资产在 CN 镜像也存在(随 dist rsync) -> 优先 CN 优化线、回退同源。其余情况只用同源。
+function wasmSrcs(assetUrl) {
+  const abs = new URL(assetUrl, document.baseURI)
+  if (DATA.startsWith(CN_ORIGIN)) return [`${CN_ORIGIN}${abs.pathname}`, abs.href]
+  return [abs.href]
+}
 
 let db = null, conn = null
 
@@ -28,12 +40,12 @@ async function fetchT(url, opts = {}, ms = 2000) {
   try { return await fetch(url, { ...opts, signal: ac.signal }) } finally { clearTimeout(t) }
 }
 
-// 启动时调用一次: 选定数据/wasm 宿主。
+// 启动时调用一次: 选定数据宿主(wasm/worker 已打包同源, 见 wasmSrcs)。
 export async function configure() {
-  DATA = SAME; DUCK_SRC = null; edge = 'cf'
-  // 1) 直连 CN 机器(host=cn.peer.as): 全部同源相对 —— 数据 /data + 自托管 wasm /duckdb。
+  DATA = SAME; edge = 'cf'
+  // 1) 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器 —— 数据 /data 同源。
   if (location.hostname === CN_HOST) {
-    DATA = SAME; DUCK_SRC = SAME_DUCK; edge = 'cn'
+    DATA = SAME; edge = 'cn'
     return edge
   }
   // 2) 否则: 探 /cdn-cgi/trace 判断当前在 Cloudflare 还是 CN 加速机。
@@ -46,13 +58,12 @@ export async function configure() {
   } catch { /* 网络错误(非 404 响应): 含糊, 不强判, 保持 CF 默认 */ onCF = null }
   if (onCF === false) {
     // /cdn-cgi/trace 明确 404(收到响应但非 200) => 不在 Cloudflare => GeoDNS 已把 peer.as 解到 CN 加速机
-    // (或本地 serve)。数据/wasm 同源(本机即正确源, /duckdb 在本机, 缺则 cachedBlobURL 回退 jsDelivr);
-    // edge=cn 让 UI 显示「中国优化服务器」赞助提示。
-    DUCK_SRC = SAME_DUCK; edge = 'cn'
+    // (或本地 serve)。数据同源(本机即正确源); edge=cn 让 UI 显示「中国优化服务器」赞助提示。
+    edge = 'cn'
   } else if (onCF && loc === 'CN') {        // 在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
-    try {                                   // 健康探测 CN 机器: 通了才切数据+wasm, 失败保持同源 CF/jsDelivr(回退)。
+    try {                                   // 健康探测 CN 机器: 通了才切数据, 失败保持同源 CF(回退)。
       const r = await fetchT(`${CN_ORIGIN}/data/meta.json`, { cache: 'no-store' }, 2000)
-      if (r.ok) { DATA = `${CN_ORIGIN}/data`; DUCK_SRC = `${CN_ORIGIN}/duckdb`; edge = 'cn' }
+      if (r.ok) { DATA = `${CN_ORIGIN}/data`; edge = 'cn' }   // wasm 随之优先走 CN 镜像(wasmSrcs)
     } catch { /* CN 机器不可达 -> 同源 CF 回退 */ }
   }
   // else: onCF && loc!=CN (海外 CF), 或 onCF===null(网络错误) -> 同源, edge='cf'
@@ -71,7 +82,7 @@ export async function getData(path, opts) {
   try { return await getJSON(`${DATA}${path}`, opts) }
   catch (e) {
     // 数据源(可能是 cn.peer.as)取数失败 -> 整体回退同源(CF Pages / 本机)。
-    if (DATA !== SAME) { DATA = SAME; DUCK_SRC = null; edge = 'cf'; return await getJSON(`${SAME}${path}`, opts) }
+    if (DATA !== SAME) { DATA = SAME; edge = 'cf'; return await getJSON(`${SAME}${path}`, opts) }
     throw e
   }
 }
@@ -84,8 +95,8 @@ const WASM_CACHE = `duckdb-wasm-${DUCKDB_VER}`   // 版本入名: 升级 duckdb 
 
 // 把大体积 wasm/worker 存进 Cache Storage, 以 blob: URL 交给 duckdb。
 // 为何不靠浏览器 HTTP 缓存: eh.wasm 解压后 34MB, 超出磁盘缓存单资源上限 -> 每次刷新都重下;
-// Cache Storage 无此限制, 存一次后每次加载本地命中(CN 时首装来自 VPS 优化线, 不碰 jsDelivr)。
-// 键与宿主无关(稳定), 切换地区不会重复缓存; urls 按序尝试, 主源(可能是 CN)失败回退 jsDelivr。
+// Cache Storage 无此限制, 存一次后每次加载本地命中(资产同源打包; CN 时首装走 VPS 优化线)。
+// 键与宿主无关(稳定), 切换地区不会重复缓存; urls 按序尝试, 主源(可能是 CN 镜像)失败回退同源。
 async function cachedBlobURL(key, urls, type) {
   const req = `${location.origin}/__duckdbwasm__/${key}`
   let cache, resp
@@ -104,20 +115,19 @@ async function cachedBlobURL(key, urls, type) {
 }
 
 export async function initDuck() {
-  // duckdb-wasm 加载器(JS API, 小)仍走 jsDelivr; /* @vite-ignore */ 让 Vite 不解析远程 URL。
-  const duckdb = await import(/* @vite-ignore */ `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_VER}/+esm`)
-  // 候选 bundle: CN 用自托管 dist, 否则 jsDelivr 官方。selectBundle 按浏览器特性挑 mvp/eh。
-  const src = DUCK_SRC || JSDELIVR
+  // JS API: 动态 import 打包出的同源 chunk(惰性加载, 不进首屏; 不再碰 jsDelivr)。
+  const duckdb = await import('@duckdb/duckdb-wasm')
+  // 候选 bundle 指向打包资产(?url); selectBundle 按浏览器特性挑 mvp/eh。
   const picked = await duckdb.selectBundle({
-    mvp: { mainModule: `${src}/duckdb-mvp.wasm`, mainWorker: `${src}/duckdb-browser-mvp.worker.js` },
-    eh:  { mainModule: `${src}/duckdb-eh.wasm`,  mainWorker: `${src}/duckdb-browser-eh.worker.js` },
+    mvp: { mainModule: wasmMvp, mainWorker: workerMvp },
+    eh:  { mainModule: wasmEh,  mainWorker: workerEh },
   })
-  const variant = picked.mainModule.includes('mvp') ? 'mvp' : 'eh'
-  // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); 主源失败回退 jsDelivr 官方 dist。
+  const variant = picked.mainModule === wasmEh ? 'eh' : 'mvp'
+  // worker.js + 大 wasm 都过 Cache Storage(跨刷新命中); wasmSrcs 给出 CN 镜像优先/同源回退的候选。
   const workerUrl = await cachedBlobURL(`${variant}.worker.js`,
-    [picked.mainWorker, `${JSDELIVR}/duckdb-browser-${variant}.worker.js`], 'text/javascript')
+    wasmSrcs(picked.mainWorker), 'text/javascript')
   const wasmUrl = await cachedBlobURL(`${variant}.wasm`,
-    [picked.mainModule, `${JSDELIVR}/duckdb-${variant}.wasm`], 'application/wasm')
+    wasmSrcs(picked.mainModule), 'application/wasm')
 
   const worker = new Worker(workerUrl)
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)

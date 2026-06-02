@@ -1,6 +1,7 @@
 // PEER.AS Service Worker — 让 app 壳(HTML + 内容寻址的 /assets/*)重复加载秒开、可离线。
-// 不碰数据: /data/*(parquet/json, 体积大且带 ?v= 版本) 与跨源(cn.peer.as / jsdelivr)一律放行;
-// DuckDB wasm(34MB)由前端 Cache Storage 单独处理(见 db.js cachedBlobURL), 不经本 SW。
+// 不碰数据: /data/*(parquet/json, 体积大且带 ?v= 版本) 与跨源(cn.peer.as)一律放行;
+// DuckDB wasm/worker(34MB+, 现也在 /assets/)由前端 Cache Storage 单独管(见 db.js cachedBlobURL),
+// 本 SW 放行不入壳缓存, 免与 WASM_CACHE 重复占用配额。
 // 升级策略: 改 VERSION 即弃旧壳缓存; skipWaiting + clients.claim 让新版立即接管。
 const VERSION = 'v1'
 const SHELL = `shell-${VERSION}`
@@ -25,6 +26,8 @@ self.addEventListener('fetch', e => {
   if (url.origin !== location.origin) return         // 跨源(cn.peer.as / jsdelivr): 放行
   if (url.pathname.startsWith('/data/')) return       // 数据(带 ?v=): 放行, 不入壳缓存
   if (url.pathname.startsWith('/cdn-cgi/')) return    // CF trace 等: 放行
+  // DuckDB wasm/worker(大, 由 db.js 的 Cache Storage/WASM_CACHE 单独管): 放行, 不入壳缓存避免重复占配额。
+  if (/\.wasm$/.test(url.pathname) || /\.worker-[^/]*\.js$/.test(url.pathname)) return
 
   // 导航(HTML): network-first + 离线回退缓存。保证拿到最新 HTML(含正确的 hashed 资源名),
   // 避免「陈旧 HTML 指向已被新部署删除的旧 hash 资源」而 404。

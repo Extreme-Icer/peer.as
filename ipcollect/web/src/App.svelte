@@ -34,7 +34,7 @@
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))
     const dw = parseFloat(localStorage.getItem('ipc-detail-w')); if (dw) S.detailW = Math.min(72, Math.max(38, dw))
 
-    // 选定数据/wasm 宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则 CF/jsDelivr。
+    // 选定数据宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则同源 CF。wasm 已打包同源。
     // edge 存入 store, 供空状态显示「正在使用中国优化服务器」赞助提示。
     S.edge = await configure()
 

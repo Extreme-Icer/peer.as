@@ -192,19 +192,18 @@ curl -s -o /dev/null -w "%{http_code}\n" https://peer.as/                       
 
 **两个独立整站,目录完全一致,任一域名都能用:**
 - **`peer.as` = CF Pages**:`wrangler pages deploy dist` 部署前端 + `dist/data`(同源 `/data`)。海外主站。
-- **`cn.peer.as` = CN 优化 VPS(Caddy)**:`daily-refresh` rsync **整个 dist(前端 + 数据)** 过去(`--exclude=/duckdb/`
-  保留自托管 wasm)。境内主站。
+- **`cn.peer.as` = CN 优化 VPS(Caddy)**:`daily-refresh` rsync **整个 dist(前端 + 数据 + 打包的 wasm)** 过去。境内主站。
 
 **前端选源(`db.js configure()`,App.svelte onMount 最先调;无 `VITE_DATA_BASE` 了)**:
-1. `location.hostname === cn.peer.as` ⇒ 全部**同源相对**(数据 `/data` + 自托管 wasm `/duckdb`)。edge=cn。
+1. `location.hostname === cn.peer.as` ⇒ **同源相对**(数据 `/data`)。edge=cn。
 2. 否则(在 CF Pages,或 GeoDNS 把 peer.as 解到 CN 机器):探同源 `GET /cdn-cgi/trace`(CF 才有)。
    - `loc=CN`(确在 CF Pages 且身处境内,即 **GeoDNS 没生效拿到 CF IP**)⇒ 健康探测 `cn.peer.as/data/meta.json`,
-     通了把数据 + wasm 切到 `cn.peer.as`(**带回退**:不通则保持同源 CF / wasm jsDelivr)。edge=cn。
+     通了把数据切到 `cn.peer.as`(**带回退**:不通则保持同源 CF)。edge=cn。
    - 否则(海外,或 GeoDNS 已把 peer.as 解到 CN 机器——此时 trace 取不到 ⇒ 当非 CN)⇒ **同源**(本机即正确源)。
    覆盖:`VITE_CN_BASE`(默认 `https://cn.peer.as`)。
-   - 注:GeoDNS 把 peer.as 解到 CN 机器时,hostname 仍是 peer.as ⇒ 走分支 2 的"否则"= 同源(=CN 机器, 数据快);
-     **wasm 此时仍走 jsDelivr**(无法廉价区分 CF/CN 机器,因 CF Pages 对缺失路径 SPA 回 200 HTML、探测会假阳)。
-     wasm 首次后进 Cache Storage、不再跨境;要 CN 自托管 wasm 直接访问 cn.peer.as 域名即可。
+   - 注:GeoDNS 把 peer.as 解到 CN 机器时,hostname 仍是 peer.as ⇒ 走分支 2 的"否则"= 同源(=CN 机器, 数据快)。
+   - **wasm/worker 已随构建打包同源(`/assets/*`,见下)** ⇒ 任何分支下都不跨境取 wasm;数据切到 `cn.peer.as` 时,
+     `wasmSrcs()` 让 wasm 也优先走 CN 镜像上的同一 hash 资产(回退同源)。**已无 jsDelivr 运行时依赖。**
 - **GeoDNS(运维侧,域名解析)**:境内 `peer.as` 解析到 CN 机器 IP、境外解析到 CF Pages。
   **前置(切 NS 前必须)**:CN 机器 Caddy 要能服务 `peer.as` 这个 Host **且有 peer.as 的 TLS 证书**——LE HTTP-01 会失败
   (海外验证者解析 peer.as→CF),需 **DNS-01**(或把 CF 的证书同步过去)。否则境内用户被 GeoDNS 引到 CN 机器时 TLS 握手失败。
@@ -219,25 +218,30 @@ VPS(DMIT LAX，`cn.peer.as`)用 **Caddy** 托管**与 peer.as 完全一致的整
 分流见上「数据分发：同源 + CN 整站镜像」(`db.js configure()`)：直连 cn.peer.as / GeoDNS 把 peer.as 解到本机 ⇒ 同源;
 GeoDNS 没生效拿到 CF IP 且 `loc=CN` ⇒ 切 cn.peer.as(带健康探测 + 自动回退)。**已弃用 R2,数据全部同源**。
 
-**DuckDB-WASM 自托管 + Cache Storage(核心修复)**：`duckdb-eh.wasm` 解压 **34MB**，**超出 Chromium HTTP
-磁盘缓存单资源上限(`max_size/8`) ⇒ 每次刷新都跨境重下 ~9MB**。修法(`initDuck` + `cachedBlobURL`)：手动
-bundle(mvp+eh，无 COI) 指向选定源 → wasm/worker.js **存入 Cache Storage(无单资源上限)**，以 blob: URL 喂给
-duckdb(wasm blob 标 `application/wasm` 走 instantiateStreaming；worker.js 自包含，cached text 直接 `new
-Worker`)。**首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`)，主源失败回退
-jsDelivr。缓存名带版本(`duckdb-wasm-1.32.0`)，升级 duckdb 自动弃旧。加载器 `+esm`(32KB) 仍走 jsDelivr(小、能
-HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。**Service Worker**(`public/sw.js`)只缓存同源壳
+**DuckDB-WASM 完全自托管(vendored 打包,零 jsDelivr 运行时依赖)**：`@duckdb/duckdb-wasm`(版本钉 `DUCKDB_VER`)
+是 npm 依赖。`db.js` 顶部用 Vite **`?url`** 引入 4 个资产(`duckdb-{mvp,eh}.wasm` + `duckdb-browser-{mvp,eh}.worker.js`)
+⇒ Vite 输出**带内容 hash 的独立资源**到 `dist/assets/`(不内联进 JS),随 dist 一并部署到 CF Pages 与 CN 镜像。
+JS API 经 `await import('@duckdb/duckdb-wasm')` 打成**同源惰性 chunk**(`duckdb-browser-<hash>.js`,~46KB gz)。
+`selectBundle` 仍按浏览器特性挑 mvp/eh(其内置 `getJsDelivrBundles` 因走手动 bundle 而成死代码、不触发)。
+
+**+ Cache Storage(核心修复)**：`duckdb-eh.wasm` 解压 **34MB**,**超出 Chromium HTTP 磁盘缓存单资源上限
+(`max_size/8`) ⇒ 每次刷新都重下 ~8MB**。修法(`initDuck` + `cachedBlobURL`):`wasmSrcs()` 给出候选源(数据切 CN 时
+CN 镜像优先、回退同源)→ wasm/worker.js **存入 Cache Storage(无单资源上限)**,以 blob: URL 喂给 duckdb
+(wasm blob 标 `application/wasm` 走 instantiateStreaming;worker.js 自包含,cached text 直接 `new Worker`)。
+**首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`),缓存名带版本
+(`duckdb-wasm-1.32.0`)、升级 duckdb 自动弃旧。**Service Worker**(`public/sw.js`)只缓存同源壳
 (HTML network-first 防陈旧 hash、`/assets/*` cache-first)，不碰数据/跨源(wasm 由上面的 Cache Storage 管)。
 
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。
 - **HTTP/3 已全局禁用(只留 h1/h2，Caddyfile 顶部 `servers { protocols h1 h2 }`)**：中国对 UDP/QUIC
   做 QoS 限速，走 h3 反而更慢；本机仅服务 CN ⇒ 全局关即可(海外走 CF 不受影响)。关后不监听 UDP/443、不广播 alt-svc h3。
-- 目录：`/var/www/cn/`(**整站**：前端 index.html/assets + SSG `c/` + `data/`(parquet，rsync 自 `dist/`) +
-  `duckdb/`(4 个 wasm 文件，rsync 时 `--exclude=/duckdb/` 保留，仅 duckdb 升级时手动换))。
+- 目录：`/var/www/cn/`(**整站**：前端 index.html + `assets/`(JS/CSS + **打包的 duckdb wasm/worker**,hash 名) +
+  SSG `c/` + `data/`(parquet);全部 rsync 自 `dist/`,无需手动维护 wasm)。
   **Caddy 现需服务 `cn.peer.as` 与 `peer.as` 两个 Host**(GeoDNS 把境内 peer.as 引到本机);peer.as 证书走 DNS-01
-  或同步 CF 证书(LE HTTP-01 会失败,见「数据分发」)。SPA 根 + `/data` + `/duckdb`。
+  或同步 CF 证书(LE HTTP-01 会失败,见「数据分发」)。SPA 根 + `/data` + `/assets`。(旧 `/duckdb/` 已废弃。)
 - 配置：`deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`(Caddy 自动签 LE 证书)。**要点**：
   CORS `*` + Expose `Content-Range` 等 + OPTIONS 预检 204；`encode` **只排除 `*.parquet`**(它走 Range，压缩
-  破坏 206)，**wasm 照压**(34MB→8MB，整块取非 Range)；parquet/duckdb 长缓存 immutable、meta.json no-cache。
+  破坏 206)，**wasm 照压**(34MB→8MB，整块取非 Range)；`/assets/*`(含 hash wasm)/parquet 长缓存 immutable、meta.json no-cache。
   访问日志走 journald(`journalctl -u caddy`；systemd 沙箱下写 `/var/log` 被拒，故未用 file log)。
 - 实测：parquet 206+Range+CORS 不压缩；wasm `content-encoding: gzip` 下载 8MB；预检 204；h3 已禁用(无 alt-svc)；
   浏览器实测 F5 不再重下 wasm(命中 Cache Storage)、`?cc=CN` 查询 500 行正确。
@@ -246,10 +250,8 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 - 数据：daily-refresh **步骤 4/5** rsync(`.env` 的 `CN_DEPLOY_SSH`/`CN_DEPLOY_PATH`；best-effort，失败不阻断)。
 - 首次/换机装 Caddy：官方 apt 源装 `caddy`，scp `deploy/cn.peer.as.Caddyfile` → `/etc/caddy/Caddyfile`，
   `caddy validate && systemctl reload caddy`。DNS 须先把 `cn.peer.as` 灰云 A 记录指向本机(否则签证书失败)。
-- duckdb wasm(不随 daily 同步，仅**升级 duckdb 版本**时重置)：在 VPS 上
-  `cd /var/www/cn/duckdb && for f in duckdb-mvp.wasm duckdb-browser-mvp.worker.js duckdb-eh.wasm
-  duckdb-browser-eh.worker.js; do curl -sO https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@<VER>/dist/$f; done`，
-  并同步改前端 `DUCKDB_VER`(db.js) + `WASM_CACHE` 缓存名随之失效。
+- duckdb wasm:**已随构建打包到 `/assets/`,随 daily rsync 自动更新**,VPS 无需手动维护。**升级 duckdb 版本** =
+  在 `ipcollect/web` 跑 `npm i @duckdb/duckdb-wasm@<VER>` + 改 `DUCKDB_VER`(db.js,驱动 `WASM_CACHE` 失效)→ 重新构建即可。
 
 ### 自动化：每天 04:00 自动刷新 + 部署（cron）
 
@@ -327,5 +329,5 @@ HTTP 缓存；**后续可自托管整条 ESM 链以防 jsDelivr 被全墙**)。*
 **已完成**：全球全表 **v4+v6** PEER.AS(rrc01+rrc06 双采集点)，**DuckDB 工作库**(SQLite 退役)，纯静态可复现，
 **DuckDB-WASM + Parquet**(v4/v6 两套)分发；geo 三轨合并(ipdb CN 城市 + GeoLite 国际城市 + rir 兜底)、**全球城市级** +
 **AS organization**；i18n(zh/en) + SEO。详见 `docs/DUCKDB_V6_REFACTOR.md`。**无 CI**：全手动在本机跑, GitHub 仅托管源码。
-**待办/可改进**：geo-import 的非重叠窗口去重(~分钟级)可优化；duckdb-wasm 可改 vendored 提升可镜像性;
+**待办/可改进**：geo-import 的非重叠窗口去重(~分钟级)可优化;
 v6 全表 carve 体量较大(692MB)可视情况收敛国际城市粒度。

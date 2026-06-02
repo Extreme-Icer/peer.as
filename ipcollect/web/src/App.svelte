@@ -5,7 +5,7 @@
   import { getData, initDuck, configure, dv } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
-  import { runSearch, hardCloseDetail } from './lib/queries.js'
+  import { applyRoute, hardCloseDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
   import { iSpinner } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
@@ -55,7 +55,9 @@
     try { await asnP } catch (e) { /* 可选, 忽略 */ }
     try { await orgP } catch (e) { /* 可选, 忽略 */ }
     S.ready = true; S.loading = false; S.msg = ''
-    runSearch()
+    // 解析当前 URL(路径 /<asn|prefix> 或 ?q=) 渲染; 浏览器前进/后退经 popstate 重渲染(PJAX)。
+    applyRoute({ initial: true })
+    window.addEventListener('popstate', () => applyRoute())
 
     window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.detailKind) hardCloseDetail() } })
   })

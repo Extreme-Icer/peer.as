@@ -20,8 +20,8 @@ export const S = $state({
   asnView: null,           // { asn, name, loading, error, count4, count6, prefixes:[], upstreams:[{asn,n}], neigh:null|{up,down,scanned} }
   // 主体上下文: 精确框是 ASN 时 = {kind:'asn',id}; 用于「关闭 prefix 时先返回该 ASN」语义。非 ASN 输入则 null。
   subject: null,
-  // 面板导航历史(前进/后退): stack=[{kind:'prefix',pid,prefix}|{kind:'asn',asn}], idx 指向当前。
-  nav: { stack: [], idx: -1 },
+  // 面板前进/后退 = 浏览器历史驱动(pushState/popstate)。idx=当前历史序号, max=已达最大序号(决定能否前进)。
+  nav: { idx: 0, max: 0 },
   about: false,
   changelog: false,
   pathHelp: false,            // AS_PATH 语法帮助弹窗

@@ -8,6 +8,14 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-02
 
+- **新增：可分享的链接 / 浏览器前进后退。** 现在 ASN 与前缀详情都有独立网址，可直接打开或分享：
+  `peer.as/4842`（ASN）、`peer.as/1.1.1.0/24`（前缀，IPv6 同理）会自动填入搜索框、搜索并展开对应详情；
+  也支持传统的 `peer.as/?q=关键词` 搜索。在站内切换详情会更新网址，浏览器的前进/后退按钮可在浏览过的详情间穿梭。
+  **New: shareable links / browser back-forward.** ASN and prefix details now have their own URLs you can open or share
+  directly: `peer.as/4842` (ASN) and `peer.as/1.1.1.0/24` (prefix; IPv6 likewise) auto-fill the search box, search and
+  open the matching detail; the classic `peer.as/?q=term` search also works. Navigating details updates the URL, and the
+  browser back/forward buttons move through the details you’ve viewed.
+
 - **新增：WHOIS / 注册信息（RDAP）+ ASN 详情面板。** 前缀详情面板新增「WHOIS / 注册信息」区块（持有者、
   netname、分配类型、abuse 联系人、注册/变更时间），浏览器直连各 RIR RDAP 实时获取；在精确框输入一个
   ASN（如 `AS4809`）会自动展开该 ASN 的详情面板——含 WHOIS、通告的前缀、观测到的上游，并可一键全表扫描完整

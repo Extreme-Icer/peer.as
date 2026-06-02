@@ -51,10 +51,14 @@ class _QuietHandler(SimpleHTTPRequestHandler):
     # 支持 HTTP Range (206) —— DuckDB-WASM 对 parquet 发 Range 请求; Python 默认不支持。
     # 生产用 CF Pages(原生支持 Range), 此处仅让本地 debug 与生产一致、可测 Range 裁剪。
     def send_head(self):
+        import os
+        # SPA 回退(与生产 CF/Caddy try_files 一致): 缺失路径(客户端路由 /4842、/1.1.1.0/24 等)改服务 index.html。
+        # 真实文件(/assets、/data、/c、wasm 等)存在即原样服务。
+        if not os.path.exists(self.translate_path(self.path)):
+            self.path = "/index.html"
         rng = self.headers.get("Range")
         if not rng or not rng.startswith("bytes="):
             return super().send_head()
-        import os
         path = self.translate_path(self.path)
         if os.path.isdir(path) or not os.path.exists(path):
             return super().send_head()

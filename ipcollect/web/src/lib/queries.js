@@ -175,11 +175,11 @@ export function sortRows(key) {
 }
 
 // ---- 详情面板: prefix / asn 视图 + 导航历史 ----
-export async function showInsight(pid, prefix, { push = true } = {}) {
+export async function showInsight(pid, prefix) {
   S.detailKind = 'prefix'
   S.asnView = null
   S.selectedPid = pid
-  if (push) pushNav({ kind: 'prefix', pid, prefix })
+  go('/' + prefix)
   S.insight = { loading: true }
   const v6 = (prefix || '').includes(':')
   const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
@@ -212,13 +212,13 @@ async function relData(pid, s, e, v6) {
   } catch (e) { return [[], []] }
 }
 // ── ASN 详情视图(whois 由 Whois.svelte 自取; 这里只算本地 BGP: 通告前缀 + 观测上游) ──────
-export async function showAsn(asn, { push = true } = {}) {
+export async function showAsn(asn) {
   asn = +asn
   S.detailKind = 'asn'
   S.selectedPid = null
   S.insight = null
   S.asnView = { asn, name: asnName(asn), loading: true }
-  if (push) pushNav({ kind: 'asn', asn })
+  go('/' + asn)
   if (!S.ready) { return }
   try {
     const psAll = pathsearchFilesForOrigin(asn)
@@ -282,7 +282,6 @@ function setSubjectAsn(asn) {
   if (asn == null) { S.subject = null; return }
   if (S.subject?.kind === 'asn' && S.subject.id === asn && S.detailKind) return  // 已在看, 别打断
   S.subject = { kind: 'asn', id: asn }
-  resetNav()
   if (!isMobileViewport()) showAsn(asn)
 }
 // Topbar「Whois」按钮(移动端): 显式打开当前精确框 ASN 的详情面板。
@@ -290,31 +289,71 @@ export function openWhoisFromBox() {
   if (S.subject?.kind === 'asn') showAsn(S.subject.id)
 }
 
-// ── 导航历史(前进/后退) ──────────────────────────────────────────
-function pushNav(entry) {
-  const n = S.nav
-  n.stack = n.stack.slice(0, n.idx + 1)
-  n.stack.push(entry)
-  n.idx = n.stack.length - 1
+// ── 浏览器历史路由(PJAX) ──────────────────────────────────────────
+// 单一真相 = 浏览器历史。开详情 pushState('/<asn|prefix>'); 面板 ←/→ = history.back()/forward();
+// popstate 按 URL 重渲染。S.nav.{idx,max} 仅用于 ←/→ 的可用态。_suppressUrl 在按 URL 渲染时屏蔽回写。
+let _suppressUrl = false
+function go(path) {
+  if (_suppressUrl || typeof history === 'undefined') return
+  const cur = location.pathname + location.search
+  if (cur === path) { history.replaceState({ idx: S.nav.idx }, '', path); return }   // 同 URL 不新增历史项
+  const idx = S.nav.idx + 1
+  history.pushState({ idx }, '', path)
+  S.nav.idx = idx; S.nav.max = idx                                                    // 新前进 -> 截断更前的历史
 }
-function resetNav() { S.nav = { stack: [], idx: -1 } }
 export function navCanBack() { return S.nav.idx > 0 }
-export function navCanFwd() { return S.nav.idx < S.nav.stack.length - 1 }
-function renderEntry(e) {
-  if (!e) return
-  if (e.kind === 'asn') showAsn(e.asn, { push: false })
-  else showInsight(e.pid, e.prefix, { push: false })
-}
-export function navBack() { if (navCanBack()) { S.nav.idx--; renderEntry(S.nav.stack[S.nav.idx]) } }
-export function navForward() { if (navCanFwd()) { S.nav.idx++; renderEntry(S.nav.stack[S.nav.idx]) } }
+export function navCanFwd() { return S.nav.idx < S.nav.max }
+export function navBack() { if (navCanBack()) history.back() }
+export function navForward() { if (navCanFwd()) history.forward() }
 
+function closeDetailState() { S.detailKind = null; S.selectedPid = null; S.insight = null; S.asnView = null }
 // 智能关闭: 看 prefix 且有 ASN 主体上下文 -> 先返回该 ASN 信息页; 否则真正关闭(再点即关)。
 export function closeInsight() {
   if (S.detailKind === 'prefix' && S.subject?.kind === 'asn') { showAsn(S.subject.id); return }
   hardCloseDetail()
 }
-// 彻底关闭(Esc 用): 不走「先返回 ASN」语义。
+// 彻底关闭(Esc / 移动端关闭): 关详情 + URL 回到搜索态(框非空 -> /?q=, 否则根)。
 export function hardCloseDetail() {
-  S.detailKind = null; S.selectedPid = null; S.insight = null; S.asnView = null
-  resetNav()
+  closeDetailState()
+  const box = (S.filters.ip || '').trim()
+  go(box ? `/?q=${encodeURIComponent(box)}` : '/')
+}
+
+// 按前缀串精确开 prefix 详情(URL/popstate 用, 因 URL 只有前缀串无 pid)。命中库内同范围前缀则展开。
+async function openPrefixByString(s) {
+  const v6 = s.includes(':')
+  const r = v6 ? ip6Range(s) : ip2range(s)
+  if (!r) return
+  const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
+  const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
+  try {
+    const rows = await q(`SELECT pid, prefix FROM ${src} WHERE ip_start=${lit(r.start)} AND ip_end=${lit(r.end)} ORDER BY n_paths DESC LIMIT 1`)
+    if (rows[0]) showInsight(rows[0].pid, rows[0].prefix)
+  } catch (e) { /* 无精确匹配则仅显示子网搜索结果 */ }
+}
+
+// 解析 URL(路径 /<asn|prefix> 或 ?q=<词>)并渲染。initial=首次加载(种 history.state.idx); 否则 popstate。
+export async function applyRoute({ initial = false } = {}) {
+  _suppressUrl = true
+  try {
+    if (initial && history.state?.idx == null) history.replaceState({ idx: 0 }, '', location.pathname + location.search)
+    S.nav.idx = history.state?.idx ?? 0
+    if (initial) S.nav.max = S.nav.idx
+    const sp = new URLSearchParams(location.search)
+    const q0 = sp.get('q')
+    const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
+    if (path) {
+      const probe = classifyQuery(path)
+      S.filters.ip = path
+      await runSearch()
+      if (probe.kind === 'asn') showAsn(probe.asn)
+      else if (probe.kind === 'ipv4' || probe.kind === 'ipv6') await openPrefixByString(path)
+    } else if (q0 != null) {
+      S.filters.ip = q0
+      await runSearch()
+    } else {
+      closeDetailState()
+      await runSearch()
+    }
+  } finally { _suppressUrl = false }
 }

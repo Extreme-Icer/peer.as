@@ -58,6 +58,10 @@ cn.peer.as {
 	}
 	encode @compressible zstd gzip
 
+	# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)直开/刷新时, 缺失路径回退 index.html(前端 JS 解析路由)。
+	# 真实文件(/assets、/data、/c、wasm 等)存在即原样服务, 不受影响。
+	try_files {path} /index.html
+
 	file_server
 
 	# 访问日志走 journald(systemd 沙箱下写 /var/log 会被拒): journalctl -u caddy。

@@ -40,6 +40,8 @@
       </div>
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
         oninput={sched} onenter={searchNow} />
+      <!-- ≤410px: 强制换行, 让搜索/WHOIS/清空整体落到第二行(否则窄屏精确框会被挤到自己一行, 破坏布局) -->
+      <div class="rowbreak" aria-hidden="true"></div>
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
       <button class="gobtn big whoisbtn" onclick={openWhoisFromBox} disabled={!canWhois} title={t('whois_open')}><Fa icon={iWhois} /> WHOIS</button>
       <button class="clrbtn" onclick={clearAll} title={t('clear')}><Fa icon={iClear} /></button>
@@ -86,6 +88,7 @@
   }
   .filters { display: flex; flex-direction: column; gap: 9px; }
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+  .rowbreak { display: none; }   /* 仅 ≤410px 启用(flex-basis:100% 占满整行→强制后续元素换行) */
   .row.primary { padding-bottom: 9px; border-bottom: 1px dashed var(--line); }
   .gobtn.big { height: 40px; padding: 0 22px; font-size: 13.5px; border-radius: 9px; }
   /* family 单选(分段控件): 3 段等宽 + 滑动高亮块, 切换时动画。 */
@@ -162,9 +165,16 @@
     /* 主查询行 第1行: 全部/v4/v6 分段 + 主搜索框 同行
        第2行: 搜索(占满剩余空间, 内容居中) + WHOIS(自适应内容) + 清空(固定) */
     .row.primary .famseg { flex: 0 0 auto; }
-    .row.primary :global(.field) { flex: 1 1 58%; width: auto !important; }
+    .row.primary :global(.field) { flex: 1 1 50%; width: auto !important; }
     .row.primary .gobtn.big:not(.whoisbtn) { flex: 1 1 auto; justify-content: center; }  /* 搜索撑满剩余 */
     .row.primary .whoisbtn { display: inline-flex; flex: 0 0 auto; }        /* WHOIS 自适应 */
     .row.primary .clrbtn { flex: 0 0 auto; }                               /* 清空固定 */
+  }
+  @media (max-width: 410px) {
+    /* 极窄屏: famseg + 精确框同占第一行(精确框收缩填满 famseg 右侧剩余宽度),
+       rowbreak 强制 搜索/WHOIS/清空 整体落到第二行(按钮的 flex 规则沿用 ≤820px 块) */
+    .row.primary .famseg { flex: 0 0 auto; }
+    .row.primary :global(.field) { flex: 1 1 0; min-width: 0; width: auto !important; }
+    .rowbreak { display: block; flex-basis: 100%; height: 0; }
   }
 </style>

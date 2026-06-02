@@ -238,8 +238,11 @@ JS API 经 `await import('@duckdb/duckdb-wasm')` 打成**同源惰性 chunk**(`d
 同源 → CDN 兜底, 按序 fetch 首个成功即止)→ wasm/worker.js **存入 Cache Storage(无单资源上限)**,以 blob: URL 喂给 duckdb
 (wasm blob 标 `application/wasm` 走 instantiateStreaming;worker.js 自包含,cached text 直接 `new Worker`)。
 **首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`),缓存名带版本
-(`duckdb-wasm-1.32.0`)、升级 duckdb 自动弃旧。**Service Worker**(`public/sw.js`)只缓存同源壳
-(HTML network-first 防陈旧 hash、`/assets/*` cache-first)，不碰数据/跨源(wasm 由上面的 Cache Storage 管)。
+(`duckdb-wasm-<ver>-r3`)、升级 duckdb 自动弃旧。**Service Worker**(`public/sw.js`,VERSION 入 cache 名)只缓存同源壳
+(HTML network-first 防陈旧 hash、`/assets/*` cache-first)，**放行 `*.wasm`/`*.worker-*.js`**(由 Cache Storage 管),不碰数据/跨源。
+**坏缓存防护(踩过坑)**:① `fetch` 一律 `{cache:'no-store'}` —— 否则 immutable 大 wasm 进浏览器 HTTP 缓存易截断/失败,
+plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes()` 字节级校验(wasm magic `00 61 73 6d`/worker 非空非 HTML),
+读写 Cache Storage 都校验, 命中坏条目即 `cache.delete` 重取(自愈)。两者 + cache 名 bump 共同根治 SPA-200 HTML / 空 / 截断毒化。
 
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。
 - **HTTP/3 已全局禁用(只留 h1/h2，Caddyfile 顶部 `servers { protocols h1 h2 }`)**：中国对 UDP/QUIC

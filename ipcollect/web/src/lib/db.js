@@ -36,19 +36,26 @@ export async function configure() {
     DATA = SAME; DUCK_SRC = SAME_DUCK; edge = 'cn'
     return edge
   }
-  // 2) 否则在 CF Pages(海外 peer.as / *.pages.dev) 或 GeoDNS 已把 peer.as 解到 CN 机器:
-  //    探 /cdn-cgi/trace(CF 边缘特性)。CN 机器无此 -> 解析不出 loc -> 当作非 CN -> 同源(本机即 CN, 快)。
-  let loc = null
+  // 2) 否则: 探 /cdn-cgi/trace 判断当前在 Cloudflare 还是 CN 加速机。
+  //    CF 上: 200 + 含 loc=XX。CN 加速机(GeoDNS 把 peer.as 解到本机)/本地 serve: 无此端点 -> 404。
+  let onCF = false, loc = null
   try {
     const r = await fetchT('/cdn-cgi/trace', { cache: 'no-store' }, 1200)
-    if (r.ok) loc = (/(?:^|\n)loc=([A-Z]{2})/.exec(await r.text()) || [])[1]
-  } catch { /* 无 trace -> 当作非 CN(同源) */ }
-  if (loc === 'CN') {                       // 确在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
+    if (r.ok) { onCF = true; loc = (/(?:^|\n)loc=([A-Z]{2})/.exec(await r.text()) || [])[1] }
+    // r 收到但非 200(典型 404) -> onCF 保持 false -> 判定走了 CN 加速机(见下)。
+  } catch { /* 网络错误(非 404 响应): 含糊, 不强判, 保持 CF 默认 */ onCF = null }
+  if (onCF === false) {
+    // /cdn-cgi/trace 明确 404(收到响应但非 200) => 不在 Cloudflare => GeoDNS 已把 peer.as 解到 CN 加速机
+    // (或本地 serve)。数据/wasm 同源(本机即正确源, /duckdb 在本机, 缺则 cachedBlobURL 回退 jsDelivr);
+    // edge=cn 让 UI 显示「中国优化服务器」赞助提示。
+    DUCK_SRC = SAME_DUCK; edge = 'cn'
+  } else if (onCF && loc === 'CN') {        // 在 CF Pages 且身处境内(GeoDNS 没生效, 拿到 CF IP)
     try {                                   // 健康探测 CN 机器: 通了才切数据+wasm, 失败保持同源 CF/jsDelivr(回退)。
       const r = await fetchT(`${CN_ORIGIN}/data/meta.json`, { cache: 'no-store' }, 2000)
       if (r.ok) { DATA = `${CN_ORIGIN}/data`; DUCK_SRC = `${CN_ORIGIN}/duckdb`; edge = 'cn' }
     } catch { /* CN 机器不可达 -> 同源 CF 回退 */ }
   }
+  // else: onCF && loc!=CN (海外 CF), 或 onCF===null(网络错误) -> 同源, edge='cf'
   return edge
 }
 
@@ -63,7 +70,8 @@ export async function getJSON(url, opts) {
 export async function getData(path, opts) {
   try { return await getJSON(`${DATA}${path}`, opts) }
   catch (e) {
-    if (DATA !== CF_DATA) { DATA = CF_DATA; DUCK_SRC = null; edge = 'cf'; return await getJSON(`${CF_DATA}${path}`, opts) }
+    // 数据源(可能是 cn.peer.as)取数失败 -> 整体回退同源(CF Pages / 本机)。
+    if (DATA !== SAME) { DATA = SAME; DUCK_SRC = null; edge = 'cf'; return await getJSON(`${SAME}${path}`, opts) }
     throw e
   }
 }

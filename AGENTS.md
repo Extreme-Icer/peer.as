@@ -91,6 +91,29 @@
 
 ---
 
+## 站点 Profile / Feature Flags（多站点维护：peer.as + dn42）
+
+本代码库可服务多个站点（`peeras` = 全球公网 PEER.AS；`dn42` = dn42 fork，无地理）。**维护铁律：站点差异
+一律用「配置开关关成 no-op」实现，绝不靠删代码分叉**——这样主站演进时 dn42 永不冲突，「改一处两边同步」才成立。
+
+- **后端**：`ipcollect/profile.py` 定义 `PROFILES`（每站一套开关）+ `features(cfg)` 访问器。
+  `config.json` 的 `"site"`（默认 `"peeras"`）选定 profile；`"features": {...}` 可逐项覆盖单个开关（无需换 site）。
+  **`peeras` = 现状全开**；新增任何开关，其 peeras 默认值**必须复现当前行为**（否则即回归）。
+- **开关清单**（`profile.py`）：`geo`（geo 管线总开关：geoip ensure/build、export carve + 国家 SSG、前端地区导航）、
+  `cn_mirror`（部署 cn.peer.as 镜像）、`whois`（前端 whois 后端 rdap/registry，**Phase2 前端接线**）。
+- **已接线的接缝**（peeras 默认值下行为不变，已实测一致）：
+  - `mrt.py` ingest：`features["geo"]` 为假则跳过 GeoLite/geo 构建。
+  - `parquet_export.py`：`geo_on = features["geo"]`；为假时 pgeo 不连 geo（cc/省/市 NULL→下游 `'ZZ'`）、跳过 carve
+    `_carve_geo_dirs`、无 geo 目录、无国家/城市 meta、无国家 SSG。**carve 已抽成 `_carve_geo_dirs` 单独函数**（geo profile 才调）。
+  - `scripts/deploy.sh`：开头算 `CN_MIRROR`（读 profile，失败回退 1）；为 0 时跳过 `deploy_cn` 与 cn.peer.as 校验。
+  - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns）。
+    **Phase 1 仅落地此模块，组件尚未接线**（地区导航/RDAP/DNS 去留 = Phase 2 实现 dn42 前端时做）。
+- **dn42 待做（Phase 2，尚未实现）**：registry/RPSL 采集模块（ASN 名 + whois 对象 + ROA）、MRT 源切到 dn42 GRC
+  （单采集点 + bz2）、export 无 geo 路径的产物形态打磨（按 ASN 导航/SSG）、前端组件按 `site.features` 接线、
+  dn42.peer.as 仅 CF Pages 部署。
+
+---
+
 ## 数据维护流程
 
 ### 0) geo 库（**通常不用手动跑** —— ingest 会自动检查 GeoLite 是否过期并按需重建 geo）

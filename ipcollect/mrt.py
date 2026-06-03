@@ -374,18 +374,23 @@ def ingest(
         store.reset(con)
 
     # geo 跟随 ingest: 检查 GeoLite 是否过期(过期才下), 首次或 GeoLite 更新时重建 geo(否则复用, geo 不随 reset 清)。
-    try:
-        from . import geoip
-        rel = geoip.ensure_geolite(cfg)
-        has_geo = con.execute(
-            "SELECT count(*) FROM information_schema.tables WHERE table_name='geo'").fetchone()[0]
-        if not has_geo or store.get_meta(con, "geo_tag") != (rel.get("tag") or ""):
-            geoip.build_geo(con, cfg, rel)
-            store.set_meta(con, "geo_tag", rel.get("tag") or "")
-        else:
-            util.log(f"  geo 复用(GeoLite {rel.get('tag')} 未变)")
-    except Exception as e:  # noqa: geo 失败不阻断 ingest(导出时 geo 缺则前缀 cc=ZZ)
-        util.log(f"  ! geo 准备失败({e}); 继续 ingest", err=True)
+    # profile 关了 geo(dn42 无地理)则整段跳过。peeras 默认 geo=True => 行为不变。
+    from . import profile
+    if profile.features(cfg)["geo"]:
+        try:
+            from . import geoip
+            rel = geoip.ensure_geolite(cfg)
+            has_geo = con.execute(
+                "SELECT count(*) FROM information_schema.tables WHERE table_name='geo'").fetchone()[0]
+            if not has_geo or store.get_meta(con, "geo_tag") != (rel.get("tag") or ""):
+                geoip.build_geo(con, cfg, rel)
+                store.set_meta(con, "geo_tag", rel.get("tag") or "")
+            else:
+                util.log(f"  geo 复用(GeoLite {rel.get('tag')} 未变)")
+        except Exception as e:  # noqa: geo 失败不阻断 ingest(导出时 geo 缺则前缀 cc=ZZ)
+            util.log(f"  ! geo 准备失败({e}); 继续 ingest", err=True)
+    else:
+        util.log("  geo: profile 已关闭(无地理), 跳过 GeoLite/geo 构建")
 
     def keep_pred(start: int, end: int, fam: int) -> bool:
         return (family is None) or (fam == family)

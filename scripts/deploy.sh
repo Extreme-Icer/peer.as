@@ -44,7 +44,11 @@ mkdir -p "$PROJ/logs"
 exec 9>"$PROJ/logs/deploy.lock"
 if ! flock -n 9; then log "另一次 deploy 仍在运行，退出。"; exit 0; fi
 
-log "deploy 开始: data=$WITH_DATA build=$DO_BUILD target=$TARGET"
+# 站点 profile 的 cn_mirror 开关(见 ipcollect/profile.py): peeras=1(部署 cn.peer.as 镜像); dn42=0(只上 CF)。
+# 任何读取失败都回退 1(保守: 维持现状部署两端)。
+CN_MIRROR="$("$PROJ/.venv/bin/python" -c 'from ipcollect import config, profile; print("1" if profile.features(config.load())["cn_mirror"] else "0")' 2>/dev/null || echo 1)"
+
+log "deploy 开始: data=$WITH_DATA build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR"
 
 # ── 1) 数据（可选）──────────────────────────────────────────────────────────
 if [ "$WITH_DATA" = 1 ]; then
@@ -97,7 +101,7 @@ deploy_cf(){
   rmdir "$HOLD" 2>/dev/null || true
   return $rc
 }
-[ "$TARGET" != cf ] && deploy_cn
+{ [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && deploy_cn
 [ "$TARGET" != cn ] && deploy_cf
 
 # ── 4) 部署后轻量校验（防回归：两端入口一致 + CN wasm 自托管）─────────────────
@@ -107,10 +111,11 @@ verify(){
   for h in peer.as cn.peer.as; do
     { [ "$TARGET" = cf ] && [ "$h" = cn.peer.as ]; } && continue
     { [ "$TARGET" = cn ] && [ "$h" = peer.as ]; } && continue
+    { [ "$CN_MIRROR" != 1 ] && [ "$h" = cn.peer.as ]; } && continue
     local got; got="$(curl -fsS --max-time 15 "https://$h/" 2>/dev/null | grep -o 'assets/index-[^\"]*\.js' | head -1 || true)"
     if [ "$got" = "$le" ]; then log "校验: ✓ $h 入口一致"; else log "校验: ⚠ $h 入口=${got:-空}（缓存/传播中?需复查）"; fi
   done
-  if [ "$TARGET" != cf ]; then
+  if [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; then
     local w; w="$(ls "$PROJ"/dist/assets/duckdb-eh-*.wasm 2>/dev/null | head -1 | xargs -r basename || true)"
     if [ -n "$w" ]; then
       local ct; ct="$(curl -fsSI --max-time 20 "https://cn.peer.as/assets/$w" 2>/dev/null | grep -i '^content-type:' | tr -d '\r' || true)"

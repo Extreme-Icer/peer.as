@@ -119,6 +119,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "autnums_url": "https://thyme.apnic.net/current/data-used-autnums",
     # 站点根 URL(SEO canonical/sitemap 用)
     "site_base": "https://peer.as",
+
+    # 站点 profile: 选定一套特性开关(见 profile.py)。"peeras"=全球公网(现状全开); "dn42"=dn42 fork(无 geo)。
+    # 单个开关可用 "features": {"geo": false, ...} 逐项覆盖(无需换 site)。**默认 peeras = 当前行为, 勿改**。
+    "site": "peeras",
 }
 
 

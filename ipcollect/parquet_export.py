@@ -24,7 +24,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import bgp, geoip, util
+from . import bgp, geoip, profile, util
 
 
 def _subtract(s: int, e: int, holes: list) -> list[tuple]:
@@ -180,9 +180,55 @@ def _segments_duck(con, cfg: dict, family: int, gindex) -> list[tuple]:
 
 
 # ----------------------------------------------------------------------------
+# geo working-set 导出(carve 切段 -> 逐国家 parquet) —— 仅 geo profile(peeras)用; dn42 不调。
+# ----------------------------------------------------------------------------
+def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: str) -> tuple[list, int]:
+    """geo{geodir}/<cc>: carve 切段 -> seg 表 -> 每 (cc,city,pid) 一行 segs + paths_blob + prefix, 逐国家写。
+    返回 (ccs, n_segs)。依赖已建好的 pp{suffix} 表(每前缀 paths_blob/best_path)。"""
+    gindex = geoip.GeoIndexDuck(con, family)
+    util.log(f"  geo v{family}: carve 切段(算 CIDR)...")
+    segs = _segments_duck(con, cfg, family, gindex)   # 每行已是一个 (pid,cc,city) + 空格分隔 CIDR 串
+    seg_csv = os.path.join(tempfile.gettempdir(), f"ipc_seg_{family}_{os.getpid()}.csv")
+    with open(seg_csv, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(segs)
+    con.execute("DROP TABLE IF EXISTS seg;")
+    con.execute(f"""
+        CREATE TABLE seg AS SELECT
+            column0::BIGINT AS pid, column1 AS cc, nullif(column2,'') AS province,
+            nullif(column3,'') AS city,
+            string_split(column4, ' ') AS segs,            -- list<varchar> CIDR(精度安全, 前端直接显示)
+            column5::BIGINT AS plen, column6::BIGINT AS origin_asn, column7::BIGINT AS n_paths
+        FROM read_csv('{seg_csv}', header=false, auto_detect=false,
+            columns={{'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR','column3':'VARCHAR',
+                      'column4':'VARCHAR','column5':'VARCHAR','column6':'VARCHAR','column7':'VARCHAR'}});
+    """)
+    os.remove(seg_csv)
+    con.execute("DROP TABLE IF EXISTS geo_full;")
+    con.execute(f"""
+        CREATE TABLE geo_full AS
+        SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn, g.n_paths,
+               g.segs, pp.paths_blob, pp.best_path
+        FROM seg g
+        LEFT JOIN pp{suffix} pp ON pp.pid = g.pid
+        LEFT JOIN prefix pfx ON pfx.pid = g.pid;
+    """)
+    (pq / geodir).mkdir(parents=True, exist_ok=True)
+    ccs = [r[0] for r in con.execute(
+        "SELECT DISTINCT cc FROM geo_full WHERE cc IS NOT NULL ORDER BY cc").fetchall()]
+    util.log(f"  geo v{family}: 逐国家写出 {len(ccs)} 个...")
+    for cc in ccs:
+        con.execute(f"""
+            COPY (SELECT * FROM geo_full WHERE cc='{cc}' ORDER BY city NULLS FIRST, n_paths DESC)
+            TO '{pq}/{geodir}/{cc}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}',
+                  ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
+        """)
+    return ccs, len(segs)
+
+
+# ----------------------------------------------------------------------------
 # 单 family 导出
 # ----------------------------------------------------------------------------
-def _export_family(con, cfg: dict, pq: Path, family: int) -> dict:
+def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -> dict:
     suffix = "" if family == 4 else "_v6"
     iptype = "BIGINT" if family == 4 else "UHUGEINT"
     geodir = "geo" if family == 4 else "geo_v6"
@@ -231,44 +277,11 @@ def _export_family(con, cfg: dict, pq: Path, family: int) -> dict:
         FROM read_parquet('{pq}/paths{suffix}/*.parquet') GROUP BY pid;
     """)
 
-    # geo{geodir}/<cc>: carve 切段 -> seg 表 -> 每 (cc,city,pid) 一行 segs + paths_blob + prefix, 逐国家写。
-    gindex = geoip.GeoIndexDuck(con, family)
-    util.log(f"  geo v{family}: carve 切段(算 CIDR)...")
-    segs = _segments_duck(con, cfg, family, gindex)   # 每行已是一个 (pid,cc,city) + 空格分隔 CIDR 串
-    seg_csv = os.path.join(tempfile.gettempdir(), f"ipc_seg_{family}_{os.getpid()}.csv")
-    with open(seg_csv, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows(segs)
-    con.execute("DROP TABLE IF EXISTS seg;")
-    con.execute(f"""
-        CREATE TABLE seg AS SELECT
-            column0::BIGINT AS pid, column1 AS cc, nullif(column2,'') AS province,
-            nullif(column3,'') AS city,
-            string_split(column4, ' ') AS segs,            -- list<varchar> CIDR(精度安全, 前端直接显示)
-            column5::BIGINT AS plen, column6::BIGINT AS origin_asn, column7::BIGINT AS n_paths
-        FROM read_csv('{seg_csv}', header=false, auto_detect=false,
-            columns={{'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR','column3':'VARCHAR',
-                      'column4':'VARCHAR','column5':'VARCHAR','column6':'VARCHAR','column7':'VARCHAR'}});
-    """)
-    os.remove(seg_csv)
-    con.execute("DROP TABLE IF EXISTS geo_full;")
-    con.execute(f"""
-        CREATE TABLE geo_full AS
-        SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn, g.n_paths,
-               g.segs, pp.paths_blob, pp.best_path
-        FROM seg g
-        LEFT JOIN pp{suffix} pp ON pp.pid = g.pid
-        LEFT JOIN prefix pfx ON pfx.pid = g.pid;
-    """)
-    (pq / geodir).mkdir(parents=True, exist_ok=True)
-    ccs = [r[0] for r in con.execute(
-        "SELECT DISTINCT cc FROM geo_full WHERE cc IS NOT NULL ORDER BY cc").fetchall()]
-    util.log(f"  geo v{family}: 逐国家写出 {len(ccs)} 个...")
-    for cc in ccs:
-        con.execute(f"""
-            COPY (SELECT * FROM geo_full WHERE cc='{cc}' ORDER BY city NULLS FIRST, n_paths DESC)
-            TO '{pq}/{geodir}/{cc}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}',
-                  ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
-        """)
+    # geo working-set(carve 切段 + 逐国家 parquet): 仅 geo profile。dn42(geo_on=False)整段跳过, 无 geo 目录。
+    if geo_on:
+        ccs, n_segs = _carve_geo_dirs(con, cfg, pq, family, suffix, geodir)
+    else:
+        ccs, n_segs = [], 0
 
     # pathsearch{suffix}: 全表一行/前缀, 按 origin_asn 排序(单线程顺序写 -> 每文件连续 origin 区间)。
     (pq / f"pathsearch{suffix}").mkdir(parents=True, exist_ok=True)
@@ -291,7 +304,7 @@ def _export_family(con, cfg: dict, pq: Path, family: int) -> dict:
     dfz_ref = con.execute(
         "SELECT quantile_cont(n_paths, 0.9) FROM prefix WHERE family=?", [family]).fetchone()[0] or 1
     return {"suffix": suffix, "geodir": geodir, "ccs": ccs, "n_prefix": int(n_prefix),
-            "n_paths": int(n_paths), "n_segs": len(segs), "dfz_ref": int(round(dfz_ref))}
+            "n_paths": int(n_paths), "n_segs": n_segs, "dfz_ref": int(round(dfz_ref))}
 
 
 # ----------------------------------------------------------------------------
@@ -308,22 +321,35 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
 
     n_files = copy_web(out_dir)
 
+    geo_on = profile.features(cfg)["geo"]   # peeras=True(现状); dn42=False(无地理: pgeo 不连 geo, 无国家 SSG)
+
     # 代表 geo(每前缀网络地址点查, geo 非重叠 -> ASOF 取 start<=ip_start 的最近段, 再校验 <=end)。
+    # geo 关闭时(无 geo 表)退化为不连地理的 pgeo(cc/province/city 全 NULL), 下游 COALESCE 成 'ZZ'。
     con.execute("DROP TABLE IF EXISTS pgeo;")
-    con.execute("""
-        CREATE TABLE pgeo AS
-        SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
-               p.origin_asn, p.n_origins, p.n_paths,
-               CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.cc END AS cc,
-               CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.province END AS province,
-               CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.city END AS city
-        FROM prefix p
-        ASOF LEFT JOIN geo g ON p.family = g.family AND p.ip_start >= g.start_num;
-    """)
+    if geo_on:
+        con.execute("""
+            CREATE TABLE pgeo AS
+            SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
+                   p.origin_asn, p.n_origins, p.n_paths,
+                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.cc END AS cc,
+                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.province END AS province,
+                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.city END AS city
+            FROM prefix p
+            ASOF LEFT JOIN geo g ON p.family = g.family AND p.ip_start >= g.start_num;
+        """)
+    else:
+        con.execute("""
+            CREATE TABLE pgeo AS
+            SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
+                   p.origin_asn, p.n_origins, p.n_paths,
+                   CAST(NULL AS VARCHAR) AS cc, CAST(NULL AS VARCHAR) AS province,
+                   CAST(NULL AS VARCHAR) AS city
+            FROM prefix p;
+        """)
 
     families = [r[0] for r in con.execute(
         "SELECT DISTINCT family FROM prefix ORDER BY family").fetchall()]
-    fam_results = {f: _export_family(con, cfg, pq, f) for f in families}
+    fam_results = {f: _export_family(con, cfg, pq, f, geo_on) for f in families}
 
     # ASN 名称(APNIC autnums + 注册表) + org(asn_dim), 只留数据里出现过的 ASN。
     autnums = _autnums(cfg.get("autnums_url") or "https://thyme.apnic.net/current/data-used-autnums")
@@ -401,22 +427,26 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files[f"pathsearch_origin{suf}"] = _origin_index(files[f"pathsearch{suf}"])
         files[("geo" if f == 4 else "geo_v6")] = {cc: _rel(f"{gd}/{cc}") for cc in r["ccs"]}
 
-    # 国家清单(union 两 family) + 双语名(country_dim)
-    countries = [{"cc": r[0], "n_prefix": int(r[1])} for r in con.execute(
-        "SELECT COALESCE(cc,'ZZ') cc, count(*) c FROM pgeo WHERE cc IS NOT NULL GROUP BY 1 ORDER BY c DESC").fetchall()]
-    cn_rows = con.execute("SELECT cc, name_zh, name_en FROM country_dim").fetchall()
-    country_names = {r[0]: r[1] for r in cn_rows if r[1]}
-    country_names_en = {r[0]: r[2] for r in cn_rows if r[2]}
-
-    # focus 国家的城市清单(侧栏导航)
-    focus_cc = sorted(_focus_countries(cfg))
-    cities = {}
-    # 城市统计从 v4 seg 难取(seg 表已被 v6 覆盖); 改从 pgeo 的代表 city 取(够导航用)。
-    for cc in focus_cc:
-        rows = con.execute(
-            "SELECT city, count(*) c FROM pgeo WHERE cc=? AND city IS NOT NULL GROUP BY city ORDER BY c DESC", [cc]).fetchall()
-        if rows:
-            cities[cc] = [{"name": r[0], "n_prefix": int(r[1])} for r in rows]
+    # 国家清单(union 两 family) + 双语名(country_dim) + focus 国家城市清单(侧栏导航)。
+    # geo 关闭(dn42)则全空 —— 无 country_dim 表、无地理可言。
+    countries: list = []
+    country_names: dict = {}
+    country_names_en: dict = {}
+    focus_cc: list = []
+    cities: dict = {}
+    if geo_on:
+        countries = [{"cc": r[0], "n_prefix": int(r[1])} for r in con.execute(
+            "SELECT COALESCE(cc,'ZZ') cc, count(*) c FROM pgeo WHERE cc IS NOT NULL GROUP BY 1 ORDER BY c DESC").fetchall()]
+        cn_rows = con.execute("SELECT cc, name_zh, name_en FROM country_dim").fetchall()
+        country_names = {r[0]: r[1] for r in cn_rows if r[1]}
+        country_names_en = {r[0]: r[2] for r in cn_rows if r[2]}
+        # 城市统计从 v4 seg 难取(seg 表已被 v6 覆盖); 改从 pgeo 的代表 city 取(够导航用)。
+        focus_cc = sorted(_focus_countries(cfg))
+        for cc in focus_cc:
+            rows = con.execute(
+                "SELECT city, count(*) c FROM pgeo WHERE cc=? AND city IS NOT NULL GROUP BY city ORDER BY c DESC", [cc]).fetchall()
+            if rows:
+                cities[cc] = [{"name": r[0], "n_prefix": int(r[1])} for r in rows]
 
     n_prefix_total = sum(fam_results[f]["n_prefix"] for f in families)
     n_paths_total = sum(fam_results[f]["n_paths"] for f in families)
@@ -458,9 +488,12 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     data.mkdir(parents=True, exist_ok=True)
     (data / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
-    # SSG(SEO 落地页) —— 读 pgeo(代表 cc)取各国 top origin。
-    from . import ssg
-    n_ssg = ssg.generate(out, meta, con, asnames)
+    # SSG(SEO 落地页) —— 读 pgeo(代表 cc)取各国 top origin。geo 关闭(dn42)则无国家落地页(Phase2 改按 ASN)。
+    if geo_on:
+        from . import ssg
+        n_ssg = ssg.generate(out, meta, con, asnames)
+    else:
+        n_ssg = 0
 
     total_bytes = sum(p.stat().st_size for p in pq.rglob("*.parquet"))
     n_pqfiles = sum(1 for _ in pq.rglob("*.parquet"))

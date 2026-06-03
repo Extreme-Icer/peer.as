@@ -1,5 +1,5 @@
 <script>
-  import { truncToTier1, opOf, opCls, asnName, TIER1 } from '../lib/bgp.js'
+  import { truncToTier1, opOf, asnName, TIER1 } from '../lib/bgp.js'
   import { showAsn } from '../lib/queries.js'
   let { rec } = $props()
   const go = asn => showAsn(asn)
@@ -41,7 +41,7 @@
     }
     const boxes = arr.map(asn => ({
       x: pos[asn].x, y: pos[asn].y, asn, origin: asn === origin,
-      t1: TIER1.has(asn), name: asnName(asn), cls: opCls(asn),
+      t1: TIER1.has(asn), name: asnName(asn),
     }))
     return { W, H, edges, boxes }
   }
@@ -53,7 +53,7 @@
     <svg viewBox="0 0 {g.W} {g.H}" width={g.W} height={g.H} class="pathsvg">
       {#each g.edges as e}<path d={e.d} class={e.cls} stroke-width={e.sw} fill="none" />{/each}
       {#each g.boxes as b}
-        <g class="gnode nav {b.cls}" class:origin={b.origin} class:tier1={b.t1}
+        <g class="gnode nav" class:origin={b.origin} class:tier1={b.t1}
           role="button" tabindex="0" aria-label="AS{b.asn}"
           onclick={() => go(b.asn)} onkeydown={(e) => goKey(e, b.asn)}>
           <rect x={b.x - NW / 2} y={b.y - NH / 2} width={NW} height={NH} rx="5" />
@@ -70,15 +70,15 @@
   .pathsvg { display: block; max-width: none; }
   :global(.gedge) { stroke: var(--muted); opacity: .4; fill: none; }
   :global(.gmain) { stroke: var(--accent); opacity: .8; }
-  .gnode rect { fill: var(--bg); stroke: var(--c, var(--muted)); stroke-width: 1.4; }
+  /* 统一着色: 非 Tier-1 一律中性色, 仅 Tier-1(下方覆盖)与 origin 上色 */
+  .gnode rect { fill: var(--bg); stroke: var(--muted); stroke-width: 1.4; }
   .gnode.nav { cursor: pointer; }
   .gnode.nav:hover rect { stroke: var(--accent); stroke-width: 2.2; }
   .gnode.nav:focus-visible { outline: none; }
   .gnode.nav:focus-visible rect { stroke: var(--accent); stroke-width: 2.6; }
-  .gnode :global(.gas) { font: 700 11px var(--mono); fill: var(--c, var(--fg)); text-anchor: middle; dominant-baseline: middle; }
+  .gnode :global(.gas) { font: 700 11px var(--mono); fill: var(--fg); text-anchor: middle; dominant-baseline: middle; }
   .gnode :global(.gnm) { font: 10px var(--sans); fill: var(--muted); text-anchor: middle; }
-  .gnode.tier1 rect { stroke-width: 2.6; }
+  .gnode.tier1 rect { stroke: var(--signal); stroke-width: 2.6; }
+  .gnode.tier1 :global(.gas) { fill: var(--signal); }
   .gnode.origin rect { fill: color-mix(in srgb, var(--accent) 14%, var(--bg)); stroke: var(--accent); stroke-width: 2; }
-  .gnode.gprefix rect { fill: var(--accent); stroke: var(--accent); }
-  .gnode.gprefix :global(.gas) { fill: var(--accent-fg); }
 </style>

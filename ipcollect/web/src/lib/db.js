@@ -184,6 +184,15 @@ export async function initDuck() {
   const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
   db = new duckdb.AsyncDuckDB(logger, worker)
   await db.instantiate(wasmUrl, picked.pthreadWorker)
+  // 全 GET 模式: 关掉 duckdb-wasm 读 parquet 前的 HEAD(取大小/Range 支持)与 Range 探测,
+  // 每个分片只发一条普通 GET(200, 无 Range 头) —— 直接整片下。我们的分片是手工小分片 + 文件级
+  // 区间裁剪(prefixes_ip/pathsearch_origin 等), 本就不依赖 duckdb 的 Range 部分读; 整片 GET 让
+  // 不可变 ?v= URL 100% 落浏览器磁盘缓存(max-age=1y), 二次访问/重复查询零网络, 且消灭首屏串行
+  // HEAD RTT 链。forceFullHTTPReads 需配 allowFullHTTPReads=true(否则全 GET 分支不执行)。
+  await db.open({
+    path: ':memory:',
+    filesystem: { reliableHeadRequests: false, allowFullHTTPReads: true, forceFullHTTPReads: true },
+  })
   URL.revokeObjectURL(workerUrl)
   URL.revokeObjectURL(wasmUrl)   // instantiate 已读完 wasm, 释放 blob
   conn = await db.connect()

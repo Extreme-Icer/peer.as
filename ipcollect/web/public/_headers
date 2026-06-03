@@ -1,9 +1,10 @@
-# Cloudflare Pages: enable HTTP Range (206) + edge caching for DuckDB-WASM.
-# CF only serves Range from its edge cache; the Pages default
-# `cache-control: public, max-age=0, must-revalidate` makes assets uncacheable,
-# so partial Parquet reads fall back to full-file downloads. Mark assets cacheable.
-# NOTE: Range/206 + edge cache apply on the custom domain (peer.as, full CF CDN);
-# *.pages.dev streams from the Pages asset router and may still return 200.
+# Cloudflare Pages: edge + browser caching for DuckDB-WASM data shards.
+# The Pages default `cache-control: public, max-age=0, must-revalidate` makes
+# assets uncacheable; mark the data dirs cacheable so they persist.
+# NOTE: the frontend runs DuckDB in full-GET mode (db.js forceFullHTTPReads) —
+# each shard is a single plain GET (200, no Range/HEAD), so it lands 100% in the
+# browser HTTP cache (and CF edge) and revisits are zero-network. We no longer
+# rely on CF edge Range/206 partial reads (which only worked on the custom domain).
 
 # Vite-hashed JS/CSS — filename carries a content hash → safe to cache forever.
 /assets/*

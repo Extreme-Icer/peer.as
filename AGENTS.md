@@ -7,7 +7,7 @@
 本项目 = 自研 CLI `ipc`（python 包 `ipcollect/`，用同目录 `.venv`）+ 纯静态 Web 看板
 **PEER.AS（全球版 BGP Insights）**。从 RIPE **rrc01+rrc06** 双采集点 MRT **全表(IPv4+IPv6)** 静态分析回程 AS_PATH，
 **入库 = 全球全部 v4+v6 前缀**（不按 ASN/国家过滤，focus_* 仅作高亮/导航），用 **DuckDB 工作库**去重，导出
-**Parquet** 数据集（v4 + v6 两套），**DuckDB-WASM 在浏览器里发 HTTP Range 查询**（无后端），部署到 Cloudflare Pages。
+**Parquet** 数据集（v4 + v6 两套），**DuckDB-WASM 在浏览器里查询静态 Parquet**（全 GET 整片下载、无 Range，无后端），部署到 Cloudflare Pages。
 **重构细节见 `docs/DUCKDB_V6_REFACTOR.md`（DuckDB+v6 设计契约, 含踩坑记录), 旧版见 `docs/GLOBAL_DESIGN.md`。**
 
 > 规模实测(2026-06 rrc01+rrc06)：**1.10M v4 + 0.26M v6 前缀 / 50.3M 去重路径**。
@@ -235,12 +235,12 @@ meta.json 最后传)、CF `wrangler pages deploy`(临时移出 >25MiB wasm、部
 - **凭据**：CF account id / API token 通过环境变量(`CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN`)
   或 `wrangler login` 提供；`.wrangler/` 与 `.env` 均已 gitignore，**不得写进提交文件**。
 - 前端是 Vite+Svelte 编译产物(`web/dist/`)拷进 `dist/`；CF Pages 侧无构建命令；`./ipc serve` 仅本地 debug。
-- **HTTP Range / 缓存（关键）**：DuckDB-WASM 靠 HTTP Range 部分读 Parquet。CF **只对命中边缘缓存的资源回 206**；
-  Pages 默认给所有资源发 `cache-control: max-age=0, must-revalidate`（不可缓存）⇒ Range 退化成整文件下载。
-  修复：`web/public/_headers`（Vite 拷进 `dist/`）把 `/assets/*` 与 `/data/parquet|prefixes/*` 设长缓存(可缓存才有 Range)、
+- **全 GET / 缓存（关键）**：前端跑**全 GET 模式**(`db.js` `forceFullHTTPReads`，详见下「中国优化」)，每个 parquet
+  分片只发一条普通 `GET`(200, 无 HEAD/无 Range)。**不再依赖 CF 边缘 Range/206**(那只在自定义域名 `peer.as` 生效、
+  `*.pages.dev` 常回 200 全量)——本就用不到 Range 部分读(裁剪在文件级做)。关键是让这些 200 响应**可长期缓存**:
+  `web/public/_headers`（Vite 拷进 `dist/`）把 `/assets/*` 与 `/data/parquet|prefixes/*` 设长缓存(max-age=1y)、
   `/data/meta.json` 设 `no-cache`、`/data/asnames.json` 长缓存(显式列, 别用 `/data/*.json` 否则会和 meta.json 规则叠加)。
-  **`*.pages.dev` 走 Pages 资源路由、可能仍回 200 全量**（实测全表搜索因此较慢）；
-  **Range/边缘缓存在自定义域名 `peer.as`（走完整 CF CDN）上才生效**。改 `_headers` 后重新 deploy 即可（其余文件秒级跳过）。
+  200 + 不可变 `?v=` URL + 长缓存 ⇒ **100% 落浏览器磁盘缓存**，二次访问/会话内重复查询零网络。改 `_headers` 后重新 deploy 即可。
 - **数据版本 / 缓存失效（关键）**：parquet/json 路径固定(`prefixes/data_4.parquet`)但内容每次 export 都变 ⇒ 固定 URL +
   长缓存会让浏览器/CDN 读到**过期分片**(曾导致高位 prefix 搜不到、隐私窗口却能搜到)。修复：`meta.version`=文件清单+计数+ts
   的 sha1 短哈希；前端 `dv()`(db.js) 把 `?v=<version>` 拼到**所有** parquet/asnames URL 上(经 `rpList`)，数据一变 version
@@ -312,12 +312,13 @@ JS API 经 `await import('@duckdb/duckdb-wasm')` 打成**同源惰性 chunk**(`d
 **首装后每次加载/F5 本地命中、零跨境**。键与宿主无关(`__duckdbwasm__/<variant>.*`),缓存名带版本
 (`duckdb-wasm-<ver>-r3`)、升级 duckdb 自动弃旧。**Service Worker**(`public/sw.js`,VERSION 入 cache 名)只缓存同源壳
 (HTML network-first 防陈旧 hash、`/assets/*` cache-first)，**放行 `*.wasm`/`*.worker-*.js`**(由 Cache Storage 管)与 /data GET、跨源。
-**+ /data HEAD 缓存(关键性能, sw.js `headCached`)**:duckdb-wasm 读 parquet 前会发**同步 XHR 的 HEAD** 取文件大小/Range
-支持(~200ms RTT, **顺序阻塞**, 内部 `enable_http_metadata_cache` 只在同会话内有效、刷新即失效)。SW 把首个真实 HEAD 的关键头
-(content-length/accept-ranges/content-range/etag…)存进 `data-head-<VERSION>` Cache(因 Cache API 不收 HEAD 请求, 用
-**GET 合成键** `<url>&__head=1`、状态归一成 200——Cache 拒收 206), 之后同 URL 的 HEAD 本地秒回(省 ~0.6~1s)。文件 URL 带
-`?v=<数据版本>` immutable, 故同 URL 大小永不变可安全缓存; 写入时清掉同名文件旧 `?v=` 条目(防 daily 刷新堆积)。**任何异常都
-回退网络**(绝不破坏数据加载); 若 SW 未拦截 blob worker 的同步 XHR(取决于浏览器), 则该 handler 是无害空操作。
+**+ 全 GET 模式(关键性能, db.js `db.open({filesystem:{forceFullHTTPReads:true, allowFullHTTPReads:true, reliableHeadRequests:false}})`)**:
+duckdb-wasm **默认**读 parquet 前发**同步 XHR 的 HEAD** 取文件大小/Range 支持(~200ms RTT, **顺序阻塞**, 内部
+`enable_http_metadata_cache` 只在同会话内有效、刷新即失效) + 再发 Range GET。我们用不到 Range 部分读(分片裁剪已在
+**文件级**做掉, 见下「数据分发」), 故开 `forceFullHTTPReads`(**需配 `allowFullHTTPReads:true`, 否则全 GET 分支不执行**)让
+**每个分片只发一条普通 GET(200, 无 HEAD/无 Range)** → 消灭首屏串行 HEAD RTT 链; 且 200 + 不可变 `?v=` URL + `_headers`
+长缓存(max-age=1y) ⇒ **100% 落浏览器磁盘缓存**, 二次访问/会话内重复查询零网络。**故 SW 不再需要 HEAD 缓存 hack**:
+旧 `headCached`/`data-head-<VERSION>` Cache 已删, VERSION→`v4` 时 activate 顺带清掉历史 `data-head-*` 缓存。
 **坏缓存防护(踩过坑)**:① `fetch` 一律 `{cache:'no-store'}` —— 否则 immutable 大 wasm 进浏览器 HTTP 缓存易截断/失败,
 plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes()` 字节级校验(wasm magic `00 61 73 6d`/worker 非空非 HTML),
 读写 Cache Storage 都校验, 命中坏条目即 `cache.delete` 重取(自愈)。两者 + cache 名 bump 共同根治 SPA-200 HTML / 空 / 截断毒化。
@@ -392,7 +393,7 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
 ---
 
 ## 前端要点（`web/` Svelte 源；改完要 `npm run build` + `ipc export-parquet` 才进 dist）
-- DuckDB-WASM 在浏览器发 SQL over 远端 parquet(HTTP Range)。**BigInt**：q() 只降顶层；嵌套 list<struct>
+- DuckDB-WASM 在浏览器发 SQL over 远端 parquet(**全 GET 整片下载**, 无 Range; 见「中国优化」全 GET 模式)。**BigInt**：q() 只降顶层；嵌套 list<struct>
   (segs.s/e)要 `Number()`。i18n zh/en(`Intl.DisplayNames` + STRINGS), `?lang/?cc/?city` 深链。
 - 搜索 = `geo/<cc>` 里 `paths_blob LIKE '% seq %'`(连续序列)；`best_path LIKE` 命中最优路径**置顶★**。
 - **国家可不选 = 全表搜索**(读 `pathsearch`, 一行/前缀)：AS_PATH(`paths_blob LIKE`, 全表扫、较慢) 或

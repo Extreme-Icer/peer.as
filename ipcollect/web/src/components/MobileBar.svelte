@@ -6,6 +6,7 @@
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog } from '../lib/icons.js'
+  import { brand } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -16,7 +17,7 @@
 </script>
 
 <header class="mbar">
-  <div class="logo"><span class="dot"></span>PEER<span class="hi">.AS</span></div>
+  <div class="logo"><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></div>
   <button class="menubtn" onclick={() => (S.menu = !S.menu)} aria-label={t('menu')} aria-expanded={S.menu}>
     <Fa icon={S.menu ? iClose : iMenu} />
   </button>

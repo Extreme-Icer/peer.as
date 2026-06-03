@@ -6,6 +6,7 @@
   import { t } from '../lib/i18n.js'
   import { registrableDomain } from '../lib/bgp.js'
   import { iGlobal } from '../lib/icons.js'
+  import { features } from '../lib/site.js'
   import Whois from './Whois.svelte'
 
   let d = $derived(S.domainView)
@@ -14,6 +15,8 @@
   // WHOIS/RDAP 查可注册域名(根域名): 子域名查 RDAP 通常无结果, 自动缩略到 eTLD+1。
   let root = $derived(d ? registrableDomain(d.domain) : '')
   let isSub = $derived(!!root && root !== d?.domain)
+  // whois 键: peeras(RDAP)用根域名; dn42(registry)用完整域名, 由 registry.js 逐级回退到登记的 zone。
+  let whoisKey = $derived(features.rdapWhois ? root : (d?.domain || ''))
 </script>
 
 {#if d}
@@ -27,12 +30,12 @@
     </div>
   {/if}
 
-  {#if isSub}
+  {#if isSub && features.rdapWhois}
     <div class="subnote">{t('whois_root_note')} <b>{root}</b></div>
   {/if}
 
-  <!-- WHOIS / RDAP（域名注册信息）—— 查可注册域名(根域名), 子域名 RDAP 通常无结果 -->
-  <Whois kind="domain" rkey={root} />
+  <!-- WHOIS（域名注册信息）—— peeras: RDAP 查根域名; dn42: registry 查域名 zone -->
+  <Whois kind="domain" rkey={whoisKey} />
 {/if}
 
 <style>

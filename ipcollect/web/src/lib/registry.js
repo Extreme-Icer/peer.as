@@ -9,7 +9,20 @@ function _placeholder(msg) {
   return { head: [], entities: [], remarks: [{ value: msg }], source: 'DN42 Registry', via: 'registry' }
 }
 
-// kind: 'autnum' -> 取 data/registry/autnum/AS<n>.json; 'ip'/'domain' -> dn42 v1 暂无(优雅占位, 不报错)。
+// 从完整域名逐级去掉最左标签, 找到 registry 里登记的那层 zone(子域名回退到上级)。
+async function _fetchDomain(name) {
+  let labels = name.split('.').filter(Boolean)
+  while (labels.length >= 1) {
+    try {
+      const m = await getData(`/registry/domain/${labels.join('.')}.json${dv()}`)
+      if (m && m.head) return m
+    } catch { /* 该层无登记, 试上一级 */ }
+    labels = labels.slice(1)
+  }
+  return _placeholder(`${name}: registry 无此域名`)
+}
+
+// kind: 'autnum' -> data/registry/autnum/AS<n>.json; 'domain' -> data/registry/domain/<zone>.json; 'ip' -> 暂无(占位)。
 export async function fetchRegistry(kind, key) {
   const ck = `${kind}:${key}`
   if (_cache.has(ck)) return _cache.get(ck)
@@ -19,8 +32,10 @@ export async function fetchRegistry(kind, key) {
     try { model = await getData(`/registry/autnum/AS${asn}.json${dv()}`) }
     catch { model = null }
     if (!model || !model.head) model = _placeholder(`AS${asn}: registry 无此对象`)
+  } else if (kind === 'domain') {
+    model = await _fetchDomain(String(key).toLowerCase().replace(/\.$/, ''))
   } else {
-    model = _placeholder('dn42 registry whois 暂仅支持 ASN')
+    model = _placeholder('dn42 registry whois 暂仅支持 ASN / 域名')
   }
   _cache.set(ck, model)
   return model

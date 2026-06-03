@@ -17,9 +17,16 @@ const PROFILES = {
   },
   dn42: {
     geo: false,
-    rdapWhois: false,
-    dns: false,
+    rdapWhois: false,  // whois 走静态 registry JSON
+    dns: false,        // 无 DoH 解析; 但域名仍可查 registry whois(见 queries.js)
   },
 }
 
 export const features = PROFILES[SITE] || PROFILES.peeras
+
+// 站点 logo / 品牌(结构性, 非 i18n)。.hi 段用 accent 高亮。
+const BRANDS = {
+  peeras: { main: 'PEER', hi: '.AS' },
+  dn42: { main: 'DN42.PEER', hi: '.AS' },
+}
+export const brand = BRANDS[SITE] || BRANDS.peeras

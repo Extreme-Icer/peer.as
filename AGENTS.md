@@ -108,8 +108,11 @@
   - `scripts/deploy.sh`：开头算 `CN_MIRROR`（读 profile，失败回退 1）；为 0 时跳过 `deploy_cn` 与 cn.peer.as 校验。
   - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns）。
     组件按 `features` 分支：`Topbar`（geo→国家/城市；!geo→**person 选择框**，列表 `meta.persons`，值=nic-hdl）、
-    `Whois.svelte`（rdapWhois→在线 RDAP；否则 `lib/registry.js` 读静态 JSON）、`queries.js`（!dns 不进 DNS 解析；
-    person 选定→其 origin ASN 集合走全表 origin 过滤，复用 `pathsearchFilesForOrigins`）。
+    `Whois.svelte`（rdapWhois→在线 RDAP；否则 `lib/registry.js` 读静态 JSON）、`queries.js`（!dns 时域名走
+    `runDomainWhois`=registry 域名 whois 而非 DoH；person 选定→其 origin ASN 集合走全表 origin 过滤，复用 `pathsearchFilesForOrigins`）。
+  - **文案 / 品牌**：`web/src/lib/i18n.dn42.js`（dn42 专属字符串覆盖，i18n.js 在 `SITE==='dn42'` 时 merge 进 STRINGS）；
+    logo/品牌在 `site.js` 的 `brand`（peeras=PEER.AS / dn42=DN42.PEER.AS），`Sidebar`/`MobileBar` 据此渲染。
+    `bgp.js` 的域名判定按 `SITE` 选正则：dn42 用 `DOMAIN_RE_DN42`（TLD 允许字母开头的字母数字，认 `.dn42`）。
 
 ### dn42 站（Phase 2 已实现）
 
@@ -118,6 +121,8 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
 - `ipcollect/registry.py`：RPSL 解析 → ASN 名（aut-num.as-name）、ASN→person（aut-num.admin-c，兜底 mnt-by→mntner.admin-c）、
   person 显示名；`export_dn42()` 写**逐 ASN 静态 whois** `data/registry/autnum/AS<n>.json`（与前端 `rdap.normalize()` 同形：
   head 行 + admin/tech/mnt 实体树）+ 算 `meta.persons`（按前缀数降序）与 `meta.asn_person`。
+  **域名 whois**：`export_dn42` 还把全量 `dns/` 对象写成 `data/registry/domain/<zone>.json`（同形, nserver 作 head 行）；
+  前端输入 `*.dn42` → `fetchRegistry('domain',…)` 逐级回退到登记的 zone。
 - `mrt.py`：`mrt_layout="dn42"` 直取 master4/6 bz2（`_open_mrt` 按扩展名选 bz2/gz）；GRC 每前缀经上千 peer ⇒ 每前缀
   ~2000 条 AS_PATH（paths/ 仍按 `PATH_CAP` 取 top-24，pathsearch/pp 有界）。
 - **按 person 筛选取代国家**：无 geo；前端选 person → 用其 ASN 集合过滤 `pathsearch`（origin_asn IN）。
@@ -126,8 +131,9 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
   `IPC_HOME=<实例目录> .venv/bin/python -m ipcollect ingest --reset` → `export-parquet --out dist`；
   前端 `cd ipcollect/web && VITE_SITE=dn42 npm run build` → `ipc sync-web`。部署：`site=dn42` ⇒ `cn_mirror` 关 ⇒ deploy.sh
   只上 CF（域名 `dn42.peer.as`）。
-- **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN whois，IP 占位）、ROA（route 对象 vs
-  observed origin）展示、按 ASN/person 的 SSG 落地页、dn42 DNS（`.dn42` 解析）。
+- **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN + 域名 whois，IP 占位）、ROA（route 对象 vs
+  observed origin）展示、按 ASN/person 的 SSG 落地页、dn42 DNS 的 DoH 实时解析（现为 registry whois，无 A/AAAA 记录解析）、
+  index.html 静态 `<title>` 仍是 peeras（运行时 `document.title` 已按 profile 改；SEO 预渲染未做）。
 
 ---
 

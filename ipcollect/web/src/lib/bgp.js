@@ -1,5 +1,6 @@
 // AS_PATH / ASN / geo 纯逻辑 (从 web_ref/app.js 移植)。读 S.meta / S.lang 故有响应性。
 import { S } from './store.svelte.js'
+import { SITE } from './site.js'
 
 const OP_CLS = { '电信': 'op-ct', '联通': 'op-cu', '移动': 'op-cm', '教育': 'op-edu', '科技': 'op-sci', '国际': 'op-intl' }
 // 运营商(op)分类的英文显示名(i18n)。op 仅 6 个固定类别, 故在前端维护译名(类似 UI 词表), 不进 config。
@@ -154,7 +155,10 @@ export function ip6Range(s) {
 // 域名判定: 多段标签 + 字母(或 xn--)结尾的 TLD; 不含空格/斜杠。用于把 "mozz.ie" 这类带点但非 IP 的串
 // 路由到 DNS 解析(而非当作 AS 名称搜索)。允许 IDN(\p{L} 含 Unicode 字母)与末尾点。
 const DOMAIN_RE = /^(?=.{1,253}\.?$)([\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+([\p{L}]{2,}|xn--[\p{L}\p{N}-]{2,})\.?$/u
-export const isDomain = s => DOMAIN_RE.test((s || '').trim())
+// dn42 站: TLD 允许字母开头的字母数字(如 .dn42), 否则 foo.dn42 不会被识别为域名。
+const DOMAIN_RE_DN42 = /^(?=.{1,253}\.?$)([\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+([\p{L}][\p{L}\p{N}]+|xn--[\p{L}\p{N}-]{2,})\.?$/u
+const ACTIVE_DOMAIN_RE = SITE === 'dn42' ? DOMAIN_RE_DN42 : DOMAIN_RE
+export const isDomain = s => ACTIVE_DOMAIN_RE.test((s || '').trim())
 
 // 常见「二级公共后缀」(SLD): 形如 co.uk / com.cn / com.au / co.jp / ne.jp / gov.cn …。
 // 用于把子域名缩略到可注册域名(eTLD+1)做 WHOIS/RDAP —— RDAP 域名查询通常只对可注册域名有效。

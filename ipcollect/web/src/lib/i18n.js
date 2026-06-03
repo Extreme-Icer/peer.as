@@ -1,4 +1,6 @@
 import { S } from './store.svelte.js'
+import { SITE } from './site.js'
+import { OVERRIDES } from './i18n.dn42.js'
 
 export const STRINGS = {
   zh: {
@@ -117,6 +119,11 @@ export const STRINGS = {
     whois_root_note: 'Subdomain · WHOIS for registrable domain',
     w_ldhname: 'Domain', w_ns: 'Nameserver', w_dnssec: 'DNSSEC',
   },
+}
+
+// dn42 站: 把专属覆盖合并进基础字符串(只动列出的键)。peeras 不受影响。
+if (SITE === 'dn42') {
+  for (const lang of Object.keys(OVERRIDES)) Object.assign(STRINGS[lang] ||= {}, OVERRIDES[lang])
 }
 
 export function t(k) {

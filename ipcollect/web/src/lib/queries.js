@@ -42,7 +42,8 @@ export async function runSearch() {
   // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
   const probe = classifyQuery(f.ip)
   // 域名 -> DNS 解析视图(左:记录, 右:域名详情面板); 抢占其它一切, 自成一支。
-  if (probe.kind === 'domain' && features.dns) return runDns(probe.domain)
+  // 域名: peeras 走 DoH 解析视图; dn42(无 DoH)直接展示 registry 域名 whois。
+  if (probe.kind === 'domain') return features.dns ? runDns(probe.domain) : runDomainWhois(probe.domain)
   S.dns = null   // 离开 DNS 模式: 清空记录, 主内容区回到结果表
   // 精确框是 ASN 时: 设为「主体」并自动展开右侧 ASN 详情面板(whois + 上下游)。其它输入(含 IP/空)清空
   // 主体上下文(影响关闭语义)。已在展示同一 ASN 则不打断(避免点开 prefix 后被搜索拽回)。放在子网早返回之前。
@@ -375,6 +376,15 @@ export async function scanNeighbors(asn) {
   } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
 }
 
+// dn42: 无 DoH 解析, 域名 -> 直接展示 registry whois(右侧域名详情面板; 左侧不进 DNS 记录视图)。
+export function runDomainWhois(domain) {
+  domain = String(domain || '').toLowerCase().replace(/\.$/, '')
+  if (!domain) return
+  S.rows = []; S.selectedPid = null; S.dns = null; S.mode = 'prompt'
+  setSubjectDomain(domain)            // 设主体 + 桌面端自动开域名详情面板(Whois kind='domain' -> registry)
+  S.msg = `${domain} · registry WHOIS`
+}
+
 // ── 域名详情视图(WHOIS/RDAP 由 Whois.svelte kind='domain' 自取; 这里只置面板状态) ──
 export function showDomain(domain) {
   domain = String(domain || '').toLowerCase().replace(/\.$/, '')
@@ -463,10 +473,11 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
-    if (path.startsWith('dns/')) {                 // /dns/<域名> -> DNS 解析视图
+    if (path.startsWith('dns/')) {                 // /dns/<域名> -> DNS 视图(dn42 无 DoH: registry 域名 whois)
       const domain = path.slice(4)
       S.filters.ip = domain
-      await runDns(domain)
+      if (features.dns) await runDns(domain)
+      else runDomainWhois(domain)
     } else if (path) {
       const probe = classifyQuery(path)
       S.filters.ip = path

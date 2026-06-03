@@ -26,7 +26,7 @@ _ATTR_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_-]*):\s*(.*)$")
 
 # 导出给前端 whois 的对象类型(原始属性按序保留)。auth/PGP 等敏感/无用字段在序列化时剔除。
 WHOIS_TYPES = ("aut-num", "person", "mntner", "organisation", "role",
-               "inetnum", "inet6num", "route", "route6", "as-set")
+               "inetnum", "inet6num", "route", "route6", "as-set", "dns")
 # 不下发到前端的属性(认证材料 / 噪音)。
 _DROP_ATTRS = {"auth", "pgp-fingerprint"}
 
@@ -164,6 +164,33 @@ def _asn_whois_model(asn: int, reg: dict) -> Optional[dict]:
             "source": "DN42 Registry", "via": "registry"}
 
 
+def _entities_for(rows: list, reg: dict) -> list[dict]:
+    """从对象的 admin-c/tech-c(person) + mnt-by(mntner) 构造 whois 实体树(去重)。"""
+    objects = reg["objects"]
+    person_name = reg["person_name"]
+    ents: list[dict] = []
+    seen_ent: set[tuple] = set()
+    for role in ("admin-c", "tech-c"):
+        for k, v in rows:
+            if k == role and v in objects["person"] and (role, v) not in seen_ent:
+                seen_ent.add((role, v))
+                ents.append({"handle": v, "roles": [role], "name": person_name.get(v, v),
+                             "rows": whois_record(objects["person"][v]), "entities": []})
+    for k, v in rows:
+        if k == "mnt-by" and v in objects["mntner"] and ("mnt", v) not in seen_ent:
+            seen_ent.add(("mnt", v))
+            ents.append({"handle": v, "roles": ["mnt-by"], "name": v,
+                         "rows": whois_record(objects["mntner"][v]), "entities": []})
+    return ents
+
+
+def _domain_whois_model(domain: str, rows: list, reg: dict) -> dict:
+    """dns 对象 -> 与前端同形的 domain whois 模型(nserver 作 head 行, admin/tech/mnt 实体树)。"""
+    return {"kind": "domain", "key": domain, "title": domain,
+            "head": whois_record(rows), "entities": _entities_for(rows, reg), "remarks": [],
+            "source": "DN42 Registry", "via": "registry"}
+
+
 def export_dn42(reg: dict, data_dir: Path, seen: set, con) -> tuple[list, dict]:
     """写出 dn42 静态 whois(逐 ASN JSON) + 算 person 导航数据。
 
@@ -205,5 +232,18 @@ def export_dn42(reg: dict, data_dir: Path, seen: set, con) -> tuple[list, dict]:
         (regdir / f"AS{asn}.json").write_text(
             json.dumps(model, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         n += 1
-    util.log(f"  registry whois: {n} 个 autnum JSON; persons: {len(persons_meta)}")
+
+    # domain whois: 全量 dns 对象逐个写(主搜索框输入 *.dn42 -> registry whois, 取代公网 DoH/RDAP)。
+    domdir = data_dir / "registry" / "domain"
+    domdir.mkdir(parents=True, exist_ok=True)
+    nd = 0
+    for rows in reg["objects"].get("dns", {}).values():
+        dom = (_first(rows, "domain") or "").strip().lower()
+        if not dom or "/" in dom:
+            continue
+        (domdir / f"{dom}.json").write_text(
+            json.dumps(_domain_whois_model(dom, rows, reg), ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8")
+        nd += 1
+    util.log(f"  registry whois: {n} autnum + {nd} domain JSON; persons: {len(persons_meta)}")
     return persons_meta, asn_person_seen

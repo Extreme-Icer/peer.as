@@ -266,8 +266,13 @@ plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes
 本地 / CN 直连)或 CN 镜像(数据切 CN 时)的 `/duckdb-ext`，启动即 `INSTALL+LOAD parquet` 预热(首查不卡)。引擎按
 `${repo}/<引擎版本>/wasm_<variant>/parquet.duckdb_extension.wasm` 取(版本引擎自填)。扩展文件 **vendor**(非 npm 自带)：
 `scripts/vendor-duckdb-ext.sh` 下载 pinned 版(eh+mvp，gitignore 在 `public/duckdb-ext/`)→ vite → dist → 部署两端。
-**带回退**：自托管源不可用(缺文件 / 被 CF 当 SPA 回 200 HTML)时 `INSTALL` 抛错 → `RESET` 回退官方源(退化默认、不炸)。
-deploy.sh 部署后校验两端扩展返回 wasm magic(防 SPA-200)。**升级 duckdb 须同步重 vendor**(见下「升级」)。
+**带回退(坑, 2026-06 修)**：自托管源**确实**不可用(缺文件 / 被 CF 当 SPA 回 200 HTML)时才 `RESET` 回退官方源
+(退化默认、不炸)。**关键**：eager `INSTALL parquet` 在 duckdb-wasm 浏览器端**可能偶发抛错(即便自托管源完全可用)**;
+旧逻辑一抛错就**无条件 RESET 回官方源** → 随后 `read_parquet` 的 autoload 跨境拉扩展(= 「自托管又跨境」回归)。
+现在 `setupExtensions` 在 eager 失败时**先探测**自托管扩展真伪(`selfHostExtBroken`: Range 取头几字节校验 wasm
+magic `\0asm`, 上游忽略 Range 则读首 chunk 即 cancel, 不整下 3MB) —— **仅探测确认坏了才 RESET**, 否则保留自托管仓库,
+autoload 自走自托管(不跨境, 仅首查略慢)。deploy.sh 部署后校验两端扩展返回 wasm magic(防 SPA-200)。
+**升级 duckdb 须同步重 vendor**(见下「升级」)。
 
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。
 - **HTTP/3 已全局禁用(只留 h1/h2，Caddyfile 顶部 `servers { protocols h1 h2 }`)**：中国对 UDP/QUIC

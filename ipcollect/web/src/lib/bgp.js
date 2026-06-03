@@ -137,6 +137,20 @@ export function ip6Range(s) {
 const DOMAIN_RE = /^(?=.{1,253}\.?$)([\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+([\p{L}]{2,}|xn--[\p{L}\p{N}-]{2,})\.?$/u
 export const isDomain = s => DOMAIN_RE.test((s || '').trim())
 
+// 常见「二级公共后缀」(SLD): 形如 co.uk / com.cn / com.au / co.jp / ne.jp / gov.cn …。
+// 用于把子域名缩略到可注册域名(eTLD+1)做 WHOIS/RDAP —— RDAP 域名查询通常只对可注册域名有效。
+// 轻量启发式(非完整 PSL): 命中即多取一段。覆盖绝大多数真实场景, 不引入 ~200KB 的 Public Suffix List。
+const SLD = new Set(['co', 'com', 'net', 'org', 'gov', 'edu', 'ac', 'or', 'ne', 'go', 'gr',
+  'lg', 'ed', 'ad', 'sch', 'mil', 'in', 'idv', 'asn', 'id', 'biz', 'info', 'name'])
+// 域名 -> 可注册域名(根域名)。'a.b.example.co.uk' -> 'example.co.uk'; 'mail.google.com' -> 'google.com'。
+export function registrableDomain(domain) {
+  const labels = String(domain || '').toLowerCase().replace(/\.$/, '').split('.').filter(Boolean)
+  if (labels.length <= 2) return labels.join('.')
+  // 倒数第二段是常见二级后缀(co.uk / com.cn) 且还有更前段 -> 取末三段; 否则取末二段。
+  if (SLD.has(labels[labels.length - 2])) return labels.slice(-3).join('.')
+  return labels.slice(-2).join('.')
+}
+
 // 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / domain / text / empty
 export function classifyQuery(s) {
   s = (s || '').trim()

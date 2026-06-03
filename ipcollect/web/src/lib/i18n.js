@@ -54,6 +54,7 @@ export const STRINGS = {
     dns_a: 'A 记录（IPv4）', dns_aaaa: 'AAAA 记录（IPv6）',
     dns_col_ip: '地址', dns_col_prefix: '前缀', dns_col_asn: 'origin asn', dns_col_ttl: 'TTL',
     dns_no_prefix: '库内无覆盖', dns_src: 'DNS over HTTPS · Cloudflare（1.1.1.1）',
+    whois_root_note: '子域名 · WHOIS 查询根域名',
     w_ldhname: '域名', w_ns: '名称服务器', w_dnssec: 'DNSSEC',
   },
   en: {
@@ -109,6 +110,7 @@ export const STRINGS = {
     dns_a: 'A records (IPv4)', dns_aaaa: 'AAAA records (IPv6)',
     dns_col_ip: 'Address', dns_col_prefix: 'Prefix', dns_col_asn: 'origin asn', dns_col_ttl: 'TTL',
     dns_no_prefix: 'not in DB', dns_src: 'DNS over HTTPS · Cloudflare (1.1.1.1)',
+    whois_root_note: 'Subdomain · WHOIS for registrable domain',
     w_ldhname: 'Domain', w_ns: 'Nameserver', w_dnssec: 'DNSSEC',
   },
 }

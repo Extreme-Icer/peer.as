@@ -4,12 +4,16 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
+  import { registrableDomain } from '../lib/bgp.js'
   import { iGlobal } from '../lib/icons.js'
   import Whois from './Whois.svelte'
 
   let d = $derived(S.domainView)
   // 概要计数: 仅当 S.dns 是同一域名时可用(下钻到子页后仍保留)。
   let dns = $derived(S.dns?.domain === d?.domain ? S.dns : null)
+  // WHOIS/RDAP 查可注册域名(根域名): 子域名查 RDAP 通常无结果, 自动缩略到 eTLD+1。
+  let root = $derived(d ? registrableDomain(d.domain) : '')
+  let isSub = $derived(!!root && root !== d?.domain)
 </script>
 
 {#if d}
@@ -23,8 +27,12 @@
     </div>
   {/if}
 
-  <!-- WHOIS / RDAP（域名注册信息） -->
-  <Whois kind="domain" rkey={d.domain} />
+  {#if isSub}
+    <div class="subnote">{t('whois_root_note')} <b>{root}</b></div>
+  {/if}
+
+  <!-- WHOIS / RDAP（域名注册信息）—— 查可注册域名(根域名), 子域名 RDAP 通常无结果 -->
+  <Whois kind="domain" rkey={root} />
 {/if}
 
 <style>
@@ -32,5 +40,7 @@
   h2 :global(svg) { color: var(--accent); width: 14px; flex: 0 0 auto; }
   .pill { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 5px 7px; }
   .pill span { background: var(--inbg); border: 1px solid var(--line2); border-radius: 6px; padding: 1px 8px; font-family: var(--mono); }
+  .subnote { font-size: 11.5px; color: var(--muted); margin: 2px 0 4px; line-height: 1.5; }
+  .subnote b { color: var(--link); font-family: var(--mono); font-weight: 600; word-break: break-all; }
   @media (max-width: 820px) { h2 { margin-top: 16px; } }
 </style>

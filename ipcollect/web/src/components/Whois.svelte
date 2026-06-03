@@ -61,7 +61,13 @@
   .wstat.muted { color: var(--muted); }
   .whead-rows { margin-bottom: 4px; }
   .wents { margin-top: 6px; border-top: 1px dashed var(--line2); padding-top: 6px; }
-  .wremark { font-size: 11.5px; color: var(--muted); line-height: 1.6; margin-top: 8px; white-space: pre-line; }
+  /* remark 常含长 URL / 无空格长串: pre-line 保留原换行, overflow-wrap/word-break 强制超长串换行,
+     max-width + min-width:0 防止撑宽容器出现横向滚动条。 */
+  .wremark {
+    font-size: 11.5px; color: var(--muted); line-height: 1.6; margin-top: 8px;
+    white-space: pre-line; overflow-wrap: anywhere; word-break: break-word;
+    max-width: 100%; min-width: 0;
+  }
   .wsrc { font-size: 10.5px; color: var(--muted); margin-top: 10px; display: flex; align-items: center; gap: 6px; opacity: .8; }
   .wsrc :global(svg) { width: 10px; }
 </style>

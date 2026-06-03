@@ -272,6 +272,11 @@ plain fetch 读回坏数据存进 Cache Storage → 持续空白;② `validBytes
 现在 `setupExtensions` 在 eager 失败时**先探测**自托管扩展真伪(`selfHostExtBroken`: Range 取头几字节校验 wasm
 magic `\0asm`, 上游忽略 Range 则读首 chunk 即 cancel, 不整下 3MB) —— **仅探测确认坏了才 RESET**, 否则保留自托管仓库,
 autoload 自走自托管(不跨境, 仅首查略慢)。deploy.sh 部署后校验两端扩展返回 wasm magic(防 SPA-200)。
+**初始化顺序(坑, 2026-06 修)**：`init()` 里 **`setupExtensions` 必须先于 `tuneSession`**。`tuneSession` 的
+`SET parquet_metadata_cache=true` 是 **parquet 扩展注册的设置**，DuckDB 为满足该 SET 会 autoload parquet
+(`PhysicalSet → AutoloadExtensionByConfigName`)；若此时仓库还没指到自托管，就跨境拉 `extensions.duckdb.org`
+(与 `read_parquet` 的 autoload 是**两条独立路径**，上面的 RESET 探测管不到这条)。`setupExtensions` 先跑(已 `LOAD
+parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autoload 的 `SET` 排在 setupExtensions 之前。**
 **升级 duckdb 须同步重 vendor**(见下「升级」)。
 
 **VPS 状态(已部署并实测，2026-06-01)**：Debian 12 / Caddy v2.11 / BBR+fq 已开 / 无防火墙。

@@ -187,8 +187,13 @@ export async function initDuck() {
   URL.revokeObjectURL(workerUrl)
   URL.revokeObjectURL(wasmUrl)   // instantiate 已读完 wasm, 释放 blob
   conn = await db.connect()
-  await tuneSession()
+  // **顺序关键(踩过坑)**: 必须先 setupExtensions 再 tuneSession。tuneSession 里的
+  // `SET parquet_metadata_cache=true` 是 **parquet 扩展注册的设置**, DuckDB 为满足该 SET 会
+  // autoload parquet(PhysicalSet -> AutoloadExtensionByConfigName)。若此时仓库还没指到自托管,
+  // autoload 就跨境拉 extensions.duckdb.org。setupExtensions 先跑(已 LOAD parquet)后, 该 SET
+  // 不再触发任何 autoload; 即便 eager 预热失败, 仓库也已指向自托管, autoload 不跨境。
   await setupExtensions(variant)
+  await tuneSession()
 }
 
 // 会话级缓存设置(内存, **仅本会话、不跨刷新**): 减少对同一文件的重复元数据请求 —— 主要是 read_parquet

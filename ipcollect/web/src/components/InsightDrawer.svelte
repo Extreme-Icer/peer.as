@@ -23,6 +23,12 @@
   $effect(() => { ins?.prefix; pathsOpen = false })
   let shownPaths = $derived(ins?.paths ? (pathsOpen ? ins.paths : ins.paths.slice(0, PATHS_HEAD)) : [])
 
+  // MOAS origin 列表默认只显示 9 个, 可折叠展开。换前缀时重置。
+  const ORIGINS_HEAD = 9
+  let originsOpen = $state(false)
+  $effect(() => { ins?.prefix; originsOpen = false })
+  let shownOrigins = $derived(ins?.origins ? (originsOpen ? ins.origins : ins.origins.slice(0, ORIGINS_HEAD)) : [])
+
   // 关闭: 移动端直接全关; 桌面端沿用智能关闭(看 prefix 且主体是 ASN 时先返回 ASN)。
   function onClose() {
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches) hardCloseDetail()
@@ -78,15 +84,20 @@
 
         {#if ins.n_origins > 1 && ins.origins?.length}
           <div class="moasbox" data-sec="moas">
-            <div class="moashdr"><span class="badge b-moas">{t('moas')}</span> {t('moas_origins')}</div>
+            <div class="moashdr"><span class="badge b-moas">{t('moas')} · {ins.n_origins}</span> {t('moas_origins')}</div>
             <div class="moaslist">
-              {#each ins.origins as o}
+              {#each shownOrigins as o}
                 <button class="moasitem" onclick={() => showAsn(o.asn)}>
-                  <b>AS{o.asn}</b>{#if asnName(o.asn)}<span class="onm">{asnName(o.asn)}</span>{/if}<span class="opeers">{o.peers} {t('peers')}</span>
+                  <b>AS{o.asn}</b>{#if asnName(o.asn)}<span class="onm">{asnName(o.asn)}</span>{/if}{#if o.peers}<span class="opeers">{o.peers} {t('peers')}</span>{/if}
                 </button>
               {/each}
-              {#if ins.origins.length < ins.n_origins}<span class="omore">+{ins.n_origins - ins.origins.length}…</span>{/if}
+              {#if originsOpen && ins.origins.length < ins.n_origins}<span class="omore">+{ins.n_origins - ins.origins.length}…</span>{/if}
             </div>
+            {#if ins.origins.length > ORIGINS_HEAD}
+              <button class="expandrow moasexp" onclick={() => (originsOpen = !originsOpen)}>
+                {originsOpen ? t('collapse') : t('show_all').replace('{n}', ins.origins.length)}
+              </button>
+            {/if}
           </div>
         {/if}
 
@@ -177,6 +188,7 @@
   .moasitem .onm { color: var(--fg); }
   .moasitem .opeers { color: var(--muted); font-size: 10.5px; font-family: var(--mono); }
   .omore { color: var(--muted); font-size: 11px; align-self: center; }
+  .moasexp { margin-top: 8px; }
   .dsec { font: 700 11px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin: 20px 0 8px; border-top: 1px solid var(--line2); padding-top: 13px; display: flex; align-items: center; gap: 7px; }
   .rel { margin-top: 8px; }
   .relbox { margin: 10px 0 0; font-size: 12px; }

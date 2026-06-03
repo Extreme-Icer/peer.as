@@ -41,7 +41,8 @@ def _subtract(s: int, e: int, holes: list) -> list[tuple]:
         out.append((cur, e))
     return out
 
-PATH_CAP = 24
+PATH_CAP = 64   # 每前缀导出的去重 AS_PATH 上限。rrc01+rrc06 下 n_distinct_paths max≈50, 64 留头room
+                # (24 旧值会截断 ~93% 前缀的路径列表/路由图/AS_PATH 搜索, 掩盖多采集点的路径多样性)。
 FILE_SIZE = "16MB"
 PATHSEARCH_FILE_SIZE = "6MB"
 # prefixes 切得更细 + 每文件 [min ip_start, max ip_end] 区间索引(prefixes_ip), 让精确 IP/子网查询
@@ -245,6 +246,7 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -
         COPY (
           SELECT pid, prefix, ip_start::{iptype} AS ip_start, ip_end::{iptype} AS ip_end,
                  plen, family, origin_asn, n_origins, n_paths,
+                 origin_asns, origin_npaths,   -- MOAS: 全部 origin(详情抽屉, n_origins=1 时为 NULL)
                  COALESCE(cc,'ZZ') AS cc, province, city
           FROM pgeo WHERE family={family} ORDER BY ip_start
         ) TO '{pq}/prefixes{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PREFIX_FILE_SIZE}',
@@ -284,16 +286,24 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -
     else:
         ccs, n_segs = [], 0
 
-    # pathsearch{suffix}: 全表一行/前缀, 按 origin_asn 排序(单线程顺序写 -> 每文件连续 origin 区间)。
+    # pathsearch{suffix}: 全表一行/(前缀,origin), 按 origin_asn 排序(单线程顺序写 -> 每文件连续 origin 区间)。
+    # MOAS 关键: 多源前缀按**每个 origin** 各出一行(o_asn), 这样按任一 origin 搜 AS / 看「该 AS 通告的前缀」
+    # 都能命中它(以前只留 arg_max 代表 origin -> 次要 origin 搜不到)。is_primary 标记代表 origin 那行,
+    # 供纯 AS_PATH 搜索(不按 origin)去重回每前缀一行。n_paths 仍为前缀总 peer 数(列表排序/低可见行为不变)。
     (pq / f"pathsearch{suffix}").mkdir(parents=True, exist_ok=True)
     con.execute("PRAGMA threads=1;")
     con.execute("SET preserve_insertion_order=true;")
     con.execute(f"""
         COPY (
-          SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc, p.origin_asn, p.n_origins, p.n_paths,
+          WITH po AS (SELECT DISTINCT pid, origin_asn AS o_asn FROM pathobs WHERE family={family})
+          SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc,
+                 po.o_asn AS origin_asn, p.n_origins, p.n_paths,
+                 (po.o_asn IS NOT DISTINCT FROM p.origin_asn) AS is_primary,
                  pp.paths_blob, pp.best_path
-          FROM pgeo p LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
-          WHERE p.family={family} ORDER BY p.origin_asn NULLS LAST
+          FROM pgeo p
+          JOIN po ON po.pid = p.pid
+          LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
+          WHERE p.family={family} ORDER BY po.o_asn NULLS LAST
         ) TO '{pq}/pathsearch{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
               ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
     """)
@@ -326,26 +336,49 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
 
     # 代表 geo(每前缀网络地址点查, geo 非重叠 -> ASOF 取 start<=ip_start 的最近段, 再校验 <=end)。
     # geo 关闭时(无 geo 表)退化为不连地理的 pgeo(cc/province/city 全 NULL), 下游 COALESCE 成 'ZZ'。
+    # MOAS: 每个**多源**前缀(n_origins>1)的全部 origin + 各自 peer 观测数(按 peer 降序)。
+    # 供详情抽屉完整(可折叠)展示。单源前缀不进表 -> pgeo LEFT JOIN 后 origin_asns 为 NULL(parquet 近乎零成本)。
+    con.execute("DROP TABLE IF EXISTS prefix_origins;")
+    con.execute("""
+        CREATE TABLE prefix_origins AS
+        SELECT pid,
+               list(origin_asn ORDER BY ns DESC, origin_asn) AS origin_asns,
+               list(ns        ORDER BY ns DESC, origin_asn) AS origin_npaths
+        FROM (
+            SELECT po.pid, po.origin_asn, sum(po.n_peers)::BIGINT AS ns
+            FROM pathobs po JOIN prefix p ON p.pid = po.pid AND p.n_origins > 1
+            GROUP BY po.pid, po.origin_asn
+        ) GROUP BY pid;
+    """)
+
     con.execute("DROP TABLE IF EXISTS pgeo;")
     if geo_on:
         con.execute("""
             CREATE TABLE pgeo AS
-            SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
-                   p.origin_asn, p.n_origins, p.n_paths,
-                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.cc END AS cc,
-                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.province END AS province,
-                   CASE WHEN g.start_num IS NOT NULL AND p.ip_start <= g.end_num THEN g.city END AS city
-            FROM prefix p
-            ASOF LEFT JOIN geo g ON p.family = g.family AND p.ip_start >= g.start_num;
+            WITH px AS (   -- 先把 MOAS origins 列贴上(普通 join), 再做 ASOF(不与其它 join 类型混链)
+                SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
+                       p.origin_asn, p.n_origins, p.n_paths, mo.origin_asns, mo.origin_npaths
+                FROM prefix p LEFT JOIN prefix_origins mo ON mo.pid = p.pid
+            )
+            SELECT px.pid, px.family, px.prefix, px.ip_start, px.ip_end, px.plen,
+                   px.origin_asn, px.n_origins, px.n_paths,
+                   px.origin_asns, px.origin_npaths,
+                   CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.cc END AS cc,
+                   CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.province END AS province,
+                   CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.city END AS city
+            FROM px
+            ASOF LEFT JOIN geo g ON px.family = g.family AND px.ip_start >= g.start_num;
         """)
     else:
         con.execute("""
             CREATE TABLE pgeo AS
             SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
                    p.origin_asn, p.n_origins, p.n_paths,
+                   mo.origin_asns, mo.origin_npaths,
                    CAST(NULL AS VARCHAR) AS cc, CAST(NULL AS VARCHAR) AS province,
                    CAST(NULL AS VARCHAR) AS city
-            FROM prefix p;
+            FROM prefix p
+            LEFT JOIN prefix_origins mo ON mo.pid = p.pid;
         """)
 
     families = [r[0] for r in con.execute(
@@ -480,6 +513,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         # 列能力标志: geo/pathsearch 现含 n_origins(MOAS 角标)。旧前端缺标志即视为 false, 不 SELECT 该列 ->
         # 新前端 + 旧数据(无此列)不会报错; 下次刷新后自动点亮列表角标。
         "has_n_origins": True,
+        # MOAS v2: pathsearch 按 (前缀,origin) 多行 + is_primary; prefixes 带 origin_asns/origin_npaths 数组。
+        # 门控: 详情抽屉完整 origin 列表、纯 path 搜索 is_primary 去重、按次要 origin 搜索命中。
+        "has_moas": True,
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

@@ -110,6 +110,9 @@ export async function runSearch() {
   }
   if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
+  // MOAS: pathsearch 现按 (前缀,origin) 多行 -> 纯 AS_PATH 搜索(不按 origin)需 is_primary 去重回每前缀一行;
+  // 按 origin 搜索时不去重(要的就是该 origin 那行, 含次要 origin)。仅新数据(has_moas)有此列。
+  if (isGlobal && !originAsns && S.meta?.has_moas) w.push('is_primary')
   // 低可见阈值按 family 取(结果可能混 v4+v6): prefix 含 ':' 用 v6 阈值, 否则 v4。
   if (!inclLow) w.push(`n_paths >= (CASE WHEN prefix LIKE '%:%' THEN ${Math.ceil(lowCutFor(true))} ELSE ${Math.ceil(lowCutFor(false))} END)`)
   const bestExpr = pq.sqlBest('best_path')
@@ -254,23 +257,32 @@ export async function showInsight(pid, prefix) {
   let det, paths
   try {
     // 不取 ip_start/ip_end(v6 取回 JS 会丢精度); 范围从 prefix 串算。
-    det = (await q(`SELECT prefix, plen, origin_asn, n_origins, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
+    // MOAS: origin_asns/origin_npaths 是新数组列(仅 has_moas 数据有, 且仅多源前缀非空) -> 完整 origin 列表。
+    const moasCols = S.meta?.has_moas ? ', origin_asns, origin_npaths' : ''
+    det = (await q(`SELECT prefix, plen, origin_asn, n_origins${moasCols}, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
     paths = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC, n_peers DESC`)
   } catch (e) { S.insight = { error: e.message }; return }
   if (!det) { S.insight = { error: 'not found' }; return }
   const rng = v6 ? ip6Range(det.prefix) : ip2range(det.prefix)
   const [sup, sub] = rng ? await relData(pid, rng.start, rng.end, v6) : [[], []]
   const pmap = paths.map(p => ({ asns: Array.from(p.path_arr || []).map(Number), peers: p.n_peers, is_best: p.is_best }))
-  // MOAS: 同一前缀的多个 origin(每条去重路径末端 AS), 按 peer 观测数聚合。n_origins 为权威计数(prefix 表统计,
-  // 不受 paths 上限 PATH_CAP 截断影响); 这里枚举到的 origin 可能少于它(被截断) -> 用 n_origins 显示总数。
-  const oAgg = new Map()
-  for (const p of pmap) {
-    const o = p.asns[p.asns.length - 1]
-    if (o == null || Number.isNaN(o)) continue
-    const c = oAgg.get(o) || { asn: o, peers: 0, paths: 0 }
-    c.peers += Number(p.peers) || 0; c.paths += 1; oAgg.set(o, c)
+  // MOAS 全部 origin: 优先用 prefixes 的 origin_asns/origin_npaths 数组(权威完整, 不受 PATH_CAP 截断);
+  // 缺数组时(单源前缀 / 旧数据)退化为从去重路径末端 AS 聚合(可能不全 -> 由 +N… 提示)。
+  let origins
+  if (det.origin_asns) {
+    const asns = Array.from(det.origin_asns).map(Number)
+    const nps = Array.from(det.origin_npaths || []).map(Number)
+    origins = asns.map((a, i) => ({ asn: a, peers: nps[i] || 0, paths: 0 }))
+  } else {
+    const oAgg = new Map()
+    for (const p of pmap) {
+      const o = p.asns[p.asns.length - 1]
+      if (o == null || Number.isNaN(o)) continue
+      const c = oAgg.get(o) || { asn: o, peers: 0, paths: 0 }
+      c.peers += Number(p.peers) || 0; c.paths += 1; oAgg.set(o, c)
+    }
+    origins = [...oAgg.values()].sort((a, b) => (b.peers - a.peers) || (b.paths - a.paths))
   }
-  const origins = [...oAgg.values()].sort((a, b) => (b.peers - a.peers) || (b.paths - a.paths))
   S.insight = {
     pid, prefix: det.prefix,
     loc: placeLabel(det.province, det.city, det.cc),
@@ -380,7 +392,9 @@ export async function scanNeighbors(asn) {
     const psAll = pathsearchFilesForOrigin(null)
     const psFiles = psAll === null ? [] : byFam(psAll)
     if (!psFiles.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0 } }; return }
-    const rows = await q(`SELECT prefix, paths_blob FROM ${rpList(psFiles)} WHERE paths_blob LIKE '% ${asn} %' LIMIT 20000`)
+    // MOAS: pathsearch 多源前缀有多行(每 origin 一行, paths_blob 相同) -> 全表扫邻居要 is_primary 去重, 防重复计数。
+    const primary = S.meta?.has_moas ? 'is_primary AND ' : ''
+    const rows = await q(`SELECT prefix, paths_blob FROM ${rpList(psFiles)} WHERE ${primary}paths_blob LIKE '% ${asn} %' LIMIT 20000`)
     const acc = new Map()
     for (const r of rows) {
       for (const path of String(r.paths_blob || '').trim().split('|')) {

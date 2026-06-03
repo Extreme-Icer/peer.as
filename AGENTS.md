@@ -65,6 +65,7 @@
 - `obs` — ingest 中间观测(每 collector 去重后的 (prefix,path) 行 + n_peers + collector)；finalize 后可弃。
 - `pathobs`(pid + 去重 AS_PATH + n_peers, 跨 collector 合并) · `prefix`(每前缀 + pid + ip_start/end `UHUGEINT` +
   family + 代表 origin(`arg_max` peer 数最多者) + `n_origins`(distinct origin 数, MOAS>1) + n_paths) ·
+  (导出期 `prefix_origins`: 每**多源**前缀的全部 origin + 各 peer 数 → prefixes 的 `origin_asns`/`origin_npaths` 数组列) ·
   `geo`(非重叠区间 + family + cc/prov/city + provider) · `country_dim`(cc→zh/en 名) ·
   `asn_dim`(asn→org) · `meta`(kv, 含 `geo_tag` GeoLite 版本)。导出期还建临时 `pgeo`(前缀+代表 cc, ASOF)。
 
@@ -125,7 +126,7 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
   **域名 whois**：`export_dn42` 还把全量 `dns/` 对象写成 `data/registry/domain/<zone>.json`（同形, nserver 作 head 行）；
   前端输入 `*.dn42` → `fetchRegistry('domain',…)` 逐级回退到登记的 zone。
 - `mrt.py`：`mrt_layout="dn42"` 直取 master4/6 bz2（`_open_mrt` 按扩展名选 bz2/gz）；GRC 每前缀经上千 peer ⇒ 每前缀
-  ~2000 条 AS_PATH（paths/ 仍按 `PATH_CAP` 取 top-24，pathsearch/pp 有界）。
+  ~2000 条 AS_PATH（paths/ 按 `PATH_CAP`=64 取 top-N，pathsearch/pp 有界）。
 - **按 person 筛选取代国家**：无 geo；前端选 person → 用其 ASN 集合过滤 `pathsearch`（origin_asn IN）。
 
 #### dn42 部署（独立 checkout + 同一份脚本）
@@ -400,6 +401,10 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   那 1 个文件**(原来要扫全部 ~18 个/177MB → 现 ~7MB)；索引完整但无文件覆盖 = 该 origin 不存在, 直接空结果不发查询。
   **纯 AS_PATH(LIKE)搜索仍全表扫所有分片**(无法按子串裁剪)。单线程是必须的：多线程 COPY 写多文件不保证跨文件全局有序
   → origin 区间重叠 → 退化成多文件命中。
+  - **MOAS 多行(关键)**：pathsearch 现按 **(前缀, origin)** 每 origin 一行(以前每前缀只留代表 origin)，故按**任一** origin
+    搜 AS / 看「该 AS 通告的前缀」都能命中多源前缀。`is_primary` 标记代表 origin 那行：纯 AS_PATH 搜索 + `scanNeighbors`
+    加 `is_primary` 去重回每前缀一行(防重复/重复计数)；按 origin 搜索不去重(要的就是该 origin 行)。门控 `meta.has_moas`。
+    体积影响小(MOAS 占 ~0.84%, 行数 +~0.9%)。
 - **prefixes 按 ip_start 排序 + 区间索引(关键性能, 同 pathsearch 思路, **仅 v4**)**：`prefixes` 导出**单线程 +
   preserve_insertion_order=true** 写小分片(`PREFIX_FILE_SIZE`=2MB ⇒ ~11 个连续 ip_start 区段文件)，meta 写
   `files.prefixes_ip`=每文件 `{f,lo,hi}`(min ip_start / max ip_end)。前端 `prefixesFilesForRange(start,end,v6)`(db.js)
@@ -414,8 +419,10 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
 - badge/线路配色：电信蓝/联通红/移动绿/教育紫/科技橙/国际灰（`asn_ops` 驱动）。
 - 抽屉显示**更大/更小段**（库内采集到的，可能不全，UI 已标注）。
 - **MOAS（一个 prefix 多个 origin AS）**：`prefix.n_origins>1` 即多源。列表(国家/全局/子网)在 origin 列加紫色 `MOAS N` 角标；
-  抽屉列出**全部 origin**(从去重路径末端 AS 按 peer 数聚合而来；权威计数用 `n_origins`，枚举不全则显 `+N…`)，路由图把所有 origin 节点都高亮。
-  geo/pathsearch 的 `n_origins` 列由 `meta.has_n_origins` 门控(旧数据无此列不报错，下次刷新点亮)；prefixes 一直有故抽屉/子网即时可用。典型例：`192.58.128.0/24`。
+  抽屉读 prefixes 的 `origin_asns`/`origin_npaths` 数组列出**全部 origin**(按 peer 降序, 默认折叠 9 条可展开, 完整不截断)，
+  路由图把所有 origin 节点都高亮。**按任一 origin 可搜**(见上 pathsearch MOAS 多行)：搜某 AS / 看其通告前缀都能命中它作为
+  次要 origin 的多源前缀。门控：列表角标 `meta.has_n_origins`；完整 origin 列表 + 次要 origin 搜索 + `is_primary` 去重 `meta.has_moas`
+  (旧数据无对应列即降级, 不报错)。典型例：`192.58.128.0/24`(12 个 origin)。
 - **DFZ 可见性**：`n_paths`(=观测到该前缀的 peer 数, 跨 rrc01+rrc06) 是可见度信号；export 出**按 family** 的
   `dfz_ref`/`dfz_ref_v6`(n_paths p90)。前端 `isLowVis`/`lowCutFor(v6)` = `n_paths < 0.2*dfz_ref[_v6]`(v6 自有阈值,
   其全网 peer 数远少)；控制栏「含低可见」默认**不勾**。

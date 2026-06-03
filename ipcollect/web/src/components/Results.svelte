@@ -43,7 +43,7 @@
             <td class="pfx">
               <span class="chev"><Fa icon={sel ? iChevD : iChevR} /></span>{r.prefix}
             </td>
-            <td><AsnTag asn={r.origin_asn} /></td>
+            <td><AsnTag asn={r.origin_asn} />{#if r.n_origins > 1}<span class="badge b-moas moas" title={t('moas_note')}>{t('moas')} {r.n_origins}</span>{/if}</td>
             <td class="loc">{loc(r)}</td>
             <td class="num">
               <span class="np">{r.n_paths ?? 0}</span>
@@ -116,6 +116,7 @@
   .loc { color: var(--fg); }
   .np { font-family: var(--mono); }
   .lv { padding: 0 5px; font-size: 9px; }
+  .moas { margin-left: 6px; font-size: 9px; padding: 0 5px; cursor: help; }
   .seg .segn {
     font: 600 10px var(--mono); color: var(--muted); background: var(--alt);
     border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px;

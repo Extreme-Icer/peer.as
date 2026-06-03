@@ -48,6 +48,7 @@ body {
 .op-ct { --c: #3b82f6; } .op-cu { --c: #ef4444; } .op-cm { --c: #10b981; }
 .op-edu { --c: #a78bfa; } .op-sci { --c: #f59e0b; } .op-intl { --c: #94a3b8; }
 .b-ok { --c: #22c55e; } .b-warn { --c: #f59e0b; } .b-bad { --c: #ef4444; } .b-mute { --c: #94a3b8; }
+.b-moas { --c: #8b5cf6; }   /* multi-origin (MOAS) 角标 */
 
 /* 移动端输入框字号: 按需求改回默认(与桌面一致), 不再强制 16px。
    抑制 iOS 聚焦缩放仅靠 index.html viewport 的 maximum-scale=1/user-scalable=no

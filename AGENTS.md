@@ -64,7 +64,8 @@
 ## 数据表（DuckDB 工作库 `ipcollect.duckdb`，`store.py`/`geoip.py` 建）
 - `obs` — ingest 中间观测(每 collector 去重后的 (prefix,path) 行 + n_peers + collector)；finalize 后可弃。
 - `pathobs`(pid + 去重 AS_PATH + n_peers, 跨 collector 合并) · `prefix`(每前缀 + pid + ip_start/end `UHUGEINT` +
-  family + 代表 origin + n_paths) · `geo`(非重叠区间 + family + cc/prov/city + provider) · `country_dim`(cc→zh/en 名) ·
+  family + 代表 origin(`arg_max` peer 数最多者) + `n_origins`(distinct origin 数, MOAS>1) + n_paths) ·
+  `geo`(非重叠区间 + family + cc/prov/city + provider) · `country_dim`(cc→zh/en 名) ·
   `asn_dim`(asn→org) · `meta`(kv, 含 `geo_tag` GeoLite 版本)。导出期还建临时 `pgeo`(前缀+代表 cc, ASOF)。
 
 所有命令在仓库根目录下用 `./ipc <子命令>`（启动器自动走 `.venv`，数据/缓存落本目录）。
@@ -412,6 +413,9 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
 - 主题：自动/亮/暗（`data-theme` + localStorage）；移动端有 `@media` 适配。
 - badge/线路配色：电信蓝/联通红/移动绿/教育紫/科技橙/国际灰（`asn_ops` 驱动）。
 - 抽屉显示**更大/更小段**（库内采集到的，可能不全，UI 已标注）。
+- **MOAS（一个 prefix 多个 origin AS）**：`prefix.n_origins>1` 即多源。列表(国家/全局/子网)在 origin 列加紫色 `MOAS N` 角标；
+  抽屉列出**全部 origin**(从去重路径末端 AS 按 peer 数聚合而来；权威计数用 `n_origins`，枚举不全则显 `+N…`)，路由图把所有 origin 节点都高亮。
+  geo/pathsearch 的 `n_origins` 列由 `meta.has_n_origins` 门控(旧数据无此列不报错，下次刷新点亮)；prefixes 一直有故抽屉/子网即时可用。典型例：`192.58.128.0/24`。
 - **DFZ 可见性**：`n_paths`(=观测到该前缀的 peer 数, 跨 rrc01+rrc06) 是可见度信号；export 出**按 family** 的
   `dfz_ref`/`dfz_ref_v6`(n_paths p90)。前端 `isLowVis`/`lowCutFor(v6)` = `n_paths < 0.2*dfz_ref[_v6]`(v6 自有阈值,
   其全网 peer 数远少)；控制栏「含低可见」默认**不勾**。

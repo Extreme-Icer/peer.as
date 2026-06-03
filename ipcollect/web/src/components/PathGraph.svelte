@@ -16,7 +16,9 @@
     // (注: 全部去重路径表仍展示所有路径, 只有这张图过滤。)
     const raw = (rec?.paths || []).filter(p => p.asns && p.asns.length && p.asns.some(a => TIER1.has(a)))
     if (!raw.length) return null
-    const origin = rec.origin_asn || raw[0].asns[raw[0].asns.length - 1]
+    // origin 高亮集: MOAS 时多个 origin 都高亮(rec.origins); 否则退化为单 origin / 路径末端。
+    const originSet = new Set((rec.origins && rec.origins.length) ? rec.origins
+      : [rec.origin_asn || raw[0].asns[raw[0].asns.length - 1]])
     const depth = {}, edgeW = {}, nodes = new Set()
     for (const p of raw) {
       const a = truncToTier1(p.asns), n = a.length, w = p.peers || 1
@@ -60,7 +62,7 @@
       edges.push(bezier(pa.x - NW / 2, pa.y, pb.x + NW / 2, pb.y, 'gedge', sw))
     }
     const boxes = arr.map(asn => ({
-      x: pos[asn].x, y: pos[asn].y, asn, origin: asn === origin,
+      x: pos[asn].x, y: pos[asn].y, asn, origin: originSet.has(asn),
       t1: TIER1.has(asn), name: asnName(asn),
     }))
     return { W, H, edges, boxes }

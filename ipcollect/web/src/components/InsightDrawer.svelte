@@ -69,14 +69,29 @@
         <h2>{ins.prefix} <span class="loc">· {ins.loc}</span></h2>
         <div class="pill">
           origin asn <button class="originlink" onclick={() => showAsn(ins.origin_asn)} disabled={!ins.origin_asn}><b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}</button>
+          {#if ins.n_origins > 1}<span class="badge b-moas moastag" title={t('moas_note')}>{t('moas')} · {ins.n_origins}</span>{/if}
           · {ins.paths.length} {t('distinct')} / {ins.n_paths || 0} {t('peers')}
           {#if S.meta?.dfz_ref}
             · <span class="badge {ins.lowvis ? 'b-warn' : 'b-ok'}">{ins.n_paths || 0}/{S.meta.dfz_ref} {ins.lowvis ? t('lowvis') : 'DFZ'}</span>
           {/if}
         </div>
 
+        {#if ins.n_origins > 1 && ins.origins?.length}
+          <div class="moasbox" data-sec="moas">
+            <div class="moashdr"><span class="badge b-moas">{t('moas')}</span> {t('moas_origins')}</div>
+            <div class="moaslist">
+              {#each ins.origins as o}
+                <button class="moasitem" onclick={() => showAsn(o.asn)}>
+                  <b>AS{o.asn}</b>{#if asnName(o.asn)}<span class="onm">{asnName(o.asn)}</span>{/if}<span class="opeers">{o.peers} {t('peers')}</span>
+                </button>
+              {/each}
+              {#if ins.origins.length < ins.n_origins}<span class="omore">+{ins.n_origins - ins.origins.length}…</span>{/if}
+            </div>
+          </div>
+        {/if}
+
         <h3 class="dsec" data-sec="graph">{t('graph_title')}</h3>
-        <PathGraph rec={{ paths: ins.paths, origin_asn: ins.origin_asn, prefix: ins.prefix }} />
+        <PathGraph rec={{ paths: ins.paths, origin_asn: ins.origin_asn, origins: ins.origins?.map(o => o.asn), prefix: ins.prefix }} />
 
         <div class="rel" data-sec="rel">
           <div class="relbox">
@@ -152,6 +167,16 @@
   h2 .loc { color: var(--muted); font-weight: 400; font-size: 13px; font-family: var(--sans); }
   .pill { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; line-height: 1.7; }
   .pill b { color: var(--fg); font-family: var(--mono); }
+  .moastag { margin: 0 4px; font-size: 10px; padding: 0 6px; vertical-align: middle; cursor: help; }
+  .moasbox { margin: 6px 0 2px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #8b5cf6 32%, transparent); border-radius: 8px; background: color-mix(in srgb, #8b5cf6 7%, transparent); }
+  .moashdr { font-size: 11px; color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 7px; }
+  .moaslist { display: flex; flex-wrap: wrap; gap: 6px 8px; }
+  .moasitem { display: inline-flex; align-items: baseline; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; font: 12px var(--sans); transition: border-color .12s; }
+  .moasitem:hover { border-color: var(--accent); }
+  .moasitem b { color: var(--link); font-family: var(--mono); font-weight: 700; }
+  .moasitem .onm { color: var(--fg); }
+  .moasitem .opeers { color: var(--muted); font-size: 10.5px; font-family: var(--mono); }
+  .omore { color: var(--muted); font-size: 11px; align-self: center; }
   .dsec { font: 700 11px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin: 20px 0 8px; border-top: 1px solid var(--line2); padding-top: 13px; display: flex; align-items: center; gap: 7px; }
   .rel { margin-top: 8px; }
   .relbox { margin: 10px 0 0; font-size: 12px; }

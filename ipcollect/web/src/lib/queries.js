@@ -80,6 +80,9 @@ export async function runSearch() {
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   const inclLow = !!f.incllow
 
+  // MOAS 角标列: geo/pathsearch 的 n_origins 是新增列, 旧数据无 -> 由 meta.has_n_origins 门控, 缺标志即不 SELECT
+  // (避免新前端 + 旧数据 SELECT 缺列报错; 下次刷新后自动点亮)。结尾留空格以拼进列表。
+  const moasCol = S.meta?.has_n_origins ? ' n_origins,' : ''
   const w = []
   let fromExpr, cols, isGlobal = false
   if (cc) {
@@ -88,7 +91,7 @@ export async function runSearch() {
     const geoFiles = byFam([...(S.meta?.files?.geo?.[cc] || []), ...(S.meta?.files?.geo_v6?.[cc] || [])])
     if (!geoFiles.length) { S.rows = []; S.mode = 'country'; S.msg = t('no_data_cc'); return }
     fromExpr = rpList(geoFiles)
-    cols = 'pid, prefix, city, province, plen, origin_asn, n_paths, segs, best_path'
+    cols = `pid, prefix, city, province, plen, origin_asn,${moasCol} n_paths, segs, best_path`
     if (city && S.meta?.cities?.[cc]) w.push(`city = ${sqlStr(city)}`)
   } else {
     if (!hasPath && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
@@ -103,7 +106,7 @@ export async function runSearch() {
       return
     }
     fromExpr = rpList(psFiles)
-    cols = 'pid, prefix, cc, origin_asn, n_paths, best_path'
+    cols = `pid, prefix, cc, origin_asn,${moasCol} n_paths, best_path`
   }
   if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
@@ -165,7 +168,7 @@ async function runSubnet(r, f) {
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   let rows
   try {
-    rows = await q(`SELECT pid, prefix, plen, cc, city, origin_asn, n_paths
+    rows = await q(`SELECT pid, prefix, plen, cc, city, origin_asn, n_origins, n_paths
       FROM ${src} WHERE ${w.join(' AND ')}
       ORDER BY plen DESC, ip_start LIMIT ${limit + 1}`)
   } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
@@ -251,18 +254,30 @@ export async function showInsight(pid, prefix) {
   let det, paths
   try {
     // 不取 ip_start/ip_end(v6 取回 JS 会丢精度); 范围从 prefix 串算。
-    det = (await q(`SELECT prefix, plen, origin_asn, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
+    det = (await q(`SELECT prefix, plen, origin_asn, n_origins, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
     paths = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC, n_peers DESC`)
   } catch (e) { S.insight = { error: e.message }; return }
   if (!det) { S.insight = { error: 'not found' }; return }
   const rng = v6 ? ip6Range(det.prefix) : ip2range(det.prefix)
   const [sup, sub] = rng ? await relData(pid, rng.start, rng.end, v6) : [[], []]
+  const pmap = paths.map(p => ({ asns: Array.from(p.path_arr || []).map(Number), peers: p.n_peers, is_best: p.is_best }))
+  // MOAS: 同一前缀的多个 origin(每条去重路径末端 AS), 按 peer 观测数聚合。n_origins 为权威计数(prefix 表统计,
+  // 不受 paths 上限 PATH_CAP 截断影响); 这里枚举到的 origin 可能少于它(被截断) -> 用 n_origins 显示总数。
+  const oAgg = new Map()
+  for (const p of pmap) {
+    const o = p.asns[p.asns.length - 1]
+    if (o == null || Number.isNaN(o)) continue
+    const c = oAgg.get(o) || { asn: o, peers: 0, paths: 0 }
+    c.peers += Number(p.peers) || 0; c.paths += 1; oAgg.set(o, c)
+  }
+  const origins = [...oAgg.values()].sort((a, b) => (b.peers - a.peers) || (b.paths - a.paths))
   S.insight = {
     pid, prefix: det.prefix,
     loc: placeLabel(det.province, det.city, det.cc),
     origin_asn: det.origin_asn, origin_name: asnName(det.origin_asn), n_paths: det.n_paths,
+    n_origins: Number(det.n_origins ?? origins.length), origins,
     lowvis: isLowVis(det),
-    paths: paths.map(p => ({ asns: Array.from(p.path_arr || []).map(Number), peers: p.n_peers, is_best: p.is_best })),
+    paths: pmap,
     sup, sub,
   }
 }

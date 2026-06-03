@@ -206,7 +206,8 @@ def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: 
     con.execute("DROP TABLE IF EXISTS geo_full;")
     con.execute(f"""
         CREATE TABLE geo_full AS
-        SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn, g.n_paths,
+        SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn,
+               pfx.n_origins, g.n_paths,
                g.segs, pp.paths_blob, pp.best_path
         FROM seg g
         LEFT JOIN pp{suffix} pp ON pp.pid = g.pid
@@ -289,7 +290,7 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -
     con.execute("SET preserve_insertion_order=true;")
     con.execute(f"""
         COPY (
-          SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc, p.origin_asn, p.n_paths,
+          SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc, p.origin_asn, p.n_origins, p.n_paths,
                  pp.paths_blob, pp.best_path
           FROM pgeo p LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
           WHERE p.family={family} ORDER BY p.origin_asn NULLS LAST
@@ -476,6 +477,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
               "segments": n_segs_total}
     meta = {
         "version": version,
+        # 列能力标志: geo/pathsearch 现含 n_origins(MOAS 角标)。旧前端缺标志即视为 false, 不 SELECT 该列 ->
+        # 新前端 + 旧数据(无此列)不会报错; 下次刷新后自动点亮列表角标。
+        "has_n_origins": True,
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

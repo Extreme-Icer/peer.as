@@ -1,7 +1,7 @@
 // 搜索 / insight 逻辑 (从 web_ref/app.js 移植), 结果写入 S。
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
-import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
+import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange } from './db.js'
 import { resolveDns } from './dns.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
@@ -143,7 +143,7 @@ async function runSubnet(r, f) {
   const label = (f.ip || '').trim() || (isCidr ? `${start}/${plen}` : `${start}`)
   // v6: 比较在 SQL 里做(start/end 是 BigInt -> 十进制串 + ::UHUGEINT); 不取回原始 ip 整数(JS 会丢精度)。
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
-  const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
+  const src = rpList(prefixesFilesForRange(start, end, v6))
   if (v6 && !(S.meta?.files?.prefixes_v6 || []).length) { S.rows = []; S.mode = 'subnet'; S.msg = `${label} · ${t('no_cover')}`; return }
   // 区间重叠: 命中覆盖该范围的母段, 以及落在该范围内的更具体段。
   const w = [`ip_start <= ${lit(end)}`, `ip_end >= ${lit(start)}`]
@@ -172,9 +172,8 @@ async function runSubnet(r, f) {
 async function enrichIp(ip, v6) {
   const r = v6 ? ip6Range(ip) : ip2range(ip)
   if (!r) return { ip }
-  const files = v6 ? (S.meta?.files?.prefixes_v6 || []) : null
-  if (v6 && !files.length) return { ip }                 // 无 v6 前缀数据集
-  const src = v6 ? rpList(files) : rp('prefixes')
+  if (v6 && !(S.meta?.files?.prefixes_v6 || []).length) return { ip }   // 无 v6 前缀数据集
+  const src = rpList(prefixesFilesForRange(r.start, r.end, v6))
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   try {
     // 覆盖该地址的前缀里取最具体(范围最小)那一条。
@@ -236,7 +235,9 @@ export async function showInsight(pid, prefix) {
   go('/' + prefix)
   S.insight = { loading: true }
   const v6 = (prefix || '').includes(':')
-  const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
+  // 用 prefix 串的 [start,end] 裁剪 prefixes 文件(该 pid 的行 ip_start 落在此区间内, 只读相交文件)。
+  const prng = v6 ? ip6Range(prefix) : ip2range(prefix)
+  const src = rpList(prefixesFilesForRange(prng?.start, prng?.end, v6))
   let det, paths
   try {
     // 不取 ip_start/ip_end(v6 取回 JS 会丢精度); 范围从 prefix 串算。
@@ -257,7 +258,7 @@ export async function showInsight(pid, prefix) {
 }
 // 父子段(更大/更小): v6 用 prefixes_v6 + ::UHUGEINT 字面量(范围在 SQL 里比, 不取回原始整数)。
 async function relData(pid, s, e, v6) {
-  const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
+  const src = rpList(prefixesFilesForRange(s, e, v6))
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   try {
     const sup = await q(`SELECT pid, prefix, plen FROM ${src} WHERE ip_start <= ${lit(s)} AND ip_end >= ${lit(e)} AND pid <> ${pid} ORDER BY (ip_end-ip_start) ASC LIMIT 12`)
@@ -399,7 +400,7 @@ async function openPrefixByString(s) {
   const v6 = s.includes(':')
   const r = v6 ? ip6Range(s) : ip2range(s)
   if (!r) return
-  const src = v6 ? rpList(S.meta?.files?.prefixes_v6 || []) : rp('prefixes')
+  const src = rpList(prefixesFilesForRange(r.start, r.end, v6))
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   try {
     const rows = await q(`SELECT pid, prefix FROM ${src} WHERE ip_start=${lit(r.start)} AND ip_end=${lit(r.end)} ORDER BY n_paths DESC LIMIT 1`)

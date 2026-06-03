@@ -262,6 +262,18 @@ export function pathsearchFilesForOrigin(originAsn) {
   return hit.length ? hit.map(e => e.f) : null
 }
 
+// prefixes 按 ip_start 排序 + 每文件 [min ip_start, max ip_end] 区间索引(meta.files.prefixes_ip, **仅 v4**)。
+// 精确 IP / 子网 / 父子段查询只读区间与 [start,end] 相交的小文件, 其余整文件跳过(原来恒读整套 ~24MB)。
+// v4 ip 列是精确 BIGINT(Number 装得下); v6 的 UHUGEINT 写进 parquet 是有损 DOUBLE 且仅 1~2 个小文件 ->
+// 不建索引、回退读全部(行为不变)。无索引(旧数据)/缺 start,end 同样回退全部, 仍正确。
+export function prefixesFilesForRange(start, end, v6) {
+  const all = v6 ? (S.meta?.files?.prefixes_v6 || []) : (S.meta?.files?.prefixes || [])
+  const idx = v6 ? null : S.meta?.files?.prefixes_ip
+  if (!idx || !idx.length || start == null || end == null) return all
+  const hits = idx.filter(it => it.lo <= end && it.hi >= start).map(it => it.f)
+  return hits.length ? hits : all
+}
+
 // 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(两族)。全都无覆盖才返回 null。
 export function pathsearchFilesForOrigins(asns) {
   const idx = _psOriginIdx()

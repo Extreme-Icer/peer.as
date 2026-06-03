@@ -44,6 +44,11 @@ def _subtract(s: int, e: int, holes: list) -> list[tuple]:
 PATH_CAP = 24
 FILE_SIZE = "16MB"
 PATHSEARCH_FILE_SIZE = "6MB"
+# prefixes 切得更细 + 每文件 [min ip_start, max ip_end] 区间索引(prefixes_ip), 让精确 IP/子网查询
+# 只读区间相交的那 1 个小文件(其余整文件跳过), 而非整套 ~24MB。约 2MB 分片 -> 实测单 IP 查 ~2MB(降 ~12x)。
+# **必须单线程 + preserve_insertion_order 写**(见下), 否则多线程并行写令各文件 ip_start 不连续、跨满全表 ->
+# 区间索引退化(每文件都覆盖全空间)、裁剪失效。同 pathsearch 的处理。
+PREFIX_FILE_SIZE = "2MB"
 # carve 时, 若一个前缀覆盖的 geo 段数 > 此值, 视为粗聚合 -> 退化国家级单段(防超大 v6/v4 聚合炸开)。
 SEG_OVERLAP_CAP = 256
 # 每个 (前缀,城市) 最多内嵌多少条 CIDR 子段(跨城大段会很多, 截断)。
@@ -184,15 +189,22 @@ def _export_family(con, cfg: dict, pq: Path, family: int) -> dict:
     util.log(f"  === 导出 family v{family} (suffix='{suffix or '(none)'}', iptype={iptype}) ===")
 
     # prefixes{suffix}: 全部前缀, 代表 cc/prov/city 来自 pgeo(ASOF), ip 按 family 类型, 按 ip_start 排序。
+    # 单线程 + preserve_insertion_order: 令各分片为「连续的 ip_start 区段」, 这样 prefixes_ip 区间索引
+    # 才能把精确 IP/子网查询裁到 1 个文件(多线程并行写会打乱、每文件跨满全表 -> 索引失效)。
     (pq / f"prefixes{suffix}").mkdir(parents=True, exist_ok=True)
+    con.execute("PRAGMA threads=1;")
+    con.execute("SET preserve_insertion_order=true;")
     con.execute(f"""
         COPY (
           SELECT pid, prefix, ip_start::{iptype} AS ip_start, ip_end::{iptype} AS ip_end,
                  plen, family, origin_asn, n_origins, n_paths,
                  COALESCE(cc,'ZZ') AS cc, province, city
           FROM pgeo WHERE family={family} ORDER BY ip_start
-        ) TO '{pq}/prefixes{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{FILE_SIZE}', OVERWRITE_OR_IGNORE);
+        ) TO '{pq}/prefixes{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PREFIX_FILE_SIZE}',
+              ROW_GROUP_SIZE 20000, OVERWRITE_OR_IGNORE);
     """)
+    con.execute("SET preserve_insertion_order=false;")
+    con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
 
     # paths{suffix}: 每前缀去重 path(<=PATH_CAP), 按 pid 排序。
     (pq / f"paths{suffix}").mkdir(parents=True, exist_ok=True)
@@ -356,6 +368,19 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         out_.sort(key=lambda e: e["lo"])
         return out_
 
+    def _ip_index_v4(file_list):
+        # 每文件 [min ip_start, max ip_end] 区间(前端按与查询 [start,end] 相交裁剪文件)。
+        # **仅 v4**: v4 的 ip 列是 BIGINT(精确)。v6 的 UHUGEINT 写进 parquet 会退化成 DOUBLE(有损,
+        # 边界可偏差 ~2^76), 据此裁剪有"误跳过覆盖文件"的风险; 且 v6 prefixes 仅 1~2 个小文件、收益甚微,
+        # 故 v6 不建索引(前端 prefixesFilesForRange 对 v6 回退读全部, 行为不变)。
+        out_ = []
+        for f in file_list:
+            lo, hi = con.execute(f"SELECT min(ip_start), max(ip_end) FROM read_parquet('{pq}/{f}')").fetchone()
+            if lo is not None:
+                out_.append({"f": f, "lo": int(lo), "hi": int(hi)})
+        out_.sort(key=lambda e: e["lo"])
+        return out_
+
     def _origin_index(file_list):
         out_ = []
         for f in file_list:
@@ -368,6 +393,8 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     for f in families:
         r = fam_results[f]; suf = r["suffix"]; gd = r["geodir"]
         files[f"prefixes{suf}"] = _rel(f"prefixes{suf}")
+        if f == 4:   # v4 only(见 _ip_index_v4: v6 的 ip 列在 parquet 里是有损 DOUBLE, 不建索引)
+            files["prefixes_ip"] = _ip_index_v4(files["prefixes"])
         files[f"paths{suf}"] = _rel(f"paths{suf}")
         files[f"pathsearch{suf}"] = _rel(f"pathsearch{suf}")
         files[f"paths_pid{suf}"] = _pid_index(files[f"paths{suf}"])

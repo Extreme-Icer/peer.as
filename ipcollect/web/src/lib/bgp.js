@@ -39,6 +39,7 @@ export const isTier1 = a => TIER1.has(+a)
 const REL_HI = 0.8, REL_LO = 0.2          // 方向比阈值: ≥HI 判客户, ≤LO 判上游, 居中判 peer
 export function classifyRelation(x, y, d, u) {
   const xt = TIER1.has(+x), yt = TIER1.has(+y)
+  if (xt && yt) return 'peer'            // 两个 Tier-1 之间只可能对等(无客户/供应商), 与方向无关
   if (yt && !xt) return 'up'              // 对方是 Tier-1、本侧不是 ⇒ 上游(绝对证据)
   const tot = d + u
   if (!tot) return 'peer'                  // 无任何可靠方向证据(如仅 full-feed 假象) ⇒ peer

@@ -83,6 +83,17 @@ export async function configure() {
   return edge
 }
 
+// 中国优化转发基址(给 DoH / WHOIS 这两个境内连通性差的外部依赖用)。复用数据宿主判定:
+// 数据落在哪台 CN 机器, 就用同机的 /dns-query、/whois 中转(Caddy 反代 cloudflare-dns.com / whois worker)。
+//   - DATA 已切 cn.peer.as 镜像(境内 CF 用户, GeoDNS 没生效)  -> CN_ORIGIN(跨域到 cn.peer.as)
+//   - 直连 cn.peer.as(同源)                                  -> ''(同源相对, 即 /dns-query)
+//   - 海外 CF / 本地 serve                                    -> null(前端直连外部源)
+export function cnProxyBase() {
+  if (DATA.startsWith(CN_ORIGIN)) return CN_ORIGIN
+  if (typeof location !== 'undefined' && location.hostname === CN_HOST) return ''
+  return null
+}
+
 export async function getJSON(url, opts) {
   const r = await fetch(url, opts)
   if (!r.ok) throw new Error(`${url} → ${r.status}`)

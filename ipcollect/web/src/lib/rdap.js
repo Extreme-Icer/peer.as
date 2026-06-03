@@ -8,10 +8,12 @@
 // 详见 docs/RDAP_WHOIS_RESEARCH.md。
 import BOOT from './rdap-bootstrap.json'
 import { S } from './store.svelte.js'
+import { cnProxyBase } from './db.js'
 import { ip2int, ip6ToBig } from './bgp.js'
 
 const FALLBACK = 'https://rdap.org/'
 // 域名无 RDAP(典型 .de 等 ccTLD)时的 WHOIS over HTTP 兜底(CF Worker, 源码见 whois-worker/)。
+// 海外直连 worker; 境内(edge=cn)经 CN 机器 /whois 中转(直连 workers.dev 连通性差)。见 deploy/cn.peer.as.Caddyfile。
 const WHOIS_WORKER = 'https://peer-as-whois.archeb.workers.dev/'
 // CN 优化: 数据切到 cn.peer.as 时可走同源反代(留接口, 未部署则仍直连)。见研究文档 §5.1。
 function cnProxy() {
@@ -208,8 +210,11 @@ function whoisToModel(key, server, text) {
   return { kind: 'domain', key, title: key, head, entities: [], remarks: [], rawWhois: String(text).trim(), source: server, via: 'whois' }
 }
 // 调 worker 取 whois(application/json -> {server,domain,whois})。失败/空抛错, 由调用方决定是否再降级。
+// 境内经 CN 机器 /whois 中转; referrerPolicy 保证跨域中转时带本站 Referer(过 Caddy 白名单)。
 async function whoisFallback(domain) {
-  const res = await fetch(WHOIS_WORKER + '?domain=' + encodeURIComponent(domain), { headers: { Accept: 'application/json' } })
+  const b = cnProxyBase()
+  const url = (b == null ? WHOIS_WORKER + '?domain=' : `${b}/whois?domain=`) + encodeURIComponent(domain)
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, referrerPolicy: 'strict-origin-when-cross-origin' })
   if (!res.ok) { const e = new Error(`WHOIS HTTP ${res.status}`); e.status = res.status; throw e }
   const j = await res.json()
   if (!j || !j.whois || !String(j.whois).trim()) throw new Error('WHOIS empty')

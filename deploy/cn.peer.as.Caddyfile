@@ -64,6 +64,45 @@
 		# 前端误判为海外 CF -> 国内错误走 jsDelivr(而非同源自托管 wasm)。
 		@cdncgi path /cdn-cgi/*
 		respond @cdncgi 404
+
+		# ── 中国优化转发: DoH / WHOIS(境内连通性差的外部依赖, 经本机优化线中转)─────────────
+		# 境内直连 cloudflare-dns.com(1.1.1.1 DoH)常被墙/污染、whois worker(workers.dev)也不稳;
+		# 前端 edge=cn 时改打本机 /dns-query、/whois。本机对外网通畅, 故反代给真实上游。
+		# **防开放代理滥用**: 仅放行 Referer 来自本站(peer.as / cn.peer.as)的请求, 其余一律 403。
+		#   (handle 块互斥且按序: 先匹配「路径+合法 Referer」放行, 同路径剩余的即非法 Referer -> 403。
+		#    前端对同源/跨我方域名的请求都带 Referer;DoH/WHOIS 均简单 GET, 无预检。)
+
+		# DoH: /dns-query -> cloudflare-dns.com(同路径透传)。
+		@doh_ok {
+			path /dns-query
+			header_regexp Referer ^https://(cn\.)?peer\.as(?:[:/]|$)
+		}
+		handle @doh_ok {
+			reverse_proxy https://cloudflare-dns.com {
+				header_up Host cloudflare-dns.com
+			}
+		}
+		@doh path /dns-query
+		handle @doh {
+			respond 403
+		}
+
+		# WHOIS: /whois -> peer-as-whois worker(剥到 /, worker 用 ?domain= 查询)。
+		@whois_ok {
+			path /whois
+			header_regexp Referer ^https://(cn\.)?peer\.as(?:[:/]|$)
+		}
+		handle @whois_ok {
+			rewrite * /
+			reverse_proxy https://peer-as-whois.archeb.workers.dev {
+				header_up Host peer-as-whois.archeb.workers.dev
+			}
+		}
+		@whois path /whois
+		handle @whois {
+			respond 403
+		}
+
 		# SPA 回退: 客户端路由(/4842、/1.1.1.0/24 等)缺失路径回退 index.html(前端 JS 解析)。真实文件原样服务。
 		try_files {path} /index.html
 		file_server

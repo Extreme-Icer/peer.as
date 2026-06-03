@@ -43,8 +43,12 @@
     {#each d.remarks || [] as r}
       <div class="wremark">{#if r.title}<b>{r.title}：</b>{/if}{r.value}</div>
     {/each}
+    {#if d.rawWhois}
+      <!-- WHOIS 兜底: 上方解析行只挑高置信字段, 这里给出完整原文(各注册局格式不一, 不丢信息) -->
+      <pre class="wraw">{d.rawWhois}</pre>
+    {/if}
     {#if d.source}
-      <div class="wsrc"><Fa icon={iDb} /> {t('whois_src')}: {d.source}</div>
+      <div class="wsrc"><Fa icon={iDb} /> {d.via === 'whois' ? 'WHOIS' : t('whois_src')}: {d.source}</div>
     {/if}
   {/if}
 </div>
@@ -67,6 +71,14 @@
     font-size: 11.5px; color: var(--muted); line-height: 1.6; margin-top: 8px;
     white-space: pre-line; overflow-wrap: anywhere; word-break: break-word;
     max-width: 100%; min-width: 0;
+  }
+  /* WHOIS 兜底原文: 等宽 + 保留换行, 限高可滚动, 长行自动换行不撑宽容器。 */
+  .wraw {
+    font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--muted);
+    margin: 10px 0 0; padding: 8px 10px; max-height: 280px; overflow: auto;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    background: var(--inbg); border: 1px solid var(--line2); border-radius: 6px;
+    max-width: 100%; min-width: 0; box-sizing: border-box;
   }
   .wsrc { font-size: 10.5px; color: var(--muted); margin-top: 10px; display: flex; align-items: center; gap: 6px; opacity: .8; }
   .wsrc :global(svg) { width: 10px; }

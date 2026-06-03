@@ -45,7 +45,7 @@ export const STRINGS = {
     w_iptype: '分配类型', w_parent: '母段', w_country: '国家/地区', w_status: '状态',
     w_registration: '注册时间', w_lastchanged: '最近变更', w_expiration: '到期',
     w_fullname: '名称', w_org: '组织', w_address: '地址', w_phone: '电话', w_fax: '传真',
-    w_email: '邮箱', w_kind: '类型', w_role: '角色', w_title: '头衔', w_url: '链接', w_remark: '备注',
+    w_email: '邮箱', w_kind: '类型', w_role: '角色', w_title: '头衔', w_url: '链接', w_remark: '备注', w_registrar: '注册商',
     role_administrative: '管理', role_technical: '技术', role_abuse: '滥用举报',
     role_registrant: '注册人', role_registrar: '注册商', role_noc: 'NOC', role_reseller: '分销',
     // ── DNS 解析视图 + 域名详情 ──
@@ -101,7 +101,7 @@ export const STRINGS = {
     w_iptype: 'Type', w_parent: 'Parent', w_country: 'Country', w_status: 'Status',
     w_registration: 'Registered', w_lastchanged: 'Last changed', w_expiration: 'Expires',
     w_fullname: 'Name', w_org: 'Org', w_address: 'Address', w_phone: 'Phone', w_fax: 'Fax',
-    w_email: 'Email', w_kind: 'Kind', w_role: 'Role', w_title: 'Title', w_url: 'URL', w_remark: 'Remark',
+    w_email: 'Email', w_kind: 'Kind', w_role: 'Role', w_title: 'Title', w_url: 'URL', w_remark: 'Remark', w_registrar: 'Registrar',
     role_administrative: 'admin', role_technical: 'tech', role_abuse: 'abuse',
     role_registrant: 'registrant', role_registrar: 'registrar', role_noc: 'NOC', role_reseller: 'reseller',
     // ── DNS view + domain detail ──

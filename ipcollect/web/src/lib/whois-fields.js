@@ -9,9 +9,9 @@ const KEY_ICON = {
   handle: iHandle, name: iTag, fullname: iTag, asrange: iRange, iprange: iRange, cidr: iNet,
   iptype: iPrefix, parent: iParent, country: iFlag, status: iStatus,
   registration: iReg, lastchanged: iChangelog, expiration: iReg,
-  org: iBuilding, address: iLoc, phone: iPhone, fax: iFax, email: iMail, url: iLink,
+  org: iBuilding, registrar: iBuilding, address: iLoc, phone: iPhone, fax: iFax, email: iMail, url: iLink,
   role: iRole, title: iTitle, kind: iDot, remark: iNote,
-  // 域名 RDAP: 域名 / 名称服务器 / DNSSEC
+  // 域名 RDAP / WHOIS: 域名 / 名称服务器 / DNSSEC / 注册商
   ldhname: iTag, ns: iNet, dnssec: iShield,
 }
 export function keyIcon(k) { return KEY_ICON[k] || iDot }

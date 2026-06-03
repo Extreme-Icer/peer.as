@@ -11,6 +11,8 @@ import { S } from './store.svelte.js'
 import { ip2int, ip6ToBig } from './bgp.js'
 
 const FALLBACK = 'https://rdap.org/'
+// 域名无 RDAP(典型 .de 等 ccTLD)时的 WHOIS over HTTP 兜底(CF Worker, 源码见 whois-worker/)。
+const WHOIS_WORKER = 'https://peer-as-whois.archeb.workers.dev/'
 // CN 优化: 数据切到 cn.peer.as 时可走同源反代(留接口, 未部署则仍直连)。见研究文档 §5.1。
 function cnProxy() {
   return (S.edge === 'cn' && typeof location !== 'undefined') ? null : null  // 预留: 返回反代 base 即启用
@@ -165,6 +167,55 @@ export function normalize(kind, key, d) {
   }
 }
 
+// ── WHOIS 兜底(纯文本 -> 规范化模型)─────────────────────────────
+// 把扁平 whois 文本的常见 "Key: Value" 行映射到与 RDAP 一致的规范 key, 拍成 head 行;
+// 各注册局格式差异大, 故只挑高置信字段, 并始终保留全文(rawWhois)由 <pre> 展示, 不丢信息。
+function whoisKey(lk) {
+  if (lk === 'domain name' || lk === 'domain') return 'ldhname'
+  if (lk.startsWith('registrar abuse contact email')) return 'email'
+  if (lk === 'registrar' || lk === 'sponsoring registrar' || lk === 'registrar name') return 'registrar'
+  if (lk.startsWith('creation date') || lk === 'created' || lk.startsWith('created on') ||
+      lk.startsWith('registered on') || lk.startsWith('registration time') || lk.startsWith('registration date')) return 'registration'
+  if (lk.startsWith('updated date') || lk.startsWith('last updated') || lk.startsWith('last modified') ||
+      lk.startsWith('modified') || lk.startsWith('changed') || lk.startsWith('last update')) return 'lastchanged'
+  if (lk.startsWith('registry expiry date') || lk.startsWith('registrar registration expiration') ||
+      lk.startsWith('expir') || lk.startsWith('paid-till') || lk.startsWith('valid until')) return 'expiration'
+  if (lk === 'domain status' || lk === 'status') return 'status'
+  if (lk.startsWith('name server') || lk === 'nserver' || lk === 'nameserver') return 'ns'
+  if (lk.startsWith('registrant organization') || lk.startsWith('registrant organisation') ||
+      lk === 'org' || lk === 'holder' || lk === 'organization') return 'org'
+  if (lk === 'registrant country' || lk === 'country') return 'country'
+  if (lk.startsWith('dnssec')) return 'dnssec'
+  return null
+}
+function whoisToModel(key, server, text) {
+  const head = [{ key: 'ldhname', value: key }]
+  const seen = new Set()
+  for (const raw of String(text).split(/\r?\n/)) {
+    const i = raw.indexOf(':')
+    if (i < 0) continue
+    const lk = raw.slice(0, i).trim().toLowerCase()
+    let v = raw.slice(i + 1).trim()
+    if (!v) continue
+    const ck = whoisKey(lk)
+    if (!ck || ck === 'ldhname') continue
+    if (ck === 'registration' || ck === 'lastchanged' || ck === 'expiration') v = fmtDate(v)
+    const sig = ck + ' ' + v
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    head.push({ key: ck, value: v })
+  }
+  return { kind: 'domain', key, title: key, head, entities: [], remarks: [], rawWhois: String(text).trim(), source: server, via: 'whois' }
+}
+// 调 worker 取 whois(application/json -> {server,domain,whois})。失败/空抛错, 由调用方决定是否再降级。
+async function whoisFallback(domain) {
+  const res = await fetch(WHOIS_WORKER + '?domain=' + encodeURIComponent(domain), { headers: { Accept: 'application/json' } })
+  if (!res.ok) { const e = new Error(`WHOIS HTTP ${res.status}`); e.status = res.status; throw e }
+  const j = await res.json()
+  if (!j || !j.whois || !String(j.whois).trim()) throw new Error('WHOIS empty')
+  return whoisToModel(domain, j.server || '', j.whois)
+}
+
 // ── fetch + 缓存 ──────────────────────────────────────────────────
 const mem = new Map()   // `${kind}:${key}` -> Promise<normalized>
 
@@ -183,7 +234,11 @@ async function doFetch(kind, key) {
   const ssKey = `rdap:${kind}:${key}`
   try {
     const cached = sessionStorage.getItem(ssKey)
-    if (cached) { const o = JSON.parse(cached); const n = normalize(kind, key, o.body); n.source = o.host; return n }
+    if (cached) {
+      const o = JSON.parse(cached)
+      if (o.whois) return whoisToModel(key, o.server, o.text)   // 上次走的 WHOIS 兜底
+      const n = normalize(kind, key, o.body); n.source = o.host; return n
+    }
   } catch (e) { /* ignore */ }
 
   const v6 = kind === 'ip' && String(key).includes(':')
@@ -203,8 +258,16 @@ async function doFetch(kind, key) {
       const n = normalize(kind, key, body); n.source = host; return n
     } catch (e) {
       lastErr = e
-      if (e.status === 404) throw e   // 明确不存在: 不必再试兜底
+      if (e.status === 404) break   // 明确不存在: 停止 RDAP 重试(域名转 WHOIS 兜底)
     }
+  }
+  // 域名: RDAP 全失败(无 RDAP 的 ccTLD / 404)时回退 WHOIS。兜底再失败则抛原 RDAP 错。
+  if (kind === 'domain') {
+    try {
+      const n = await whoisFallback(key)
+      try { sessionStorage.setItem(ssKey, JSON.stringify({ whois: true, server: n.source, text: n.rawWhois })) } catch (e) { /* 忽略 */ }
+      return n
+    } catch (we) { /* 落到下面抛 RDAP 错 */ }
   }
   throw lastErr || new Error('RDAP fetch failed')
 }

@@ -183,7 +183,8 @@ TLS-cert caveats are in **[`AGENTS.md`](AGENTS.md)**.
 **3. Keep it fresh (optional)**
 
 `scripts/daily-refresh.sh` chains ingest → export → rsync the full site to the mirror →
-`wrangler pages deploy`; run it from cron (the hosted site refreshes daily). Details in `AGENTS.md`.
+`wrangler pages deploy`; run it from cron (the hosted site refreshes every 8 hours, tracking the
+RIPE RIS bview publish cadence). Details in `AGENTS.md`.
 
 Configuration lives in `config.json` (gitignored; template in `config.example.json`).
 Secrets — Cloudflare credentials, the private geo path, `VITE_DATA_BASE`, `R2_BUCKET`

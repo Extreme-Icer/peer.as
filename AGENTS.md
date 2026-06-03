@@ -365,12 +365,17 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   `rm -rf ipcollect/web/public/duckdb-ext/`(让 deploy 重下新版;否则引擎请求新版本路径而文件是旧版 → 扩展加载失败、回退官方源);
   ③ 重新部署(`scripts/deploy.sh`,其 verify 会校验扩展确返回 wasm)。
 
-### 自动化：每天 04:00 自动刷新 + 部署（cron）
+### 自动化：每 8 小时自动刷新 + 部署（cron）
 
-`scripts/daily-refresh.sh` 是 **fcron 04:00 的薄封装**：只管日志文件 + 14 份轮转，实际 `exec scripts/deploy.sh --data`
-（= 清缓存 → `ingest --reset` v4+v6 → `export-parquet` → **npm build** → 部署 CF+CN）。**部署逻辑只在 deploy.sh 一处**，
-cron 与手动结果一致。**已弃用 R2**（数据全部同源，见「中国优化」）。
-- 安装/查看：`fcrontab -l`（条目 `0 4 * * * .../scripts/daily-refresh.sh`）。改时间：`fcrontab -e` 或重灌。
+`scripts/daily-refresh.sh` 是 **fcron 的薄封装**（脚本名沿用 daily 是历史遗留，**实为每 8h 一次**）：只管日志文件 +
+45 份轮转，实际 `exec scripts/deploy.sh --data`（= 清缓存 → `ingest --reset` v4+v6 → `export-parquet` → **npm build** →
+部署 CF+CN）。**部署逻辑只在 deploy.sh 一处**，cron 与手动结果一致。**已弃用 R2**（数据全部同源，见「中国优化」）。
+- **频率 = 每 8 小时**（本地 Asia/Shanghai `00:40 / 08:40 / 16:40`，条目 `40 0,8,16 * * *`）。这对齐
+  **RIPE RIS bview 的 8h 发布节奏（UTC 00/08/16）+ ~40min 发布延迟**——bview 是数据源，跑更勤也不会更新（要更实时得改吃
+  RIS update/RIS Live 增量流，是另一套有状态架构）。单轮 ~25min ≪ 8h 间隔，`flock` 防并发足够。
+- 安装/查看：`fcrontab -l`。改时间：编辑后 `fcrontab - < 文件` 重灌（**本机 setuid `fcrontab` 在无 tty/后台下
+  `fcrontab 文件` 直接调用会段错误；必须用 stdin 形式 `fcrontab -`**）。注意 fcron **自解析引号**：命令里别写 shell 风格
+  双引号（路径无空格就别加），否则该行被判 `Mismatched quotes` 静默跳过（acme.sh 续期那行曾因此失效，已去引号修好）。
 - deploy.sh 要点（cron 与手动共用）：补 `PATH`(含 `/usr/lib/node-24/bin`) 与 `HOME`(wrangler 读 `~/.config/.wrangler`
   OAuth 凭据，自动续期)；加载 `.env`(CN_DEPLOY_*); `flock`(`logs/deploy.lock`) 串行锁防重 ingest 撕裂库；
   `--data` 时先清缓存(`cache/mrt/*.gz`+`cache/duck_tmp/*`，保留 `cache/geo`/`autnums.txt`)防撑爆硬盘。

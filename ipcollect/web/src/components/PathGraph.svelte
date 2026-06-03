@@ -1,5 +1,5 @@
 <script>
-  import { truncToTier1, opOf, asnName, TIER1 } from '../lib/bgp.js'
+  import { truncToTier1, asnName, TIER1 } from '../lib/bgp.js'
   import { showAsn } from '../lib/queries.js'
   let { rec } = $props()
   const go = asn => showAsn(asn)
@@ -25,7 +25,27 @@
     }
     const arr = [...nodes], maxD = Math.max(0, ...arr.map(x => depth[x])), layers = {}
     arr.forEach(x => { (layers[depth[x]] = layers[depth[x]] || []).push(x) })
-    Object.values(layers).forEach(l => l.sort((p, q) => (opOf(p) + p).localeCompare(opOf(q) + q)))
+    // 列内排序: 先按 ASN 定序, 再用重心法(barycenter)上下来回扫 —— 每个节点排到其相邻列邻居的平均
+    // 纵向位置上, 显著减少连线交叉(Sugiyama 层序的经典启发式)。
+    const depths = Object.keys(layers).map(Number).sort((a, b) => a - b)
+    Object.values(layers).forEach(l => l.sort((p, q) => p - q))
+    const nbr = {}
+    for (const k in edgeW) { const [a, b] = k.split('>').map(Number); (nbr[a] = nbr[a] || []).push(b); (nbr[b] = nbr[b] || []).push(a) }
+    const idx = {}, reindex = () => { for (const d of depths) layers[d].forEach((a, i) => { idx[a] = i }) }
+    reindex()
+    const orderBy = (d, rd) => {            // 把 d 列按其在 rd 列邻居的平均位置排序
+      const bc = {}
+      for (const a of layers[d]) {
+        const ns = (nbr[a] || []).filter(x => depth[x] === rd)
+        bc[a] = ns.length ? ns.reduce((s, x) => s + idx[x], 0) / ns.length : idx[a]
+      }
+      layers[d].sort((p, q) => (bc[p] - bc[q]) || (idx[p] - idx[q]))   // 重心相等保持稳定
+      reindex()
+    }
+    for (let it = 0; it < 4; it++) {
+      for (let i = 1; i < depths.length; i++) orderBy(depths[i], depths[i - 1])       // 下行: 参照更靠 origin 的左列
+      for (let i = depths.length - 2; i >= 0; i--) orderBy(depths[i], depths[i + 1])  // 上行: 参照更靠 Tier-1 的右列
+    }
     const rowP = NH + ROWG, colP = NW + COLG
     const maxRows = Math.max(1, ...Object.values(layers).map(l => l.length))
     // 不再画 prefix 节点: origin(depth0) 直接放在第 0 列, 图就是 origin -> 上游 -> Tier-1。

@@ -41,6 +41,27 @@ esac; done
 log(){ echo "[$(date -Is)] $*"; }
 
 mkdir -p "$PROJ/logs"
+
+# ── 0) GitOps 代码同步（以后只需 commit+push，两站 cron/手动部署都自动拉新代码，无需手动 ff dn42-prod）──
+#   ff-only：仅快进到 origin/main，绝不 reset/覆盖本地提交；分叉/离线只告警不阻断，用当前工作树继续。
+#   config.json 是 gitignored 的本地文件，不受同步影响（peeras/dn42 靠它区分）。
+#   放在 flock 之前：若代码确有更新则 re-exec 本脚本以应用新版本（避免改动运行中的脚本；IPC_GIT_SYNCED 防重入死循环）。
+if [ "${IPC_GIT_SYNCED:-0}" != 1 ] && command -v git >/dev/null 2>&1 && git -C "$PROJ" rev-parse --git-dir >/dev/null 2>&1; then
+  _before="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null || true)"
+  if git -C "$PROJ" fetch --quiet origin 2>/dev/null && git -C "$PROJ" merge --ff-only origin/main >/dev/null 2>&1; then
+    _after="$(git -C "$PROJ" rev-parse HEAD 2>/dev/null || true)"
+    if [ -n "$_after" ] && [ "$_before" != "$_after" ]; then
+      log "git: 同步到 origin/main (${_before:0:7} -> ${_after:0:7})；re-exec 以应用新版本"
+      export IPC_GIT_SYNCED=1
+      exec "$PROJ/scripts/deploy.sh" "$@"
+    fi
+    log "git: 代码已是 origin/main 最新 (${_after:0:7})"
+  else
+    log "git: ⚠ 同步跳过（离线/分叉/有未推送本地提交?），用当前工作树继续"
+  fi
+fi
+export IPC_GIT_SYNCED=1
+
 # 防并发：cron 与手动互斥（上一次没跑完就退出，避免并发重 ingest 撕裂 DB / 半成品 dist 被部署）。
 exec 9>"$PROJ/logs/deploy.lock"
 if ! flock -n 9; then log "另一次 deploy 仍在运行，退出。"; exit 0; fi

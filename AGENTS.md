@@ -134,8 +134,11 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
 部署脚本（`deploy.sh` / `vendor-duckdb-ext.sh` / `daily-refresh.sh`）**PROJ 均从脚本位置推导、不写死**，且 deploy.sh
 **site-aware**：开头读 `config.json` 得 `site`/`cn_mirror`/`cf_project`/host(=site_base)，据此 `export VITE_SITE`、
 选 CF 项目、决定是否部署 CN、校验哪个域名。故 **peeras 与 dn42 各自一个 checkout，跑同一份 deploy.sh**。
-- **dn42 实例（已建并在跑）** = git worktree `/home/aosc/dn42-peer-as`，分支 `dn42-prod`（跟踪 origin/main；更新代码:
-  `git -C /home/aosc/dn42-peer-as fetch && git reset --hard origin/main`）。`.venv` 与 `ipcollect/web/node_modules` 软链到主
+- **dn42 实例（已建并在跑）** = git worktree `/home/aosc/dn42-peer-as`，分支 `dn42-prod`（跟踪 origin/main）。
+  **代码自动同步（GitOps）**：`deploy.sh` 开头(flock 前)会 `git fetch + merge --ff-only origin/main`，有更新则 re-exec 应用新版本
+  → **改代码只需 `commit + push origin main`，两站 cron/手动部署自动拉新代码**，无需再手动 ff/reset dn42-prod。
+  （ff-only 仅快进、不覆盖本地提交；分叉/离线只告警不阻断；`config.json` 是 gitignored 本地文件不受影响。
+  应急手动同步仍可 `git -C /home/aosc/dn42-peer-as fetch && git reset --hard origin/main`。）`.venv` 与 `ipcollect/web/node_modules` 软链到主
   checkout 复用依赖（无需重装）。实例 `config.json`：`site=dn42`、`cf_project=dn42-peer-as`、`mrt_layout=dn42`、
   `mrt_base_url=https://mrt42.strexp.net`、`mrt_collectors=["mrt42"]`、`registry_repo=…`、`site_base=https://dn42.peer.as`、
   `asn_registry=[]`、`focus_asns=[]`。

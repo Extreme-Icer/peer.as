@@ -1,0 +1,10 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "peer-as-whois"
+main = "src/index.ts"
+compatibility_date = "2024-07-12"
+compatibility_flags = ["nodejs_compat"]
+
+# WHOIS over HTTP fallback for peer.as 前端(域名不支持 RDAP 时兜底)。
+# 上游: github.com/abersheeran/http-whois(已归档)。本地改动见 README:
+#   1) 全部响应加 CORS(浏览器直连前端需要)
+#   2) socket 读取改为循环读到 EOF(原版单次 read 会截断多段响应)

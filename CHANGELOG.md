@@ -8,6 +8,13 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-03
 
+- **改进：浏览器标签/历史记录显示当前详情。** 打开某个前缀、ASN 或域名详情时，浏览器标签页标题（以及前进/后退
+  历史记录里的条目）会随之变成正在查看的对象（如 `1.1.1.0/24 · PEER.AS`、`AS4538 CERNET · PEER.AS`），方便在
+  历史记录里快速找回此前看过的页面。
+  **Improved: browser tab/history shows the current detail.** When you open a prefix, ASN or domain detail, the
+  browser tab title (and the entry in back/forward history) now reflects what you’re viewing (e.g.
+  `1.1.1.0/24 · PEER.AS`, `AS4538 CERNET · PEER.AS`), making it easy to find a previously viewed page in history.
+
 - **新增：DNS 解析页。** 在搜索框直接输入域名（如 `example.com`）即可解析 DNS：左侧列出全部记录——A / AAAA
   记录会逐条匹配到库内的 IP 前缀与 origin ASN（可点击下钻到前缀/ASN 详情），其余记录（NS / MX / TXT / SOA /
   CNAME / CAA 等）直接展示；右侧域名详情面板与 ASN 面板逻辑一致，自动尝试查询域名的 RDAP/WHOIS 注册信息

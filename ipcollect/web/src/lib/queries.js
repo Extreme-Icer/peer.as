@@ -249,7 +249,7 @@ export async function showInsight(pid, prefix) {
   S.asnView = null
   S.selectedPid = pid
   go('/' + prefix)
-  S.insight = { loading: true }
+  S.insight = { loading: true, prefix }   // prefix 先填上, 让页标题/历史项立刻可辨识(查询返回前)
   const v6 = (prefix || '').includes(':')
   // 用 prefix 串的 [start,end] 裁剪 prefixes 文件(该 pid 的行 ip_start 落在此区间内, 只读相交文件)。
   const prng = v6 ? ip6Range(prefix) : ip2range(prefix)

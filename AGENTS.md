@@ -451,6 +451,9 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   (如 `/1.1.1.0/24`、`/2001:db8::/32`)直开/刷新 → 填精确框 + 搜索 + 展开详情(`openPrefixByString` 按前缀串查 pid);
   传统 `?q=<词>` 搜索。**关闭语义**：`closeInsight` 看 prefix 且主体是 ASN 时**先返回 ASN 页**, 再点才真关;
   **Esc / 移动端关闭 = `hardCloseDetail`** 全关 + URL 回 `/?q=<框>`(或 `/`)。
+  - **页标题随详情变(历史记录可辨识)**：`App.svelte` 的 `pageTitle()`(`$effect` 内)据 `S.detailKind`/`insight`/
+    `asnView`/`domainView`/`dns` 算出 `<前缀|ASN|域名> · <brand>`(无详情回落 `t('page_title')`)。与 `go()` pushState
+    同源响应 ⇒ 每个历史项记录到对应标题。`showInsight` 的 loading 态预填 `insight.prefix` 让标题在查询返回前即正确。
 - **深层路径硬约束(两处必须)**：① `index.html` 的 `<base href="/">` —— 否则 `/1.1.1.0/24` 下相对资源与
   `db.js` 的 `document.baseURI`(算 `SAME=/data`)会解析到 `/1.1.1.0/...` 而全坏；② **CN Caddy 的 `try_files {path} /index.html`**
   SPA 回退(`deploy/cn.peer.as.Caddyfile`) —— 否则直开 `/4842` 在 cn.peer.as 404(CF Pages 默认对缺失路径回 index.html, 无需配)。

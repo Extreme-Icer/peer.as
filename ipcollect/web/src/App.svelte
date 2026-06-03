@@ -7,6 +7,7 @@
   import { ccLabel } from './lib/bgp.js'
   import { applyRoute, hardCloseDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
+  import { brand } from './lib/site.js'
   import { iSpinner } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
   import MobileBar from './components/MobileBar.svelte'
@@ -20,10 +21,24 @@
 
   let fatal = $state('')
 
-  // 随语言本地化 <head>: title / lang / description (切英文时 title 也变英文)。
+  // 当前正在查看的详情(prefix/asn/domain/dns)对应的页标题 —— 让每个 pushState 历史项可辨识(便于翻历史记录)；
+  // 无详情时回落默认页标题。随详情状态 + 语言响应式变化(与 queries.js 的 go() pushState 同源, 故历史项标题对应正确)。
+  function pageTitle() {
+    const B = brand.main + brand.hi
+    if (S.detailKind === 'prefix' && S.insight?.prefix) return `${S.insight.prefix} · ${B}`
+    if (S.detailKind === 'asn' && S.asnView) {
+      const n = S.asnView.name
+      return `AS${S.asnView.asn}${n ? ' ' + n : ''} · ${B}`
+    }
+    if (S.detailKind === 'domain' && S.domainView?.domain) return `${S.domainView.domain} · ${B}`
+    if (S.mode === 'dns' && S.dns?.domain) return `${S.dns.domain} · ${B}`   // 移动端无右侧面板时仍用域名
+    return t('page_title')
+  }
+
+  // 随语言/详情本地化 <head>: title / lang / description (切英文时 title 也变英文; 切详情时 title 变成正在看的对象)。
   $effect(() => {
     document.documentElement.lang = S.lang === 'zh' ? 'zh-CN' : 'en'
-    document.title = t('page_title')
+    document.title = pageTitle()
     const d = document.querySelector('meta[name="description"]')
     if (d) d.setAttribute('content', t('page_desc'))
   })

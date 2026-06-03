@@ -5,7 +5,7 @@ import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOr
 import { resolveDns } from './dns.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
-  asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel,
+  asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel, classifyRelation, isTier1,
 } from './bgp.js'
 
 const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
@@ -279,7 +279,7 @@ export async function showAsn(asn) {
     const psAll = pathsearchFilesForOrigin(asn)
     const psFiles = psAll === null ? [] : byFam(psAll)
     if (!psFiles.length) {   // 该 ASN 不是库内任何前缀的 origin(可能是纯 transit / 不在库)
-      S.asnView = { asn, name: asnName(asn), count4: 0, count6: 0, prefixes: [], upstreams: [], neigh: null }
+      S.asnView = { asn, name: asnName(asn), count4: 0, count6: 0, prefixes: [], rel: emptyRel(), neigh: null }
       return
     }
     const from = rpList(psFiles)
@@ -290,21 +290,58 @@ export async function showAsn(asn) {
     S.asnView = {
       asn, name: asnName(asn),
       count4: Number(cnt[0]?.c4 || 0), count6: Number(cnt[0]?.c6 || 0),
-      prefixes: rows, upstreams: deriveUpstreams(rows, asn), neigh: null,
+      prefixes: rows, rel: deriveRelations(rows, asn), neigh: null,
     }
   } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }
 }
-// 从通告前缀的 best_path 推「直接上游」(origin 左侧那一跳), 廉价、随通告前缀一起拿到。
-function deriveUpstreams(rows, asn) {
-  const m = new Map()
-  for (const r of rows) {
-    const arr = parseBest(r.best_path)
-    const i = arr.lastIndexOf(asn)
-    if (i > 0) { const u = arr[i - 1]; if (u && u !== asn) m.set(u, (m.get(u) || 0) + 1) }
-  }
-  return [...m.entries()].map(([a, n]) => ({ asn: a, n })).sort((a, b) => b.n - a.n).slice(0, 30)
+// ── 邻居关系(三态: up=provider / peer / down=customer) ──────────────────────────────────
+const emptyRel = () => ({ up: [], peer: [], down: [] })
+// 在 acc(Map y -> {d,u,w,evd,evu}) 中累计一条邻接观测。
+//   side 'd' = Y 在 origin 侧(可靠的客户证据);
+//   side 'u' = Y 在收集器侧且非首跳(可靠的上游证据);
+//   side 'w' = Y 在收集器侧但本身是路径首跳(index0)= 收集器自己的 peer ⇒ 收集器上游假象, 不可靠。
+// 各侧留一条样本路径作为「依据」(首次出现即记, 不覆盖)。
+function bumpNeighbor(acc, y, side, prefix, arr) {
+  let o = acc.get(y)
+  if (!o) { o = { d: 0, u: 0, w: 0, evd: null, evu: null }; acc.set(y, o) }
+  o[side]++
+  if (side === 'd') { if (!o.evd) o.evd = { prefix, path: arr, side: 'd' } }
+  else if (!o.evu) o.evu = { prefix, path: arr, side: 'u' }   // u/w 都属收集器侧
 }
-// 按需「完整邻居」分析: 全表扫 pathsearch 里所有含该 ASN 的路径, 同时得上游(左)与下游(右)。
+// 把累计的邻接 Map 按 classifyRelation 分到 up/peer/down 三组, 各带计数 + 一条依据路径。
+// 关键: 上游分类只用可靠证据(d+u, w 已剔除 full-feed 假象); 不再丢弃任何邻居 ——
+//   只有绝对证据进上游/下游, 其余(含纯收集器假象 w)一律落到 peer, 不臆测方向。
+function groupRelations(asn, acc, limit) {
+  const out = emptyRel()
+  for (const [y, o] of acc) {
+    const rel = classifyRelation(asn, y, o.d, o.u)         // w 不传入, 不污染方向 ⇒ 仅 w 者落 peer
+    const ev = rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd)
+    // 计数: 上下游用可靠证据; peer(含收集器假象)用总观测次数, 以反映其被看到的频度。
+    const n = rel === 'peer' ? (o.d + o.u + o.w) : (o.d + o.u)
+    out[rel].push({ asn: y, n, d: o.d, u: o.u, w: o.w, ev })
+  }
+  for (const k of ['up', 'peer', 'down']) out[k].sort((a, b) => b.n - a.n).splice(limit)
+  return out
+}
+// 处理一条路径: 累计 asn 两侧邻接。上游证据须「左邻之上存在 Tier-1」, 否则记 w 假象。
+function accPath(acc, arr, asn, prefix) {
+  let firstT1 = Infinity                          // 路径中第一个 Tier-1 的下标(从收集器侧起)
+  for (let j = 0; j < arr.length; j++) { if (isTier1(arr[j])) { firstT1 = j; break } }
+  for (let i = 0; i < arr.length; i++) if (arr[i] === asn) {
+    if (i < arr.length - 1 && arr[i + 1] !== asn) bumpNeighbor(acc, arr[i + 1], 'd', prefix, arr)
+    if (i > 0 && arr[i - 1] !== asn) {
+      const weak = firstT1 > i - 1                 // 左邻位置之上无 Tier-1 ⇒ 未经 DFZ 核心(full-feed/泄漏) ⇒ 上游假象
+      bumpNeighbor(acc, arr[i - 1], weak ? 'w' : 'u', prefix, arr)
+    }
+  }
+}
+// 从通告前缀的 best_path 推邻居关系, 廉价、随通告前缀一起拿到(X=origin, 只会得到上游/对端)。
+function deriveRelations(rows, asn) {
+  const acc = new Map()
+  for (const r of rows) accPath(acc, parseBest(r.best_path), asn, r.prefix)
+  return groupRelations(asn, acc, 30)
+}
+// 按需「完整邻居」分析: 全表扫 pathsearch 里所有含该 ASN 的路径, 两侧邻接全收 → 三态分类。
 // 重(大 transit ASN 命中分片多), 故不自动触发, 由面板按钮触发; LIMIT 兜底防超大。
 export async function scanNeighbors(asn) {
   asn = +asn
@@ -313,20 +350,15 @@ export async function scanNeighbors(asn) {
   try {
     const psAll = pathsearchFilesForOrigin(null)
     const psFiles = psAll === null ? [] : byFam(psAll)
-    if (!psFiles.length) { S.asnView = { ...S.asnView, neigh: { up: [], down: [], scanned: 0 } }; return }
-    const rows = await q(`SELECT paths_blob FROM ${rpList(psFiles)} WHERE paths_blob LIKE '% ${asn} %' LIMIT 20000`)
-    const up = new Map(), down = new Map()
+    if (!psFiles.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0 } }; return }
+    const rows = await q(`SELECT prefix, paths_blob FROM ${rpList(psFiles)} WHERE paths_blob LIKE '% ${asn} %' LIMIT 20000`)
+    const acc = new Map()
     for (const r of rows) {
       for (const path of String(r.paths_blob || '').trim().split('|')) {
-        const arr = path.trim().split(/\s+/).map(Number)
-        for (let i = 0; i < arr.length; i++) if (arr[i] === asn) {
-          if (i > 0 && arr[i - 1] !== asn) up.set(arr[i - 1], (up.get(arr[i - 1]) || 0) + 1)
-          if (i < arr.length - 1 && arr[i + 1] !== asn) down.set(arr[i + 1], (down.get(arr[i + 1]) || 0) + 1)
-        }
+        accPath(acc, path.trim().split(/\s+/).map(Number), asn, r.prefix)
       }
     }
-    const top = mp => [...mp.entries()].map(([a, n]) => ({ asn: a, n })).sort((x, y) => y.n - x.n).slice(0, 40)
-    S.asnView = { ...S.asnView, neigh: { up: top(up), down: top(down), scanned: rows.length, capped: rows.length >= 20000 } }
+    S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, capped: rows.length >= 20000 } }
   } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
 }
 

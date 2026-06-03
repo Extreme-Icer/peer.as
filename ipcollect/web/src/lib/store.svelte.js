@@ -20,7 +20,7 @@ export const S = $state({
   // detailKind: 当前面板视图 'prefix' | 'asn' | 'domain' | null(关闭)。prefix 载荷在 insight, asn 在 asnView, domain 在 domainView。
   detailKind: null,
   insight: null,           // { prefix, loc, origin_asn, n_paths, lowvis, paths:[{asns,peers,is_best}], sup:[], sub:[], loading }
-  asnView: null,           // { asn, name, loading, error, count4, count6, prefixes:[], upstreams:[{asn,n}], neigh:null|{up,down,scanned} }
+  asnView: null,           // { asn, name, loading, error, count4, count6, prefixes:[], rel:{up,peer,down}, neigh:null|{up,peer,down,scanned} } ; 组员 {asn,n,d,u,ev}
   domainView: null,        // { domain } —— 域名详情面板载荷; WHOIS/RDAP 由 Whois.svelte(kind='domain') 自取。
   // 主体上下文: 精确框是 ASN/域名 时 = {kind:'asn'|'domain', id}; 用于「关闭子页时先返回主体」语义。其它输入则 null。
   subject: null,

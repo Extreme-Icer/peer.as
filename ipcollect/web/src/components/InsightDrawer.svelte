@@ -102,7 +102,7 @@
               <tr class:hit={pq.hasInclude && pq.test(g.asns)}>
                 <td class="num">{g.peers}</td>
                 <td class="num">{g.asns.length}</td>
-                <td>{#if g.is_best}<span class="star"><Fa icon={iStar} /></span> {/if}<AsPath asns={g.asns} /></td>
+                <td>{#if g.is_best}<span class="star"><Fa icon={iStar} /></span> {/if}<AsPath asns={g.asns} nav /></td>
               </tr>
             {/each}
           </tbody>

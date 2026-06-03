@@ -296,42 +296,46 @@ export async function showAsn(asn) {
 }
 // ── 邻居关系(三态: up=provider / peer / down=customer) ──────────────────────────────────
 const emptyRel = () => ({ up: [], peer: [], down: [] })
-// 在 acc(Map y -> {d,u,w,evd,evu}) 中累计一条邻接观测。
-//   side 'd' = Y 在 origin 侧(可靠的客户证据);
-//   side 'u' = Y 在收集器侧且非首跳(可靠的上游证据);
-//   side 'w' = Y 在收集器侧但本身是路径首跳(index0)= 收集器自己的 peer ⇒ 收集器上游假象, 不可靠。
+// 在 acc(Map y -> {d,u,w,wd,evd,evu}) 中累计一条邻接观测。可靠证据 d/u, 假象 wd/w 仅供落 peer + 计数。
+//   'd'  = Y 在 origin 侧, 且 X 左侧(收集器侧)存在 Tier-1 ⇒ X 经 DFZ 到达收集器, Y 是可靠客户;
+//   'wd' = Y 在 origin 侧, 但 X 左侧无 Tier-1(X 是 full-feed 收集器边缘) ⇒ 方向不可靠(Y 可能是 X 的 provider/peer);
+//   'u'  = Y 在收集器侧, 且其位置之上存在 Tier-1 ⇒ 可靠上游;
+//   'w'  = Y 在收集器侧, 但其上无 Tier-1(full-feed/泄漏) ⇒ 上游假象。
 // 各侧留一条样本路径作为「依据」(首次出现即记, 不覆盖)。
 function bumpNeighbor(acc, y, side, prefix, arr) {
   let o = acc.get(y)
-  if (!o) { o = { d: 0, u: 0, w: 0, evd: null, evu: null }; acc.set(y, o) }
+  if (!o) { o = { d: 0, u: 0, w: 0, wd: 0, evd: null, evu: null }; acc.set(y, o) }
   o[side]++
-  if (side === 'd') { if (!o.evd) o.evd = { prefix, path: arr, side: 'd' } }
+  if (side === 'd' || side === 'wd') { if (!o.evd) o.evd = { prefix, path: arr, side: 'd' } }
   else if (!o.evu) o.evu = { prefix, path: arr, side: 'u' }   // u/w 都属收集器侧
 }
 // 把累计的邻接 Map 按 classifyRelation 分到 up/peer/down 三组, 各带计数 + 一条依据路径。
-// 关键: 上游分类只用可靠证据(d+u, w 已剔除 full-feed 假象); 不再丢弃任何邻居 ——
-//   只有绝对证据进上游/下游, 其余(含纯收集器假象 w)一律落到 peer, 不臆测方向。
+// 关键: 方向分类只用可靠证据(d/u, 已剔除 full-feed 假象 wd/w); 不丢弃任何邻居 ——
+//   只有绝对证据进上游/下游, 其余(含纯假象)一律落到 peer, 不臆测方向。
 function groupRelations(asn, acc, limit) {
   const out = emptyRel()
   for (const [y, o] of acc) {
-    const rel = classifyRelation(asn, y, o.d, o.u)         // w 不传入, 不污染方向 ⇒ 仅 w 者落 peer
+    const rel = classifyRelation(asn, y, o.d, o.u)         // wd/w 不传入, 不污染方向 ⇒ 仅假象者落 peer
     const ev = rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd)
-    // 计数: 上下游用可靠证据; peer(含收集器假象)用总观测次数, 以反映其被看到的频度。
-    const n = rel === 'peer' ? (o.d + o.u + o.w) : (o.d + o.u)
-    out[rel].push({ asn: y, n, d: o.d, u: o.u, w: o.w, ev })
+    // 计数: 上下游用可靠证据; peer(含假象)用总观测次数, 以反映其被看到的频度。
+    const n = rel === 'peer' ? (o.d + o.u + o.w + o.wd) : (o.d + o.u)
+    out[rel].push({ asn: y, n, d: o.d, u: o.u, ev })
   }
   for (const k of ['up', 'peer', 'down']) out[k].sort((a, b) => b.n - a.n).splice(limit)
   return out
 }
-// 处理一条路径: 累计 asn 两侧邻接。上游证据须「左邻之上存在 Tier-1」, 否则记 w 假象。
+// 处理一条路径: 累计 asn 两侧邻接。上/下游证据都要求路径经过 DFZ 核心(Tier-1), 否则记为假象(w/wd)。
 function accPath(acc, arr, asn, prefix) {
   let firstT1 = Infinity                          // 路径中第一个 Tier-1 的下标(从收集器侧起)
   for (let j = 0; j < arr.length; j++) { if (isTier1(arr[j])) { firstT1 = j; break } }
   for (let i = 0; i < arr.length; i++) if (arr[i] === asn) {
-    if (i < arr.length - 1 && arr[i + 1] !== asn) bumpNeighbor(acc, arr[i + 1], 'd', prefix, arr)
+    if (i < arr.length - 1 && arr[i + 1] !== asn) {
+      const weakDown = firstT1 >= i                // X 左侧(收集器侧)无 Tier-1 ⇒ X 未经 DFZ(full-feed 边缘),
+      bumpNeighbor(acc, arr[i + 1], weakDown ? 'wd' : 'd', prefix, arr)  //   origin 侧邻居方向不可靠(可能是 provider)
+    }
     if (i > 0 && arr[i - 1] !== asn) {
-      const weak = firstT1 > i - 1                 // 左邻位置之上无 Tier-1 ⇒ 未经 DFZ 核心(full-feed/泄漏) ⇒ 上游假象
-      bumpNeighbor(acc, arr[i - 1], weak ? 'w' : 'u', prefix, arr)
+      const weakUp = firstT1 > i - 1               // 左邻位置之上无 Tier-1 ⇒ 未经 DFZ(full-feed/泄漏) ⇒ 上游假象
+      bumpNeighbor(acc, arr[i - 1], weakUp ? 'w' : 'u', prefix, arr)
     }
   }
 }

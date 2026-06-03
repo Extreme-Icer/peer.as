@@ -128,6 +128,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 站点 profile: 选定一套特性开关(见 profile.py)。"peeras"=全球公网(现状全开); "dn42"=dn42 fork(无 geo)。
     # 单个开关可用 "features": {"geo": false, ...} 逐项覆盖(无需换 site)。**默认 peeras = 当前行为, 勿改**。
     "site": "peeras",
+    # CF Pages 项目名(deploy.sh 用)。peeras=bgp-insights; dn42 实例在自己的 config.json 设(如 dn42-peer-as)。
+    "cf_project": "bgp-insights",
 }
 
 

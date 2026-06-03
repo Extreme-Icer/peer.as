@@ -83,8 +83,7 @@ def cmd_build(args):
         subprocess.run(["npm", "run", "build"], cwd=str(web), check=True)
     n = parquet_export.copy_web(out_dir=args.out)
     print(f"前端构建完成: npm run build + 拷 {n} 文件 (web/dist -> {args.out}/); 数据未动。")
-    print(f"部署: wrangler pages deploy {args.out} --project-name bgp-insights "
-          f"--branch main --commit-dirty=true --commit-message=\"...\"")
+    print("部署: scripts/deploy.sh (唯一部署入口; 自动按 config.json 的 site/cf_project 选目标)")
 
 
 def cmd_export_parquet(args):

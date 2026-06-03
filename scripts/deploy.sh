@@ -8,7 +8,8 @@
 # 设计：数据(ingest+export)、前端(build)、部署(CF+CN) 三段；部署核心只实现这一份。
 set -euo pipefail
 
-PROJ="/home/aosc/test-ip-collect"
+# PROJ = 本脚本所在仓库根(从脚本位置推导, 不写死路径) —— 这样 peeras / dn42 各自 checkout 都能用同一份脚本。
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJ"
 
 # cron 直接调用时 PATH/HOME 极简，补齐 node-24（npm/wrangler）与系统目录；HOME 供 wrangler 读 OAuth、ssh 读密钥。
@@ -44,11 +45,20 @@ mkdir -p "$PROJ/logs"
 exec 9>"$PROJ/logs/deploy.lock"
 if ! flock -n 9; then log "另一次 deploy 仍在运行，退出。"; exit 0; fi
 
-# 站点 profile 的 cn_mirror 开关(见 ipcollect/profile.py): peeras=1(部署 cn.peer.as 镜像); dn42=0(只上 CF)。
-# 任何读取失败都回退 1(保守: 维持现状部署两端)。
-CN_MIRROR="$("$PROJ/.venv/bin/python" -c 'from ipcollect import config, profile; print("1" if profile.features(config.load())["cn_mirror"] else "0")' 2>/dev/null || echo 1)"
+# 站点 profile(见 ipcollect/profile.py + config.json): 一次读出 site / cn_mirror / cf_project。
+#   site       前端 VITE_SITE(决定文案/品牌/person 导航等); peeras / dn42。
+#   cn_mirror  是否部署 cn.peer.as 镜像; peeras=1, dn42=0(只上 CF)。
+#   cf_project CF Pages 项目名; peeras=bgp-insights, dn42 实例在 config.json 设 cf_project。
+# 读取失败回退 peeras 现状值(保守, 不破坏主站部署)。
+_prof="$("$PROJ/.venv/bin/python" -c 'from ipcollect import config, profile
+from urllib.parse import urlparse
+c=config.load(); f=profile.features(c)
+print(profile.site(c), ("1" if f["cn_mirror"] else "0"), (c.get("cf_project") or "bgp-insights"), (urlparse(c.get("site_base") or "https://peer.as").hostname or "peer.as"))' 2>/dev/null || echo "peeras 1 bgp-insights peer.as")"
+read -r SITE CN_MIRROR CF_PROJECT PRIMARY_HOST <<<"$_prof"
+[ -n "${SITE:-}" ] || { SITE=peeras; CN_MIRROR=1; CF_PROJECT=bgp-insights; PRIMARY_HOST=peer.as; }
+export VITE_SITE="$SITE"   # npm build(ipc build)据此产出对应站点前端
 
-log "deploy 开始: data=$WITH_DATA build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR"
+log "deploy 开始: site=$SITE host=$PRIMARY_HOST data=$WITH_DATA build=$DO_BUILD target=$TARGET cn_mirror=$CN_MIRROR cf_project=$CF_PROJECT"
 
 # ── 1) 数据（可选）──────────────────────────────────────────────────────────
 if [ "$WITH_DATA" = 1 ]; then
@@ -94,9 +104,9 @@ deploy_cf(){
   # 用显式 move-back（非 trap）：即便 wrangler 失败也保证移回、且把退出码透传。
   local HOLD; HOLD="$(mktemp -d)"; local rc=0
   mv "$PROJ"/dist/assets/*.wasm "$HOLD"/ 2>/dev/null || true
-  log "CF: wrangler pages deploy（排除超限 wasm；CF 节点 wasm 回退 CDN）"
-  wrangler pages deploy dist --project-name bgp-insights --branch main --commit-dirty=true \
-    --commit-message="deploy.sh $([ "$WITH_DATA" = 1 ] && echo 'data+web' || echo web)" || rc=$?
+  log "CF: wrangler pages deploy → 项目 $CF_PROJECT（排除超限 wasm；CF 节点 wasm 回退 CDN）"
+  wrangler pages deploy dist --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
+    --commit-message="deploy.sh $SITE $([ "$WITH_DATA" = 1 ] && echo 'data+web' || echo web)" || rc=$?
   mv "$HOLD"/*.wasm "$PROJ"/dist/assets/ 2>/dev/null || true
   rmdir "$HOLD" 2>/dev/null || true
   return $rc
@@ -108,9 +118,9 @@ deploy_cf(){
 verify(){
   local le; le="$(grep -o 'assets/index-[^\"]*\.js' dist/index.html | head -1)"
   log "校验: 本地入口 = $le"
-  for h in peer.as cn.peer.as; do
+  for h in "$PRIMARY_HOST" cn.peer.as; do
     { [ "$TARGET" = cf ] && [ "$h" = cn.peer.as ]; } && continue
-    { [ "$TARGET" = cn ] && [ "$h" = peer.as ]; } && continue
+    { [ "$TARGET" = cn ] && [ "$h" = "$PRIMARY_HOST" ]; } && continue
     { [ "$CN_MIRROR" != 1 ] && [ "$h" = cn.peer.as ]; } && continue
     local got; got="$(curl -fsS --max-time 15 "https://$h/" 2>/dev/null | grep -o 'assets/index-[^\"]*\.js' | head -1 || true)"
     if [ "$got" = "$le" ]; then log "校验: ✓ $h 入口一致"; else log "校验: ⚠ $h 入口=${got:-空}（缓存/传播中?需复查）"; fi
@@ -126,9 +136,10 @@ verify(){
   # rel = duckdb-ext/<引擎版本>/wasm_eh/parquet.duckdb_extension.wasm（从 dist 取实际路径，免硬编码版本）。
   local rel; rel="$(cd "$PROJ/dist" 2>/dev/null && ls duckdb-ext/*/wasm_eh/parquet.duckdb_extension.wasm 2>/dev/null | head -1 || true)"
   if [ -n "$rel" ]; then
-    for h in peer.as cn.peer.as; do
+    for h in "$PRIMARY_HOST" cn.peer.as; do
       { [ "$TARGET" = cf ] && [ "$h" = cn.peer.as ]; } && continue
-      { [ "$TARGET" = cn ] && [ "$h" = peer.as ]; } && continue
+      { [ "$TARGET" = cn ] && [ "$h" = "$PRIMARY_HOST" ]; } && continue
+      { [ "$CN_MIRROR" != 1 ] && [ "$h" = cn.peer.as ]; } && continue
       local magic; magic="$(curl -fsS --max-time 25 "https://$h/$rel" 2>/dev/null | head -c4 | xxd -p 2>/dev/null || true)"
       if [ "$magic" = "0061736d" ]; then log "扩展: ✓ $h parquet 扩展自托管（wasm magic 正确）"
       else log "扩展: ⚠ $h parquet 扩展 magic=${magic:-空}（非 wasm！前端会回退官方源，请查 $rel 是否部署）"; fi

@@ -10,7 +10,8 @@
 set -euo pipefail
 
 EXTVER="${1:-v1.4.3}"
-PROJ="/home/aosc/test-ip-collect"
+# PROJ = 本脚本所在仓库根(从脚本位置推导, 不写死) —— peeras / dn42 各自 checkout 都能用同一份脚本。
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="$PROJ/ipcollect/web/public/duckdb-ext/$EXTVER"
 BASE="https://extensions.duckdb.org/$EXTVER"
 

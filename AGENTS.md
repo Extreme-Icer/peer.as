@@ -126,11 +126,21 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
 - `mrt.py`：`mrt_layout="dn42"` 直取 master4/6 bz2（`_open_mrt` 按扩展名选 bz2/gz）；GRC 每前缀经上千 peer ⇒ 每前缀
   ~2000 条 AS_PATH（paths/ 仍按 `PATH_CAP` 取 top-24，pathsearch/pp 有界）。
 - **按 person 筛选取代国家**：无 geo；前端选 person → 用其 ASN 集合过滤 `pathsearch`（origin_asn IN）。
-- **跑一个 dn42 实例**（与 peeras 实例用各自的 `IPC_HOME` 目录隔离 DB/config/dist）：在实例目录放 `config.json`
-  （`site=dn42`、`mrt_layout=dn42`、`mrt_base_url`、`registry_repo`、`asn_registry=[]`、`focus_asns=[]`），然后
-  `IPC_HOME=<实例目录> .venv/bin/python -m ipcollect ingest --reset` → `export-parquet --out dist`；
-  前端 `cd ipcollect/web && VITE_SITE=dn42 npm run build` → `ipc sync-web`。部署：`site=dn42` ⇒ `cn_mirror` 关 ⇒ deploy.sh
-  只上 CF（域名 `dn42.peer.as`）。
+
+#### dn42 部署（独立 checkout + 同一份脚本）
+
+部署脚本（`deploy.sh` / `vendor-duckdb-ext.sh` / `daily-refresh.sh`）**PROJ 均从脚本位置推导、不写死**，且 deploy.sh
+**site-aware**：开头读 `config.json` 得 `site`/`cn_mirror`/`cf_project`/host(=site_base)，据此 `export VITE_SITE`、
+选 CF 项目、决定是否部署 CN、校验哪个域名。故 **peeras 与 dn42 各自一个 checkout，跑同一份 deploy.sh**。
+- **dn42 实例 = 独立 checkout**（如 `/home/aosc/dn42-peer-as`，本分支 + 自己的 `.venv`）。实例 `config.json`：
+  `site=dn42`、`cf_project=dn42-peer-as`、`mrt_layout=dn42`、`mrt_base_url=https://mrt42.strexp.net`、
+  `mrt_collectors=["mrt42"]`、`registry_repo=…`、`site_base=https://dn42.peer.as`、`asn_registry=[]`、`focus_asns=[]`。
+- 一次性：`wrangler pages project create dn42-peer-as --production-branch main`（**已建**）；CF 控制台把
+  **自定义域名 `dn42.peer.as`** 绑到该 Pages 项目 + 加 DNS（wrangler 部署 token 无 DNS 写权限，须控制台/有 DNS 权限的 token 做）。
+- 跑：实例目录 `scripts/deploy.sh --data`（≈3min：ingest ~131s + export ~4s + build ~2s + wrangler 上传）。
+  **已实测部署成功**：`https://dn42-peer-as.pages.dev`（前端 dn42 / meta.site=dn42 / registry whois + 自托管 parquet 扩展均 OK）。
+- **cron 每 10min**（对齐 dn42 GRC 10min 发布；数据小、单轮 ≈3min ≪ 10min，`flock` 防重足够）：
+  `*/10 * * * * REFRESH_KEEP=144 /home/aosc/dn42-peer-as/scripts/daily-refresh.sh`（`fcrontab -` 灌入；与 peeras 8h 那条并存）。
 - **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN + 域名 whois，IP 占位）、ROA（route 对象 vs
   observed origin）展示、按 ASN/person 的 SSG 落地页、dn42 DNS 的 DoH 实时解析（现为 registry whois，无 A/AAAA 记录解析）、
   index.html 静态 `<title>` 仍是 peeras（运行时 `document.title` 已按 profile 改；SEO 预渲染未做）。

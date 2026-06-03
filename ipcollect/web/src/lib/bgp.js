@@ -30,6 +30,24 @@ export const opText = a => { const o = opOf(a); return (S.lang !== 'zh' && OP_EN
 export const opCls = a => OP_CLS[opOf(a)] || ''
 export const isTier1 = a => TIER1.has(+a)
 
+// 邻居关系判定(基于收集器路径方向 + Tier-1 集合)。
+// 路径方向: index0=收集器侧(上行/朝全表), 末位=origin(下行/朝边缘)。
+//   Y 在 X 的 origin 侧(arr[i+1]) ⇒ X 把 Y 的路由往上扩散 ⇒ Y 多半是 X 的「客户(down)」, 可靠;
+//   Y 在 X 的收集器侧(arr[i-1]) ⇒ Y 可能是 X 的 provider, 也可能只是 peer/收集器位置假象, 不可靠。
+// 入参 d=origin 侧出现次数, u=**经 Tier-1 校验后**的收集器侧上游证据次数(调用方已剔除 full-feed 假象)。
+// 原则: 只有绝对证据才判上游/下游, 其余一律 peer(不臆测方向)。返回 'up'|'down'|'peer'。
+const REL_HI = 0.8, REL_LO = 0.2          // 方向比阈值: ≥HI 判客户, ≤LO 判上游, 居中判 peer
+export function classifyRelation(x, y, d, u) {
+  const xt = TIER1.has(+x), yt = TIER1.has(+y)
+  if (yt && !xt) return 'up'              // 对方是 Tier-1、本侧不是 ⇒ 上游(绝对证据)
+  const tot = d + u
+  if (!tot) return 'peer'                  // 无任何可靠方向证据(如仅 full-feed 假象) ⇒ peer
+  const r = d / tot                        // 越接近 1 越像客户, 越接近 0 越像上游
+  if (r >= REL_HI) return 'down'           // 强烈偏 origin 侧 ⇒ 客户(绝对证据)
+  if (!xt && r <= REL_LO) return 'up'      // 强烈偏收集器侧(u 已过 Tier-1 校验) ⇒ 上游; Tier-1 无上游故排除
+  return 'peer'                            // 方向混杂 / Tier-1 自身 / 证据不足 ⇒ 对端
+}
+
 // 地名(语言感知): 省+市拼接。英文界面滤掉 CJK 段(geo 里日韩等城市可能是中文名 + 英文省 -> 避免混排);
 // 滤空则回退英文国名(ccLabel)。中文界面原样显示。
 export function placeLabel(province, city, cc) {

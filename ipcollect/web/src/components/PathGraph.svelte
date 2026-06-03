@@ -1,6 +1,9 @@
 <script>
   import { truncToTier1, opOf, opCls, asnName, TIER1 } from '../lib/bgp.js'
+  import { showAsn } from '../lib/queries.js'
   let { rec } = $props()
+  const go = asn => showAsn(asn)
+  const goKey = (e, asn) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showAsn(asn) } }
 
   const NW = 120, NH = 34, COLG = 56, ROWG = 14
   function bezier(x1, y1, x2, y2, cls, sw) {
@@ -50,7 +53,9 @@
     <svg viewBox="0 0 {g.W} {g.H}" width={g.W} height={g.H} class="pathsvg">
       {#each g.edges as e}<path d={e.d} class={e.cls} stroke-width={e.sw} fill="none" />{/each}
       {#each g.boxes as b}
-        <g class="gnode {b.cls}" class:origin={b.origin} class:tier1={b.t1}>
+        <g class="gnode nav {b.cls}" class:origin={b.origin} class:tier1={b.t1}
+          role="button" tabindex="0" aria-label="AS{b.asn}"
+          onclick={() => go(b.asn)} onkeydown={(e) => goKey(e, b.asn)}>
           <rect x={b.x - NW / 2} y={b.y - NH / 2} width={NW} height={NH} rx="5" />
           <text x={b.x} y={b.y - 3} class="gas">AS{b.asn}{b.t1 ? ' ★' : ''}</text>
           {#if b.name}<text x={b.x} y={b.y + 10} class="gnm">{b.name.slice(0, 15)}</text>{/if}
@@ -66,6 +71,10 @@
   :global(.gedge) { stroke: var(--muted); opacity: .4; fill: none; }
   :global(.gmain) { stroke: var(--accent); opacity: .8; }
   .gnode rect { fill: var(--bg); stroke: var(--c, var(--muted)); stroke-width: 1.4; }
+  .gnode.nav { cursor: pointer; }
+  .gnode.nav:hover rect { stroke: var(--accent); stroke-width: 2.2; }
+  .gnode.nav:focus-visible { outline: none; }
+  .gnode.nav:focus-visible rect { stroke: var(--accent); stroke-width: 2.6; }
   .gnode :global(.gas) { font: 700 11px var(--mono); fill: var(--c, var(--fg)); text-anchor: middle; dominant-baseline: middle; }
   .gnode :global(.gnm) { font: 10px var(--sans); fill: var(--muted); text-anchor: middle; }
   .gnode.tier1 rect { stroke-width: 2.6; }

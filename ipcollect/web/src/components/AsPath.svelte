@@ -1,21 +1,32 @@
 <script>
   import { pathTokens } from '../lib/bgp.js'
-  let { asns, dim = false } = $props()
+  import { showAsn } from '../lib/queries.js'
+  // nav=true 时每个 ASN 可点击跳转到该 ASN 详情(stopPropagation 防触发外层行点击)。
+  let { asns, dim = false, hi = [], nav = false } = $props()
   let toks = $derived(pathTokens(asns))
+  let hiSet = $derived(new Set((hi || []).map(Number)))
+  const go = (e, asn) => { e.stopPropagation(); showAsn(asn) }
 </script>
 
+{#snippet body(tk)}<b>{tk.asn}</b>{#if tk.name}<span class="an">({tk.nameShort})</span>{/if}{#if tk.tier1}<span class="t1" title="Tier-1">★</span>{/if}{/snippet}
+
 <code class="aspath" class:dim>
-  {#each toks as tk}<span
-      class="asn {tk.cls}"
+  {#each toks as tk}{#if nav}<button type="button"
+      class="asn nav {tk.cls}" class:hi={hiSet.has(tk.asn)}
       title={tk.op ? tk.op + ' · ' + tk.name : tk.name}
-    ><b>{tk.asn}</b>{#if tk.name}<span class="an">({tk.nameShort})</span>{/if}{#if tk.tier1}<span
-        class="t1" title="Tier-1">★</span>{/if}</span>{' '}{/each}
+      onclick={(e) => go(e, tk.asn)}>{@render body(tk)}</button>{:else}<span
+      class="asn {tk.cls}" class:hi={hiSet.has(tk.asn)}
+      title={tk.op ? tk.op + ' · ' + tk.name : tk.name}>{@render body(tk)}</span>{/if}{' '}{/each}
 </code>
 
 <style>
   .aspath { font-family: var(--mono); font-size: 11.5px; line-height: 1.85; color: var(--code); }
   .aspath.dim { opacity: 0.62; }
   .asn { color: var(--c, var(--code)); white-space: nowrap; }
+  /* nav: 让 <button> 完全继承内联文本外观, 只在 hover 时下划线提示可点 */
+  .asn.nav { font: inherit; background: transparent; border: 0; padding: 0; margin: 0; cursor: pointer; vertical-align: baseline; }
+  .asn.nav:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .asn.hi { background: var(--accent-dim); border-radius: 4px; padding: 0 3px; outline: 1px solid var(--accent); }
   .asn .an { opacity: 0.72; font-size: 0.92em; font-family: var(--sans); }
   .asn .t1 { color: var(--signal); margin-left: 1px; font-size: 0.85em; }
 </style>

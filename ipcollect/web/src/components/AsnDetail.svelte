@@ -3,13 +3,16 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { showInsight, showAsn, scanNeighbors } from '../lib/queries.js'
-  import { ccLabel } from '../lib/bgp.js'
-  import { iPrefix, iUp, iDown, iNodes, iSpinner } from '../lib/icons.js'
+  import { ccLabel, isTier1 } from '../lib/bgp.js'
+  import { iPrefix, iUp, iDown, iRange, iNodes, iSpinner } from '../lib/icons.js'
   import Whois from './Whois.svelte'
-  import AsnTag from './AsnTag.svelte'
+  import RelGroup from './RelGroup.svelte'
 
   let a = $derived(S.asnView)
   let total = $derived((a?.count4 || 0) + (a?.count6 || 0))
+  let t1 = $derived(a && isTier1(a.asn))
+  let relEmpty = $derived(a?.rel && !a.rel.up.length && !a.rel.peer.length && !a.rel.down.length)
+  let neighEmpty = $derived(a?.neigh && !a.neigh.loading && !a.neigh.error && !a.neigh.up.length && !a.neigh.peer.length && !a.neigh.down.length)
 
   // 通告前缀默认只显示 5 行, 可展开。换 ASN 时重置。
   const HEAD = 5
@@ -57,15 +60,13 @@
         <div class="muted small">{t('asn_no_origin')}</div>
       {/if}
 
-      <!-- 观测上游(据通告前缀最优路径) -->
-      {#if a.upstreams?.length}
-        <h3 class="dsec" data-sec="upstreams"><Fa icon={iUp} /> {t('asn_upstreams')}</h3>
-        <div class="taglist">
-          {#each a.upstreams as u}
-            <button class="tagbtn" onclick={() => showAsn(u.asn)} title="AS{u.asn}"><AsnTag asn={u.asn} /><span class="cnt">{u.n}</span></button>
-          {/each}
-        </div>
-        <div class="relnote">{t('asn_upstream_note')}</div>
+      <!-- 观测关系(据通告前缀最优路径推得; 三态) -->
+      {#if a.rel && !relEmpty}
+        <h3 class="dsec" data-sec="relations"><Fa icon={iRange} /> {t('asn_rel')}</h3>
+        <RelGroup title={t('rel_up')} icon={iUp} items={a.rel.up} subject={a.asn} />
+        <RelGroup title={t('rel_peer')} icon={iRange} items={a.rel.peer} subject={a.asn} />
+        <RelGroup title={t('rel_down')} icon={iDown} items={a.rel.down} subject={a.asn} />
+        <div class="relnote">{t1 ? t('asn_rel_t1_note') : t('asn_rel_note')}</div>
       {/if}
 
       <!-- 完整邻居(按需全表扫) -->
@@ -78,19 +79,11 @@
       {:else if a.neigh.error}
         <div class="dload err">{a.neigh.error}</div>
       {:else}
-        <div class="ncol">
-          <b><Fa icon={iUp} /> {t('asn_neigh_up')}</b>
-          {#if a.neigh.up.length}
-            <div class="taglist">{#each a.neigh.up as u}<button class="tagbtn" onclick={() => showAsn(u.asn)}><AsnTag asn={u.asn} /><span class="cnt">{u.n}</span></button>{/each}</div>
-          {:else}<span class="muted small">{t('none_in_db')}</span>{/if}
-        </div>
-        <div class="ncol">
-          <b><Fa icon={iDown} /> {t('asn_neigh_down')}</b>
-          {#if a.neigh.down.length}
-            <div class="taglist">{#each a.neigh.down as u}<button class="tagbtn" onclick={() => showAsn(u.asn)}><AsnTag asn={u.asn} /><span class="cnt">{u.n}</span></button>{/each}</div>
-          {:else}<span class="muted small">{t('none_in_db')}</span>{/if}
-        </div>
-        <div class="relnote">{t('asn_scanned').replace('{n}', a.neigh.scanned.toLocaleString())}{a.neigh.capped ? t('asn_capped') : ''}</div>
+        {#if neighEmpty}<div class="muted small">{t('none_in_db')}</div>{/if}
+        <RelGroup title={t('rel_up')} icon={iUp} items={a.neigh.up} subject={a.asn} />
+        <RelGroup title={t('rel_peer')} icon={iRange} items={a.neigh.peer} subject={a.asn} />
+        <RelGroup title={t('rel_down')} icon={iDown} items={a.neigh.down} subject={a.asn} />
+        <div class="relnote">{t('asn_scanned').replace('{n}', a.neigh.scanned.toLocaleString())}{a.neigh.capped ? t('asn_capped') : ''}{t1 ? ' · ' + t('asn_rel_t1_note') : ''}</div>
       {/if}
     {/if}
   {/if}
@@ -114,16 +107,9 @@
   .more { font-size: 11px; color: var(--muted); padding: 6px 2px 0; }
   .expandrow { width: 100%; margin-top: 6px; padding: 6px; background: transparent; border: 1px dashed var(--line); border-radius: 7px; color: var(--link); cursor: pointer; font: 600 11.5px var(--sans); transition: all .12s; }
   .expandrow:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-  .taglist { display: flex; flex-wrap: wrap; gap: 6px 8px; }
-  .tagbtn { display: inline-flex; align-items: center; gap: 4px; background: var(--inbg); border: 1px solid var(--line2); border-radius: 7px; cursor: pointer; padding: 3px 8px; font-size: 11.5px; }
-  .tagbtn:hover { border-color: var(--accent); }
-  .tagbtn .cnt { font: 10px var(--mono); color: var(--muted); background: var(--line2); border-radius: 999px; padding: 0 5px; }
   .relnote { color: var(--muted); font-size: 11px; margin: 8px 0 2px; line-height: 1.5; }
   .scanbtn { display: inline-flex; align-items: center; gap: 7px; background: var(--inbg); color: var(--accent); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; padding: 7px 14px; font: 600 12px var(--sans); transition: all .12s; }
   .scanbtn:hover { border-color: var(--accent); background: var(--accent-dim); }
-  .ncol { margin: 10px 0 0; }
-  .ncol b { color: var(--muted); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; }
-  .ncol b :global(svg) { color: var(--accent); }
   /* 标题下移一点, 避免顶到右上浮岛(与 InsightDrawer 一致) */
   @media (max-width: 820px) { h2 { margin-top: 16px; } }
 </style>

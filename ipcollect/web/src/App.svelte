@@ -12,6 +12,7 @@
   import MobileBar from './components/MobileBar.svelte'
   import Topbar from './components/Topbar.svelte'
   import Results from './components/Results.svelte'
+  import DnsView from './components/DnsView.svelte'
   import InsightDrawer from './components/InsightDrawer.svelte'
   import AboutModal from './components/AboutModal.svelte'
   import ChangelogModal from './components/ChangelogModal.svelte'
@@ -73,6 +74,8 @@
         <div class="fatal"><b>×</b> {fatal}</div>
       {:else if S.loading}
         <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>
+      {:else if S.mode === 'dns'}
+        <DnsView />
       {:else}
         <Results />
       {/if}

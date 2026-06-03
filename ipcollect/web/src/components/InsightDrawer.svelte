@@ -9,6 +9,7 @@
   import AsPath from './AsPath.svelte'
   import Whois from './Whois.svelte'
   import AsnDetail from './AsnDetail.svelte'
+  import DomainDetail from './DomainDetail.svelte'
   import DetailNav from './DetailNav.svelte'
 
   let ins = $derived(S.insight)
@@ -58,6 +59,8 @@
 
       {#if S.detailKind === 'asn'}
         <AsnDetail />
+      {:else if S.detailKind === 'domain'}
+        <DomainDetail />
       {:else if ins?.loading}
         <div class="dload"><Fa icon={iSpinner} spin /> {t('querying')}</div>
       {:else if ins?.error}

@@ -2,6 +2,7 @@
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
 import { q, rp, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins } from './db.js'
+import { resolveDns } from './dns.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
   asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel,
@@ -39,6 +40,9 @@ export async function runSearch() {
   const f = S.filters
   // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
   const probe = classifyQuery(f.ip)
+  // 域名 -> DNS 解析视图(左:记录, 右:域名详情面板); 抢占其它一切, 自成一支。
+  if (probe.kind === 'domain') return runDns(probe.domain)
+  S.dns = null   // 离开 DNS 模式: 清空记录, 主内容区回到结果表
   // 精确框是 ASN 时: 设为「主体」并自动展开右侧 ASN 详情面板(whois + 上下游)。其它输入(含 IP/空)清空
   // 主体上下文(影响关闭语义)。已在展示同一 ASN 则不打断(避免点开 prefix 后被搜索拽回)。放在子网早返回之前。
   setSubjectAsn(probe.kind === 'asn' ? probe.asn : null)
@@ -163,6 +167,56 @@ async function runSubnet(r, f) {
   S.msg = `${label} · ${rows.length}${more ? '+' : ''} ${t('subnet_done')}${tail}`
 }
 
+// ── DNS 解析(DoH) + A/AAAA 富集前缀/origin ASN ───────────────────────────────
+// 一个 IP -> 库内覆盖它的最具体前缀 + origin ASN(供点击下钻到前缀/ASN 详情)。库内无覆盖则 prefix=null。
+async function enrichIp(ip, v6) {
+  const r = v6 ? ip6Range(ip) : ip2range(ip)
+  if (!r) return { ip }
+  const files = v6 ? (S.meta?.files?.prefixes_v6 || []) : null
+  if (v6 && !files.length) return { ip }                 // 无 v6 前缀数据集
+  const src = v6 ? rpList(files) : rp('prefixes')
+  const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
+  try {
+    // 覆盖该地址的前缀里取最具体(范围最小)那一条。
+    const rows = await q(`SELECT pid, prefix, origin_asn, n_paths FROM ${src}
+      WHERE ip_start <= ${lit(r.start)} AND ip_end >= ${lit(r.end)}
+      ORDER BY (ip_end - ip_start) ASC LIMIT 1`)
+    const m = rows[0]
+    if (m) return { ip, pid: m.pid, prefix: m.prefix, asn: m.origin_asn, n_paths: m.n_paths }
+  } catch (e) { /* 富集失败不影响记录展示 */ }
+  return { ip }
+}
+
+// 域名 -> DNS 解析视图。左侧主内容区(DnsView)显示记录, 右侧(桌面)自动展开域名详情面板(DomainDetail)。
+export async function runDns(domain) {
+  domain = String(domain || '').toLowerCase().replace(/\.$/, '')
+  if (!domain) return
+  S.mode = 'dns'
+  S.rows = []; S.selectedPid = null
+  setSubjectDomain(domain)            // 设主体 + 桌面端自动开域名详情面板
+  go('/dns/' + domain)
+  S.dns = { domain, loading: true }
+  S.msg = (S.lang === 'zh' ? `正在解析 ${domain} 的 DNS…` : `Resolving DNS for ${domain}…`)
+  let res
+  try { res = await resolveDns(domain) }
+  catch (e) { S.dns = { domain, error: e.message }; S.msg = (S.lang === 'zh' ? `DNS 解析失败：${e.message}` : `DNS failed: ${e.message}`); return }
+  // 仍在看同一域名才写回(用户可能已切走)。
+  if (S.dns?.domain !== domain) return
+  const recsOf = ty => (res.types.find(x => x.type === ty)?.records) || []
+  const aRecs = recsOf('A'), aaaaRecs = recsOf('AAAA')
+  const [a, aaaa] = await Promise.all([
+    Promise.all(aRecs.map(rec => enrichIp(rec.data, false).then(e => ({ ...rec, ...e })))),
+    Promise.all(aaaaRecs.map(rec => enrichIp(rec.data, true).then(e => ({ ...rec, ...e })))),
+  ])
+  if (S.dns?.domain !== domain) return
+  const others = res.types.filter(t => t.type !== 'A' && t.type !== 'AAAA')
+  S.dns = { domain, status: res.status, a, aaaa, others, errors: res.errors }
+  const n = a.length + aaaa.length + others.reduce((s, t) => s + t.records.length, 0)
+  S.msg = (S.lang === 'zh'
+    ? (res.status === 3 ? `${domain}：域名不存在（NXDOMAIN）` : `${domain}：${n} 条 DNS 记录 · DNS over HTTPS`)
+    : (res.status === 3 ? `${domain}: NXDOMAIN` : `${domain}: ${n} DNS records · DNS over HTTPS`))
+}
+
 export function cmpBy(key, dir, a, b) {
   let x = a[key], y = b[key]
   if (x == null) x = -Infinity; if (y == null) y = -Infinity
@@ -275,6 +329,17 @@ export async function scanNeighbors(asn) {
   } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
 }
 
+// ── 域名详情视图(WHOIS/RDAP 由 Whois.svelte kind='domain' 自取; 这里只置面板状态) ──
+export function showDomain(domain) {
+  domain = String(domain || '').toLowerCase().replace(/\.$/, '')
+  S.detailKind = 'domain'
+  S.selectedPid = null
+  S.insight = null
+  S.asnView = null
+  S.domainView = { domain }
+  go('/dns/' + domain)
+}
+
 // 精确框 ASN -> 设主体 + 自动开面板(主体变化时); 非 ASN -> 清主体。
 // 移动端: 详情页全屏, 输入即自动弹出会打断输入 -> 只设主体不自动开, 由 Topbar 的「Whois」按钮显式打开。
 const isMobileViewport = () => typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 820px)').matches
@@ -284,9 +349,16 @@ function setSubjectAsn(asn) {
   S.subject = { kind: 'asn', id: asn }
   if (!isMobileViewport()) showAsn(asn)
 }
-// Topbar「Whois」按钮(移动端): 显式打开当前精确框 ASN 的详情面板。
+// 域名主体: 同 setSubjectAsn, 但开域名详情面板。
+function setSubjectDomain(domain) {
+  if (S.subject?.kind === 'domain' && S.subject.id === domain && S.detailKind === 'domain') return
+  S.subject = { kind: 'domain', id: domain }
+  if (!isMobileViewport()) showDomain(domain)
+}
+// Topbar「Whois」按钮(移动端): 显式打开当前精确框主体(ASN 或 域名)的详情面板。
 export function openWhoisFromBox() {
   if (S.subject?.kind === 'asn') showAsn(S.subject.id)
+  else if (S.subject?.kind === 'domain') showDomain(S.subject.id)
 }
 
 // ── 浏览器历史路由(PJAX) ──────────────────────────────────────────
@@ -306,15 +378,18 @@ export function navCanFwd() { return S.nav.idx < S.nav.max }
 export function navBack() { if (navCanBack()) history.back() }
 export function navForward() { if (navCanFwd()) history.forward() }
 
-function closeDetailState() { S.detailKind = null; S.selectedPid = null; S.insight = null; S.asnView = null }
-// 智能关闭: 看 prefix 且有 ASN 主体上下文 -> 先返回该 ASN 信息页; 否则真正关闭(再点即关)。
+function closeDetailState() { S.detailKind = null; S.selectedPid = null; S.insight = null; S.asnView = null; S.domainView = null }
+// 智能关闭: 看子页(prefix/asn)且有主体上下文(ASN 或 域名) -> 先返回主体页; 否则真正关闭(再点即关)。
 export function closeInsight() {
   if (S.detailKind === 'prefix' && S.subject?.kind === 'asn') { showAsn(S.subject.id); return }
+  if (S.detailKind !== 'domain' && S.subject?.kind === 'domain') { showDomain(S.subject.id); return }
   hardCloseDetail()
 }
-// 彻底关闭(Esc / 移动端关闭): 关详情 + URL 回到搜索态(框非空 -> /?q=, 否则根)。
+// 彻底关闭(Esc / 移动端关闭): 关详情 + URL 回到搜索态。DNS 模式下保留 /dns/<域名>(左侧记录仍在);
+// 否则框非空 -> /?q=, 否则根。
 export function hardCloseDetail() {
   closeDetailState()
+  if (S.mode === 'dns' && S.dns?.domain) { go('/dns/' + S.dns.domain); return }
   const box = (S.filters.ip || '').trim()
   go(box ? `/?q=${encodeURIComponent(box)}` : '/')
 }
@@ -342,7 +417,11 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
-    if (path) {
+    if (path.startsWith('dns/')) {                 // /dns/<域名> -> DNS 解析视图
+      const domain = path.slice(4)
+      S.filters.ip = domain
+      await runDns(domain)
+    } else if (path) {
       const probe = classifyQuery(path)
       S.filters.ip = path
       await runSearch()

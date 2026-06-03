@@ -8,7 +8,7 @@ export const STRINGS = {
     fam_all: '全部', fam_label: '地址族(全部 / IPv4 / IPv6)',
     t_country: '国家/地区', t_gen: '生成', legend: '图例', best: '最优路径（流量实际走）',
     lowvis: '疑未入 DFZ', tier1: 'Tier-1 骨干', search: '搜索',
-    ph_ip: 'IP / CIDR / ASN / AS Name，如 203.0.113.5、1.2.3.0/24、2001:db8::/32、AS4538、CHINATELECOM', ph_cc: '国家/地区（空=全表搜索）', ph_city: '城市（空=全国）',
+    ph_ip: 'IP / CIDR / ASN / 域名 / AS Name，如 1.2.3.0/24、AS4538、example.com、CHINATELECOM', ph_cc: '国家/地区（空=全表搜索）', ph_city: '城市（空=全国）',
     ph_path: 'AS_PATH，如 23764 4809、1299 * 4538、!174（回车搜索）', ph_origin: '如 4538', ph_limit: '上限',
     path_help: 'AS_PATH 搜索语法',
     incllow: '含低可见', subnet: '子网', country: '国家', city: '城市', path: 'AS_PATH', origin: 'origin AS',
@@ -48,6 +48,13 @@ export const STRINGS = {
     w_email: '邮箱', w_kind: '类型', w_role: '角色', w_title: '头衔', w_url: '链接', w_remark: '备注',
     role_administrative: '管理', role_technical: '技术', role_abuse: '滥用举报',
     role_registrant: '注册人', role_registrar: '注册商', role_noc: 'NOC', role_reseller: '分销',
+    // ── DNS 解析视图 + 域名详情 ──
+    domain_title: '域名详情', dns_loading: '正在解析 DNS（DNS over HTTPS）…', dns_failed: 'DNS 解析失败',
+    dns_nxdomain: '域名不存在（NXDOMAIN）', dns_none: '未查询到记录',
+    dns_a: 'A 记录（IPv4）', dns_aaaa: 'AAAA 记录（IPv6）',
+    dns_col_ip: '地址', dns_col_prefix: '前缀', dns_col_asn: 'origin asn', dns_col_ttl: 'TTL',
+    dns_no_prefix: '库内无覆盖', dns_src: 'DNS over HTTPS · Cloudflare（1.1.1.1）',
+    w_ldhname: '域名', w_ns: '名称服务器', w_dnssec: 'DNSSEC',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -56,7 +63,7 @@ export const STRINGS = {
     fam_all: 'All', fam_label: 'Address family (All / IPv4 / IPv6)',
     t_paths: 'Path obs', t_country: 'Countries', t_gen: 'Generated', legend: 'Legend',
     best: 'Best path (traffic follows)', lowvis: 'likely not in DFZ', tier1: 'Tier-1 backbone', search: 'Search',
-    ph_ip: 'IP / CIDR / ASN / AS name, e.g. 203.0.113.5, 1.2.3.0/24, AS4538, CLOUDFLARENET', ph_cc: 'Country/region (empty = global)', ph_city: 'City (empty = all)',
+    ph_ip: 'IP / CIDR / ASN / domain / AS name, e.g. 1.2.3.0/24, AS4538, example.com, CLOUDFLARENET', ph_cc: 'Country/region (empty = global)', ph_city: 'City (empty = all)',
     ph_path: 'AS_PATH, e.g. 23764 4809, 1299 * 4538, !174 (Enter to search)', ph_origin: 'e.g. 4538', ph_limit: 'limit',
     path_help: 'AS_PATH search syntax',
     incllow: 'incl. low-vis', subnet: 'Subnet', country: 'Country', city: 'City', path: 'AS_PATH', origin: 'origin AS',
@@ -96,6 +103,13 @@ export const STRINGS = {
     w_email: 'Email', w_kind: 'Kind', w_role: 'Role', w_title: 'Title', w_url: 'URL', w_remark: 'Remark',
     role_administrative: 'admin', role_technical: 'tech', role_abuse: 'abuse',
     role_registrant: 'registrant', role_registrar: 'registrar', role_noc: 'NOC', role_reseller: 'reseller',
+    // ── DNS view + domain detail ──
+    domain_title: 'Domain detail', dns_loading: 'Resolving DNS (DNS over HTTPS)…', dns_failed: 'DNS lookup failed',
+    dns_nxdomain: 'Domain does not exist (NXDOMAIN)', dns_none: 'no records found',
+    dns_a: 'A records (IPv4)', dns_aaaa: 'AAAA records (IPv6)',
+    dns_col_ip: 'Address', dns_col_prefix: 'Prefix', dns_col_asn: 'origin asn', dns_col_ttl: 'TTL',
+    dns_no_prefix: 'not in DB', dns_src: 'DNS over HTTPS · Cloudflare (1.1.1.1)',
+    w_ldhname: 'Domain', w_ns: 'Nameserver', w_dnssec: 'DNSSEC',
   },
 }
 

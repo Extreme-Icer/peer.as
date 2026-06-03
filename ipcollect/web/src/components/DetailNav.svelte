@@ -35,7 +35,7 @@
   }
 
   $effect(() => {
-    S.detailKind; S.insight; S.asnView    // 视图/内容变化 -> 重扫
+    S.detailKind; S.insight; S.asnView; S.domainView    // 视图/内容变化 -> 重扫
     if (!scroller) scroller = root?.closest('.dbody')
     if (scroller && !scroller._navbound) { scroller.addEventListener('scroll', onScroll, { passive: true }); scroller._navbound = true }
     tick().then(rescan)

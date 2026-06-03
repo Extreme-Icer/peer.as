@@ -11,6 +11,8 @@ const KEY_ICON = {
   registration: iReg, lastchanged: iChangelog, expiration: iReg,
   org: iBuilding, address: iLoc, phone: iPhone, fax: iFax, email: iMail, url: iLink,
   role: iRole, title: iTitle, kind: iDot, remark: iNote,
+  // 域名 RDAP: 域名 / 名称服务器 / DNSSEC
+  ldhname: iTag, ns: iNet, dnssec: iShield,
 }
 export function keyIcon(k) { return KEY_ICON[k] || iDot }
 

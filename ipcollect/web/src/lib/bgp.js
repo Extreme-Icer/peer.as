@@ -132,7 +132,12 @@ export function ip6Range(s) {
   return { start, end: start | ((1n << host) - 1n), plen, isCidr: true }
 }
 
-// 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / text / empty
+// 域名判定: 多段标签 + 字母(或 xn--)结尾的 TLD; 不含空格/斜杠。用于把 "mozz.ie" 这类带点但非 IP 的串
+// 路由到 DNS 解析(而非当作 AS 名称搜索)。允许 IDN(\p{L} 含 Unicode 字母)与末尾点。
+const DOMAIN_RE = /^(?=.{1,253}\.?$)([\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?\.)+([\p{L}]{2,}|xn--[\p{L}\p{N}-]{2,})\.?$/u
+export const isDomain = s => DOMAIN_RE.test((s || '').trim())
+
+// 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / domain / text / empty
 export function classifyQuery(s) {
   s = (s || '').trim()
   if (!s) return { kind: 'empty' }
@@ -142,7 +147,9 @@ export function classifyQuery(s) {
   }
   if (s.includes('.') || s.includes('/')) {                     // 点分十进制 / 带掩码 -> IPv4
     const r = ip2range(s)
-    return r ? { kind: 'ipv4', ...r } : { kind: 'text' }
+    if (r) return { kind: 'ipv4', ...r }
+    if (isDomain(s)) return { kind: 'domain', domain: s.toLowerCase().replace(/\.$/, '') }  // 域名 -> DNS 解析
+    return { kind: 'text' }
   }
   const asm = /^(?:asn?\s*)?([0-4]?\d{1,9})$/i.exec(s)  // 纯数字 或 AS/ASN 前缀(大小写均可) -> ASN
   if (asm) return { kind: 'asn', asn: parseInt(asm[1], 10) }

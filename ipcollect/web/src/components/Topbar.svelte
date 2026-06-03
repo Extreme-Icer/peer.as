@@ -13,7 +13,7 @@
   // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
   let probe = $derived(classifyQuery(S.filters.ip))
   let pathNA = $derived(probe.kind === 'ipv4' || probe.kind === 'ipv6')
-  let canWhois = $derived(probe.kind === 'asn')   // 移动端 Whois 按钮: 仅当精确框是 ASN 时可用
+  let canWhois = $derived(probe.kind === 'asn' || probe.kind === 'domain')   // 移动端 Whois 按钮: 精确框是 ASN 或 域名时可用
   // family 单选: 约束国家/全表搜索只看 v4 或 v6(子网搜索由 IP 本身决定 family, 此时禁用)。
   const FAM = [{ v: 'all', label: () => t('fam_all') }, { v: '4', label: () => 'IPv4' }, { v: '6', label: () => 'IPv6' }]
   let famIdx = $derived(Math.max(0, FAM.findIndex(o => o.v === (f.fam || 'all'))))

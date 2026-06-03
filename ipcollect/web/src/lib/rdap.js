@@ -49,6 +49,13 @@ function v6Has(cidr, n) {
   const start = (net >> host) << host
   return n >= start && n <= (start | ((1n << host) - 1n))
 }
+// 域名 -> TLD 注册局 RDAP base(据 dns bootstrap 末位标签匹配)。命中失败回退 rdap.org。
+function domainBase(domain) {
+  const labels = String(domain).toLowerCase().replace(/\.$/, '').split('.')
+  const tld = labels[labels.length - 1]
+  for (const svc of BOOT.dns || []) for (const t of svc[0]) if (String(t).toLowerCase() === tld) return pickBase(svc)
+  return null
+}
 // IP/前缀(取网络起始地址)定位 RIR base。addr 形如 '1.1.1.0/24' 或 '2001:db8::/32' 或裸 IP。
 function ipBase(addr, v6) {
   const a = addr.split('/')[0]
@@ -122,6 +129,10 @@ export function normalize(kind, key, d) {
     head.push({ key: 'handle', value: d.handle || `AS${key}` })
     if (d.name) head.push({ key: 'name', value: d.name })
     if (d.startAutnum != null) head.push({ key: 'asrange', value: d.startAutnum === d.endAutnum ? `AS${d.startAutnum}` : `AS${d.startAutnum} – AS${d.endAutnum}` })
+  } else if (kind === 'domain') {
+    head.push({ key: 'ldhname', value: d.ldhName || key })
+    if (d.unicodeName && d.unicodeName !== d.ldhName) head.push({ key: 'name', value: d.unicodeName })
+    if (d.handle) head.push({ key: 'handle', value: d.handle })
   } else {
     if (d.name) head.push({ key: 'name', value: d.name })
     head.push({ key: 'handle', value: d.handle || key })
@@ -134,6 +145,10 @@ export function normalize(kind, key, d) {
   if (d.country) head.push({ key: 'country', value: d.country })
   if (d.status && d.status.length) head.push({ key: 'status', value: d.status.join(', ') })
   head.push(...eventsRows(d))
+  if (kind === 'domain') {
+    for (const ns of d.nameservers || []) { const v = ns.ldhName || ns.handle; if (v) head.push({ key: 'ns', value: v }) }
+    if (d.secureDNS) head.push({ key: 'dnssec', value: d.secureDNS.delegationSigned ? 'signed' : 'unsigned' })
+  }
   const remarks = []
   for (const r of d.remarks || []) {
     const txt = (r.description || []).join('\n').trim()
@@ -141,7 +156,7 @@ export function normalize(kind, key, d) {
   }
   return {
     kind, key,
-    title: kind === 'autnum' ? (d.handle || `AS${key}`) : (d.handle || key),
+    title: kind === 'autnum' ? (d.handle || `AS${key}`) : kind === 'domain' ? (d.ldhName || key) : (d.handle || key),
     head,
     entities: (d.entities || []).map(e => normEntity(e)),
     remarks,
@@ -172,8 +187,8 @@ async function doFetch(kind, key) {
   } catch (e) { /* ignore */ }
 
   const v6 = kind === 'ip' && String(key).includes(':')
-  const base = kind === 'autnum' ? asnBase(+key) : ipBase(String(key), v6)
-  const path = kind === 'autnum' ? `autnum/${key}` : `ip/${key}`
+  const base = kind === 'autnum' ? asnBase(+key) : kind === 'domain' ? domainBase(key) : ipBase(String(key), v6)
+  const path = kind === 'autnum' ? `autnum/${key}` : kind === 'domain' ? `domain/${encodeURIComponent(key)}` : `ip/${key}`
   const tries = []
   const proxy = cnProxy()
   if (proxy) tries.push(proxy + path)
@@ -205,3 +220,4 @@ export function fetchRdap(kind, key) {
 
 export const rdapAsn = asn => fetchRdap('autnum', String(asn))
 export const rdapIp = prefix => fetchRdap('ip', String(prefix))
+export const rdapDomain = domain => fetchRdap('domain', String(domain).toLowerCase().replace(/\.$/, ''))

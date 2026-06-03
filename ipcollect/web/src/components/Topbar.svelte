@@ -3,7 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
-  import { resolveCC, scheduleSearch, searchNow, openWhoisFromBox } from '../lib/queries.js'
+  import { resolveCC, searchNow, openWhoisFromBox } from '../lib/queries.js'
   import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois } from '../lib/icons.js'
   import Field from './Field.svelte'
 
@@ -18,8 +18,7 @@
   const FAM = [{ v: 'all', label: () => t('fam_all') }, { v: '4', label: () => 'IPv4' }, { v: '6', label: () => 'IPv6' }]
   let famIdx = $derived(Math.max(0, FAM.findIndex(o => o.v === (f.fam || 'all'))))
   function setFam(v) { f.fam = v; if (!pathNA) searchNow() }
-  const sched = () => scheduleSearch(700)
-  const noop = () => {}
+  // 不再随输入自动搜索: 仅回车(onenter)或点击「搜索」触发。离散控件(family 段、复选)点击即搜。
   function clearAll() {
     Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
     searchNow()
@@ -39,7 +38,7 @@
         {/each}
       </div>
       <Field icon={iSubnet} bind:value={f.ip} placeholder={t('ph_ip')} big grow width=""
-        oninput={sched} onenter={searchNow} />
+        onenter={searchNow} />
       <!-- ≤410px: 强制换行, 让搜索/WHOIS/清空整体落到第二行(否则窄屏精确框会被挤到自己一行, 破坏布局) -->
       <div class="rowbreak" aria-hidden="true"></div>
       <button class="gobtn big" onclick={searchNow}><Fa icon={iSearch} /> {t('search')}</button>
@@ -49,18 +48,18 @@
     <!-- 第二行: 其余筛选(AS_PATH 撑满剩余宽度) -->
     <div class="row secondary">
       <Field icon={iCountry} bind:value={f.cc} placeholder={t('ph_cc')} list="cclist"
-        width="220px" oninput={sched} onenter={searchNow} />
+        width="220px" onenter={searchNow} />
       <Field icon={iCity} bind:value={f.city} placeholder={cities.length ? t('ph_city') : '—'}
-        list="citylist" disabled={!cities.length} width="155px" oninput={sched} onenter={searchNow} />
+        list="citylist" disabled={!cities.length} width="155px" onenter={searchNow} />
       <Field icon={iPath} bind:value={f.path} placeholder={t('ph_path')}
-        grow width="" disabled={pathNA} oninput={noop} onenter={searchNow} />
+        grow width="" disabled={pathNA} onenter={searchNow} />
       <button class="helpbtn" onclick={() => (S.pathHelp = true)} title={t('path_help')} aria-label={t('path_help')}>
         <Fa icon={iHelp} />
       </button>
       <input class="numbox" type="text" bind:value={f.limit} title={t('ph_limit')}
-        oninput={sched} onkeydown={(e) => e.key === 'Enter' && searchNow()} />
+        onkeydown={(e) => e.key === 'Enter' && searchNow()} />
       <label class="chk" title={t('lowvis')}>
-        <input type="checkbox" bind:checked={f.incllow} onchange={sched} />
+        <input type="checkbox" bind:checked={f.incllow} onchange={searchNow} />
         <span>{t('incllow')}</span>
       </label>
       {#if pathNA}<span class="locknote">{t('path_na')}</span>{/if}

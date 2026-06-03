@@ -38,6 +38,9 @@
       <button class="lnk lnkbtn" onclick={() => (S.changelog = true)}>
         <Fa icon={iChangelog} /> {t('changelog')}
       </button>
+      <button class="lnk lnkbtn" onclick={() => (S.about = true)}>
+        <Fa icon={iAbout} /> {t('about')}
+      </button>
     </nav>
     <div class="ctl">
       <button class="ghost" onclick={toggleLang} title="中 / English">
@@ -45,9 +48,6 @@
       </button>
       <button class="ghost" onclick={cycleTheme} title={t('theme')}>
         <Fa icon={iTheme} /> {themeLabel}
-      </button>
-      <button class="ghost" onclick={() => (S.about = true)} title={t('about')}>
-        <Fa icon={iAbout} />
       </button>
     </div>
   </div>

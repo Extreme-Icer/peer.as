@@ -115,6 +115,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "mrt_collectors": ["rrc01", "rrc06"],
     "mrt_collector": "rrc01",
     "mrt_base_url": "https://data.ris.ripe.net",
+    # MRT 源布局: "ripe"=列月份目录取最新 bview.*.gz(RIPE RIS); "dn42"=直接取 master4/6_latest.mrt.bz2(dn42 GRC)。
+    # dn42 站(site=dn42)的 config.json 设 mrt_layout="dn42" + mrt_base_url="https://mrt42.strexp.net"。
+    "mrt_layout": "ripe",
+    # dn42 registry(全量 whois)git 仓库; 仅 dn42 站用(ASN 名/person/whois/ROA 来源)。空=不启用。
+    "registry_repo": "",
     # 全球 ASN 名称表(APNIC): 给所有 AS 显示 asname(config.asn_registry 里特别标注的优先)。
     "autnums_url": "https://thyme.apnic.net/current/data-used-autnums",
     # 站点根 URL(SEO canonical/sitemap 用)

@@ -3,11 +3,15 @@
   import { t } from '../lib/i18n.js'
   import { iWhois, iDb, iSpinner } from '../lib/icons.js'
   import { fetchRdap } from '../lib/rdap.js'
+  import { fetchRegistry } from '../lib/registry.js'
+  import { features } from '../lib/site.js'
   import WhoisRow from './WhoisRow.svelte'
   import WhoisEntity from './WhoisEntity.svelte'
 
   let { kind, rkey } = $props()        // kind: 'autnum'|'ip'; rkey: ASN 号 或 前缀串
   let st = $state({ loading: true })
+  // whois 来源由 profile 决定: peeras=在线 RDAP; dn42=静态 registry JSON(同形模型)。
+  const fetchWhois = features.rdapWhois ? fetchRdap : fetchRegistry
 
   // key 变化即重取(rdap.js 内存+sessionStorage 去重/缓存, 重挂载零开销)。
   $effect(() => {
@@ -15,7 +19,7 @@
     if (k == null || k === '') { st = { empty: true }; return }
     st = { loading: true }
     let dead = false
-    fetchRdap(kd, String(k))
+    fetchWhois(kd, String(k))
       .then(d => { if (!dead) st = { data: d } })
       .catch(e => { if (!dead) st = { error: e.message } })
     return () => { dead = true }

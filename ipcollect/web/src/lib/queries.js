@@ -3,6 +3,7 @@ import { S } from './store.svelte.js'
 import { t } from './i18n.js'
 import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange } from './db.js'
 import { resolveDns } from './dns.js'
+import { features } from './site.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
   asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel, classifyRelation, isTier1,
@@ -41,7 +42,7 @@ export async function runSearch() {
   // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
   const probe = classifyQuery(f.ip)
   // 域名 -> DNS 解析视图(左:记录, 右:域名详情面板); 抢占其它一切, 自成一支。
-  if (probe.kind === 'domain') return runDns(probe.domain)
+  if (probe.kind === 'domain' && features.dns) return runDns(probe.domain)
   S.dns = null   // 离开 DNS 模式: 清空记录, 主内容区回到结果表
   // 精确框是 ASN 时: 设为「主体」并自动展开右侧 ASN 详情面板(whois + 上下游)。其它输入(含 IP/空)清空
   // 主体上下文(影响关闭语义)。已在展示同一 ASN 则不打断(避免点开 prefix 后被搜索拽回)。放在子网早返回之前。
@@ -66,7 +67,14 @@ export async function runSearch() {
   const pq = compilePathQuery(f.path)       // AS_PATH 查询(支持 * ? ! 通配/排除); empty=无 path 条件
   const hasPath = !pq.empty
   // origin 过滤集: 来自纯数字框(单个) 或 名称反查(多个); null=不过滤 origin。
-  const originAsns = boxAsn != null ? [boxAsn] : (nameHit ? nameHit.asns : null)
+  // person 筛选(dn42, 取代国家/地区): 选定 person -> 用其 origin ASN 集合走全表 origin 过滤(复用 pathsearch)。
+  let personAsns = null, personName = null
+  if (f.person && f.person.trim()) {
+    const p = (S.meta?.persons || []).find(x => x.id === f.person.trim())
+    personAsns = p ? p.asns : []
+    personName = p ? (p.name || p.id) : f.person.trim()
+  }
+  const originAsns = boxAsn != null ? [boxAsn] : (nameHit ? nameHit.asns : (personAsns || null))
   const city = (f.city || '').trim()
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   const inclLow = !!f.incllow
@@ -89,7 +97,7 @@ export async function runSearch() {
     const psFiles = psAll === null ? [] : byFam(psAll)   // family 单选过滤
     if (!psFiles.length) {   // 无覆盖分片(origin 不在库, 或被 family 过滤空) -> 空结果, 不下任何文件
       S.rows = []; S.mode = 'global'
-      const lbl = originLabel(originAsns, nameHit, nameQ)
+      const lbl = originLabel(originAsns, nameHit, nameQ, personName)
       S.msg = (S.lang === 'zh' ? `全表：显示 0 个前缀 · ${lbl}` : `global: 0 prefixes · ${lbl}`)
       return
     }
@@ -116,7 +124,7 @@ export async function runSearch() {
 
   const N = `${rows.length}${more ? '+' : ''}`
   const scope = cc ? `${ccLabel(cc)}${city ? ' · ' + city : ''}` : t('global')
-  const oTxt = originAsns ? ` · ${originLabel(originAsns, nameHit, nameQ)}` : ''
+  const oTxt = originAsns ? ` · ${originLabel(originAsns, nameHit, nameQ, personName)}` : ''
   const pTxt = hasPath ? (S.lang === 'zh' ? ` · path [${pq.summary()}]${pq.hasInclude ? '（★=落在最优路径）' : ''}` : ` · path [${pq.summary()}]${pq.hasInclude ? ' (★=on best path)' : ''}`) : ''
   S.msg = (S.lang === 'zh'
     ? `${scope}：显示 ${N} 个前缀${oTxt}${pTxt}` + (!inclLow ? ' · 已隐藏低可见' : '')
@@ -124,7 +132,8 @@ export async function runSearch() {
 }
 
 // origin 过滤的人类可读标签: 名称搜索显示 “名称→N 个 ASN(列前几个)”, 纯数字显示单个 origin AS。
-function originLabel(asns, nameHit, nameQ) {
+function originLabel(asns, nameHit, nameQ, personName) {
+  if (personName) return (S.lang === 'zh' ? `person ${personName}` : `person ${personName}`)
   if (nameHit && nameQ) {
     const n = asns.length
     const head = asns.slice(0, 6).map(a => 'AS' + a).join(', ')

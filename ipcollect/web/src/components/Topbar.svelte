@@ -4,12 +4,15 @@
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
   import { resolveCC, searchNow, openWhoisFromBox } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois } from '../lib/icons.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser } from '../lib/icons.js'
+  import { features } from '../lib/site.js'
   import Field from './Field.svelte'
 
   let cc = $derived(resolveCC(S.filters.cc))
   let cities = $derived((cc && S.meta?.cities?.[cc]) || [])
   let f = S.filters
+  // dn42(!features.geo): 用 person 筛选取代国家/地区。person 列表来自 meta.persons(值=nic-hdl)。
+  let personPh = $derived(S.lang === 'zh' ? '按 person 筛选 (nic-hdl)' : 'filter by person (nic-hdl)')
   // 精确框类型(empty/ipv4/asn/ipv6/text)：IP/CIDR 时 AS_PATH 不可叠加(prefixes 无路径数据), 其余筛选都可组合。
   let probe = $derived(classifyQuery(S.filters.ip))
   let pathNA = $derived(probe.kind === 'ipv4' || probe.kind === 'ipv6')
@@ -20,7 +23,7 @@
   function setFam(v) { f.fam = v; if (!pathNA) searchNow() }
   // 不再随输入自动搜索: 仅回车(onenter)或点击「搜索」触发。离散控件(family 段、复选)点击即搜。
   function clearAll() {
-    Object.assign(f, { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
+    Object.assign(f, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
     searchNow()
   }
 </script>
@@ -47,10 +50,15 @@
     </div>
     <!-- 第二行: 其余筛选(AS_PATH 撑满剩余宽度) -->
     <div class="row secondary">
-      <Field icon={iCountry} bind:value={f.cc} placeholder={t('ph_cc')} list="cclist"
-        width="220px" onenter={searchNow} />
-      <Field icon={iCity} bind:value={f.city} placeholder={cities.length ? t('ph_city') : '—'}
-        list="citylist" disabled={!cities.length} width="155px" onenter={searchNow} />
+      {#if features.geo}
+        <Field icon={iCountry} bind:value={f.cc} placeholder={t('ph_cc')} list="cclist"
+          width="220px" onenter={searchNow} />
+        <Field icon={iCity} bind:value={f.city} placeholder={cities.length ? t('ph_city') : '—'}
+          list="citylist" disabled={!cities.length} width="155px" onenter={searchNow} />
+      {:else}
+        <Field icon={iUser} bind:value={f.person} placeholder={personPh} list="personlist"
+          width="280px" onenter={searchNow} />
+      {/if}
       <Field icon={iPath} bind:value={f.path} placeholder={t('ph_path')}
         grow width="" disabled={pathNA} onenter={searchNow} />
       <button class="helpbtn" onclick={() => (S.pathHelp = true)} title={t('path_help')} aria-label={t('path_help')}>
@@ -67,14 +75,20 @@
   </div>
   <div class="statusline">{S.msg}</div>
 
-  <datalist id="cclist">
-    {#each S.meta?.countries || [] as c}
-      <option value={ccLabel(c.cc)}>{c.n_prefix.toLocaleString()}{(S.meta?.focus_countries || []).includes(c.cc) ? (S.lang === 'zh' ? ' · 可到城市' : ' · city-level') : ''}</option>
-    {/each}
-  </datalist>
-  <datalist id="citylist">
-    {#each cities as c}<option value={c.name}>{c.n_prefix.toLocaleString()}</option>{/each}
-  </datalist>
+  {#if features.geo}
+    <datalist id="cclist">
+      {#each S.meta?.countries || [] as c}
+        <option value={ccLabel(c.cc)}>{c.n_prefix.toLocaleString()}{(S.meta?.focus_countries || []).includes(c.cc) ? (S.lang === 'zh' ? ' · 可到城市' : ' · city-level') : ''}</option>
+      {/each}
+    </datalist>
+    <datalist id="citylist">
+      {#each cities as c}<option value={c.name}>{c.n_prefix.toLocaleString()}</option>{/each}
+    </datalist>
+  {:else}
+    <datalist id="personlist">
+      {#each S.meta?.persons || [] as p}<option value={p.id}>{p.name} · {p.n_prefix.toLocaleString()}</option>{/each}
+    </datalist>
+  {/if}
 </header>
 
 <style>

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import bz2
 import gzip
 import os
 import struct
@@ -14,6 +15,11 @@ import time
 from typing import Callable, Iterator, Optional
 
 from . import bgp, store, util
+
+
+def _open_mrt(path: str):
+    """按扩展名选解压: dn42 GRC 是 .bz2, RIPE RIS 是 .gz。两者都是流式只读。"""
+    return bz2.open(path, "rb") if path.endswith(".bz2") else gzip.open(path, "rb")
 
 # MRT / TABLE_DUMP_V2 常量
 MRT_TABLE_DUMP_V2 = 13
@@ -236,7 +242,7 @@ def iter_focus_prefixes(
     peers: list[tuple] = []
     scanned = 0
     kept = 0
-    with gzip.open(path, "rb") as f:
+    with _open_mrt(path) as f:
       try:
         while True:
             hdr = _readn(f, 12)
@@ -410,6 +416,16 @@ def ingest(
         if url is not None:                       # 显式单 URL -> 用首个 collector 标签
             coll_list = coll_list[:1] or ["rrc01"]
             urls = [(coll_list[0], url)]
+        elif cfg.get("mrt_layout") == "dn42":
+            # dn42 GRC: 直接取 master4/6_latest.mrt.bz2(无月份目录, bz2)。family 决定取哪个文件。
+            base = cfg["mrt_base_url"].rstrip("/")
+            label = (coll_list or ["mrt42"])[0]
+            if family in (None, 4):
+                urls.append((label, f"{base}/master4_latest.mrt.bz2"))
+            if family in (None, 6):
+                urls.append((label, f"{base}/master6_latest.mrt.bz2"))
+            for _, u in urls:
+                util.log(f"  [{label}] dn42 RIB: {u}")
         else:
             for c in coll_list:
                 u = latest_bview_url(cfg, c)

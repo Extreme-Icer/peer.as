@@ -14,7 +14,7 @@ export const S = $state({
   // DNS 解析视图载荷(mode==='dns' 时主内容区改渲染 DnsView): { domain, loading, error, status, a:[], aaaa:[], others:[] }
   // a/aaaa 行已富集前缀+origin asn(由 queries.runDns 查 prefixes 得到); others = 其它记录类型分组。
   dns: null,
-  filters: { cc: '', city: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' },
+  filters: { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' },
   selectedPid: null,       // 选中行(高亮 + 展开本段)
   // ── 右侧详情面板 ──────────────────────────────────────────────
   // detailKind: 当前面板视图 'prefix' | 'asn' | 'domain' | null(关闭)。prefix 载荷在 insight, asn 在 asnView, domain 在 domainView。

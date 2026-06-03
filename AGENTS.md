@@ -100,17 +100,34 @@
   `config.json` 的 `"site"`（默认 `"peeras"`）选定 profile；`"features": {...}` 可逐项覆盖单个开关（无需换 site）。
   **`peeras` = 现状全开**；新增任何开关，其 peeras 默认值**必须复现当前行为**（否则即回归）。
 - **开关清单**（`profile.py`）：`geo`（geo 管线总开关：geoip ensure/build、export carve + 国家 SSG、前端地区导航）、
-  `cn_mirror`（部署 cn.peer.as 镜像）、`whois`（前端 whois 后端 rdap/registry，**Phase2 前端接线**）。
+  `cn_mirror`（部署 cn.peer.as 镜像）、`whois`（前端 whois 后端 rdap/registry，`Whois.svelte` 据此选源）。
 - **已接线的接缝**（peeras 默认值下行为不变，已实测一致）：
   - `mrt.py` ingest：`features["geo"]` 为假则跳过 GeoLite/geo 构建。
   - `parquet_export.py`：`geo_on = features["geo"]`；为假时 pgeo 不连 geo（cc/省/市 NULL→下游 `'ZZ'`）、跳过 carve
     `_carve_geo_dirs`、无 geo 目录、无国家/城市 meta、无国家 SSG。**carve 已抽成 `_carve_geo_dirs` 单独函数**（geo profile 才调）。
   - `scripts/deploy.sh`：开头算 `CN_MIRROR`（读 profile，失败回退 1）；为 0 时跳过 `deploy_cn` 与 cn.peer.as 校验。
   - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns）。
-    **Phase 1 仅落地此模块，组件尚未接线**（地区导航/RDAP/DNS 去留 = Phase 2 实现 dn42 前端时做）。
-- **dn42 待做（Phase 2，尚未实现）**：registry/RPSL 采集模块（ASN 名 + whois 对象 + ROA）、MRT 源切到 dn42 GRC
-  （单采集点 + bz2）、export 无 geo 路径的产物形态打磨（按 ASN 导航/SSG）、前端组件按 `site.features` 接线、
-  dn42.peer.as 仅 CF Pages 部署。
+    组件按 `features` 分支：`Topbar`（geo→国家/城市；!geo→**person 选择框**，列表 `meta.persons`，值=nic-hdl）、
+    `Whois.svelte`（rdapWhois→在线 RDAP；否则 `lib/registry.js` 读静态 JSON）、`queries.js`（!dns 不进 DNS 解析；
+    person 选定→其 origin ASN 集合走全表 origin 过滤，复用 `pathsearchFilesForOrigins`）。
+
+### dn42 站（Phase 2 已实现）
+
+**数据源**：MRT = `https://mrt42.strexp.net/master4|6_latest.mrt.bz2`（bz2，无月份目录，`mrt_layout="dn42"`）；
+registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，clone/pull）。dn42 全在 clearnet，**采集不需隧道**。
+- `ipcollect/registry.py`：RPSL 解析 → ASN 名（aut-num.as-name）、ASN→person（aut-num.admin-c，兜底 mnt-by→mntner.admin-c）、
+  person 显示名；`export_dn42()` 写**逐 ASN 静态 whois** `data/registry/autnum/AS<n>.json`（与前端 `rdap.normalize()` 同形：
+  head 行 + admin/tech/mnt 实体树）+ 算 `meta.persons`（按前缀数降序）与 `meta.asn_person`。
+- `mrt.py`：`mrt_layout="dn42"` 直取 master4/6 bz2（`_open_mrt` 按扩展名选 bz2/gz）；GRC 每前缀经上千 peer ⇒ 每前缀
+  ~2000 条 AS_PATH（paths/ 仍按 `PATH_CAP` 取 top-24，pathsearch/pp 有界）。
+- **按 person 筛选取代国家**：无 geo；前端选 person → 用其 ASN 集合过滤 `pathsearch`（origin_asn IN）。
+- **跑一个 dn42 实例**（与 peeras 实例用各自的 `IPC_HOME` 目录隔离 DB/config/dist）：在实例目录放 `config.json`
+  （`site=dn42`、`mrt_layout=dn42`、`mrt_base_url`、`registry_repo`、`asn_registry=[]`、`focus_asns=[]`），然后
+  `IPC_HOME=<实例目录> .venv/bin/python -m ipcollect ingest --reset` → `export-parquet --out dist`；
+  前端 `cd ipcollect/web && VITE_SITE=dn42 npm run build` → `ipc sync-web`。部署：`site=dn42` ⇒ `cn_mirror` 关 ⇒ deploy.sh
+  只上 CF（域名 `dn42.peer.as`）。
+- **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN whois，IP 占位）、ROA（route 对象 vs
+  observed origin）展示、按 ASN/person 的 SSG 落地页、dn42 DNS（`.dn42` 解析）。
 
 ---
 

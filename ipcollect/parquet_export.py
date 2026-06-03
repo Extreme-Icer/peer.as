@@ -351,8 +351,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "SELECT DISTINCT family FROM prefix ORDER BY family").fetchall()]
     fam_results = {f: _export_family(con, cfg, pq, f, geo_on) for f in families}
 
-    # ASN 名称(APNIC autnums + 注册表) + org(asn_dim), 只留数据里出现过的 ASN。
-    autnums = _autnums(cfg.get("autnums_url") or "https://thyme.apnic.net/current/data-used-autnums")
+    # 数据里出现过的 ASN(路径上 + origin), 名称表只保留这些。
     seen: set[int] = set()
     for f in families:
         suf = fam_results[f]["suffix"]
@@ -362,22 +361,35 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                 seen.add(int(r[0]))
     for r in con.execute("SELECT DISTINCT origin_asn FROM prefix WHERE origin_asn IS NOT NULL").fetchall():
         seen.add(int(r[0]))
-    asnames = {a: autnums[a] for a in seen if a in autnums}
-    for e in (cfg.get("asn_registry") or []):
-        if str(e.get("asn", "")).isdigit() and e.get("name"):
-            asnames[int(e["asn"])] = e["name"]
+
+    # ASN 名称 + person 导航 + whois。site 决定来源:
+    #   dn42  -> registry(as-name / aut-num→person / 静态 whois); 无 org(asn_dim)。
+    #   peeras-> APNIC autnums + config 注册表 + GeoLite org(asn_dim)。
+    persons_meta: list = []
+    asn_person_meta: dict = {}
+    if profile.site(cfg) == "dn42":
+        from . import registry
+        reg = registry.load(cfg)
+        asnames = {a: reg["asn_names"][a] for a in seen if a in reg["asn_names"]}
+        persons_meta, asn_person_meta = registry.export_dn42(reg, data, seen, con)
+        asnorg: dict = {}
+    else:
+        autnums = _autnums(cfg.get("autnums_url") or "https://thyme.apnic.net/current/data-used-autnums")
+        asnames = {a: autnums[a] for a in seen if a in autnums}
+        for e in (cfg.get("asn_registry") or []):
+            if str(e.get("asn", "")).isdigit() and e.get("name"):
+                asnames[int(e["asn"])] = e["name"]
+        asnorg = {}
+        if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='asn_dim'").fetchone()[0]:
+            for a, o in con.execute("SELECT asn, org FROM asn_dim").fetchall():
+                if int(a) in seen:
+                    asnorg[str(int(a))] = o
     (data / "asnames.json").write_text(
         json.dumps({str(k): v for k, v in asnames.items()}, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
-    # asn org(GeoLite asn_dim), 只留出现过的
-    asnorg = {}
-    if con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='asn_dim'").fetchone()[0]:
-        for a, o in con.execute("SELECT asn, org FROM asn_dim").fetchall():
-            if int(a) in seen:
-                asnorg[str(int(a))] = o
     (data / "asnorg.json").write_text(
         json.dumps(asnorg, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    util.log(f"  asnames.json: {len(asnames)} 名; asnorg.json: {len(asnorg)} org")
+    util.log(f"  asnames.json: {len(asnames)} 名; asnorg.json: {len(asnorg)} org; persons: {len(persons_meta)}")
 
     # 文件清单 + 区间索引(前端 HTTP 不能 glob)
     def _rel(sub):
@@ -468,6 +480,7 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),
         "scope": "global",
+        "site": profile.site(cfg),
         "families": families,
         "collectors": [c for c in (cfg.get("mrt_collectors") or [cfg.get("mrt_collector")]) if c],
         "site_base": cfg.get("site_base") or "https://peer.as",
@@ -479,9 +492,14 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "country_names_en": country_names_en,
         "focus_countries": focus_cc,
         "cities": cities,
+        # dn42: 按 person 导航(取代国家/地区)。persons=[{id,name,asns,n_prefix}]; asn_person={asn:pid}。peeras 为空。
+        "persons": persons_meta,
+        "asn_person": asn_person_meta,
         "path_presets": cfg.get("path_presets") or [],
         "focus_asns": bgp.resolve_asns(cfg.get("focus_asns") or []),
-        "asn_names": {str(a): v["name"] for a, v in bgp.ASN_REGISTRY.items()},
+        # asn 名称: dn42 用 registry as-name(seen 集); peeras 用 config 注册表(高亮集, 大表在 asnames.json)。
+        "asn_names": ({str(a): n for a, n in asnames.items()} if profile.site(cfg) == "dn42"
+                      else {str(a): v["name"] for a, v in bgp.ASN_REGISTRY.items()}),
         "asn_names_en": {str(a): v["name_en"] for a, v in bgp.ASN_REGISTRY.items() if v.get("name_en")},
         "asn_ops": {str(a): v["op"] for a, v in bgp.ASN_REGISTRY.items() if v.get("op")},
     }

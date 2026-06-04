@@ -160,7 +160,7 @@
         {/if}
         {#if S.meta?.rpki?.as_of || S.meta?.irr?.as_of}
           <div class="provenance">
-            {#if S.meta?.rpki?.as_of}<span>RPKI {t('data_asof')} {S.meta.rpki.as_of}</span>{/if}
+            {#if S.meta?.rpki?.as_of}<span>{t('rpki_badge')} {t('data_asof')} {S.meta.rpki.as_of}</span>{/if}
             {#if S.meta?.irr?.as_of}<span>IRR {t('data_asof')} {S.meta.irr.as_of}</span>{/if}
           </div>
         {/if}

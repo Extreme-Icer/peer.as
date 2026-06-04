@@ -16,13 +16,13 @@
 
 {#if S.meta?.has_rpki && (rp || unknown)}
   {#if rp === 1}
-    <span class="badge b-ok st" title={t('rpki_valid')}><Fa icon={iShield} /> RPKI</span>
+    <span class="badge b-ok st" title={t('rpki_valid')}><Fa icon={iShield} /> {t('rpki_badge')}</span>
   {:else if rp === 2}
-    <span class="badge b-bad st" title={t('rpki_inv_asn')}><Fa icon={iShield} /> RPKI ✗</span>
+    <span class="badge b-bad st" title={t('rpki_inv_asn')}><Fa icon={iShield} /> {t('rpki_badge')} ✗</span>
   {:else if rp === 3}
-    <span class="badge b-bad st" title={t('rpki_inv_len')}><Fa icon={iShield} /> RPKI ✗</span>
+    <span class="badge b-bad st" title={t('rpki_inv_len')}><Fa icon={iShield} /> {t('rpki_badge')} ✗</span>
   {:else if unknown}
-    <span class="badge b-mute st" title={t('rpki_notfound')}><Fa icon={iShield} /> RPKI ?</span>
+    <span class="badge b-mute st" title={t('rpki_notfound')}><Fa icon={iShield} /> {t('rpki_badge')} ?</span>
   {/if}
 {/if}
 {#if S.meta?.has_irr && (ir || unknown)}

@@ -431,17 +431,26 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         FROM prefix p JOIN (SELECT DISTINCT pid, origin_asn FROM pathobs) po USING(pid)
         WHERE po.origin_asn IS NOT NULL;
     """)
+    # classify 包 try/except: 数据形状异常(尤其未充分验证的 dn42 路径)只降级到 has_*=False, 绝不让整个导出失败。
+    has_rpki = has_irr = False
     if rpki_meta:
-        util.log(f"  RPKI: 验证 (VRP {util.human(rpki_meta['count'])}, as of {rpki_meta.get('as_of_str')})")
-        rpki.classify(con)
+        try:
+            util.log(f"  RPKI: 验证 (VRP {util.human(rpki_meta['count'])}, as of {rpki_meta.get('as_of_str')})")
+            rpki.classify(con); has_rpki = True
+        except Exception as e:  # noqa
+            util.log(f"  ! RPKI classify 失败, 降级(无 RPKI 标注): {e}", err=True)
+            rpki.empty_status(con)
     else:
         rpki.empty_status(con)
     if irr_meta:
-        util.log(f"  IRR: 验证 (route {util.human(irr_meta['count'])} 对象, {len(irr_meta.get('sources') or [])} 源)")
-        irr.classify(con)
+        try:
+            util.log(f"  IRR: 验证 (route {util.human(irr_meta['count'])} 对象, {len(irr_meta.get('sources') or [])} 源)")
+            irr.classify(con); has_irr = True
+        except Exception as e:  # noqa
+            util.log(f"  ! IRR classify 失败, 降级(无 IRR 标注): {e}", err=True)
+            irr.empty_status(con)
     else:
         irr.empty_status(con)
-    has_rpki, has_irr = bool(rpki_meta), bool(irr_meta)
 
     # prefix_origins(MOAS 详情): 全部 origin + peer 数 + 各 origin 的 rpki/irr 状态(数组与 origin_asns 对齐)。
     con.execute("DROP TABLE IF EXISTS prefix_origins;")
@@ -505,24 +514,39 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
 
     # ── as-set 层级树数据集(Phase 3): 一级成员边 + 反查; 各按字符串键排序写, 配文件级区间索引供前端懒展开 ──
     if has_asset:
-        for nm in ("asset_set", "asset_member", "asset_memberof"):
-            (pq / nm).mkdir(parents=True, exist_ok=True)
-        con.execute("PRAGMA threads=1;")
-        con.execute("SET preserve_insertion_order=true;")
-        con.execute(f"""COPY (SELECT set_key, source, name, descr, n_members FROM as_set ORDER BY set_key)
-            TO '{pq}/asset_set' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
-        con.execute(f"""COPY (SELECT set_key, ord, kind, val FROM as_set_member ORDER BY set_key, ord)
-            TO '{pq}/asset_member' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
-        con.execute(f"""COPY (SELECT member, parent_key FROM as_memberof ORDER BY member)
-            TO '{pq}/asset_memberof' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
-        con.execute("SET preserve_insertion_order=false;")
-        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+        try:
+            for nm in ("asset_set", "asset_member", "asset_memberof"):
+                (pq / nm).mkdir(parents=True, exist_ok=True)
+            con.execute("PRAGMA threads=1;")
+            con.execute("SET preserve_insertion_order=true;")
+            con.execute(f"""COPY (SELECT set_key, source, name, descr, n_members FROM as_set ORDER BY set_key)
+                TO '{pq}/asset_set' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+            con.execute(f"""COPY (SELECT set_key, ord, kind, val FROM as_set_member ORDER BY set_key, ord)
+                TO '{pq}/asset_member' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+            con.execute(f"""COPY (SELECT member, parent_key FROM as_memberof ORDER BY member)
+                TO '{pq}/asset_memberof' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+            con.execute("SET preserve_insertion_order=false;")
+            con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+        except Exception as e:  # noqa  数据异常只降级, 不让整个导出失败
+            util.log(f"  ! as-set 导出失败, 降级(无 as-set 树): {e}", err=True)
+            has_asset = False
+            con.execute("SET preserve_insertion_order=false;")
+            con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+            for nm in ("asset_set", "asset_member", "asset_memberof"):
+                shutil.rmtree(pq / nm, ignore_errors=True)
 
     # ── ASN 邻接事实预计算(asn_neigh): 替代前端「完整邻居」的全表扫(原 LIKE 全 pathsearch + 2 万截断)。
     #    **只预计算邻接计数**(d/u/w/wd = 强下/强上/弱上/弱下证据)；up/peer/down **分类仍在前端**
     #    (queries.js groupRelations/classifyRelation)做 —— 算法可调、改判定不必重导出。约 +30s / ~4MB。
     #    **TIER1 必须与 web/src/lib/bgp.js 的 TIER1 一致**(弱/强证据按"X 收集器侧之前是否有 Tier-1"门控)。
-    has_asn_neigh = _build_asn_neigh(con, pq)
+    try:
+        has_asn_neigh = _build_asn_neigh(con, pq)
+    except Exception as e:  # noqa
+        util.log(f"  ! asn_neigh 预计算失败, 降级(完整邻居回退前端全表扫): {e}", err=True)
+        has_asn_neigh = False
+        con.execute("SET preserve_insertion_order=false;")
+        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+        shutil.rmtree(pq / "asn_neigh", ignore_errors=True)
 
     # 数据里出现过的 ASN(路径上 + origin), 名称表只保留这些。
     seen: set[int] = set()

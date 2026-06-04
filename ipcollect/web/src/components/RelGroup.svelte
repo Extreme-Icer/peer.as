@@ -1,21 +1,34 @@
 <script>
   import Fa from 'svelte-fa'
-  import { showAsn } from '../lib/queries.js'
+  import { showAsn, loadEvidence } from '../lib/queries.js'
   import { t } from '../lib/i18n.js'
-  import { iAbout } from '../lib/icons.js'
+  import { iAbout, iSpinner } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
   import AsPath from './AsPath.svelte'
 
   // 一组关系邻居(up/peer/down 之一)。items=[{asn,n,d,u,ev}], subject=被查询的 ASN。
-  // 标签 inline 排满换行(flex-wrap); 「依据」是小图标, 点击浮出该关系的样本路径(同组一次只开一条)。
+  // ev 两形态: 预计算={pid}(点开按 pid 懒查路径); 旧数据全表扫={path,side,prefix?}(现成)。
+  // 标签 inline 排满换行(flex-wrap); 「依据」小图标, 点击浮出该关系的样本路径(同组一次只开一条)。
   let { title, icon, items, subject } = $props()
   let openAsn = $state(null)
   let pop = $state(null)
-  const toggle = a => (openAsn = openAsn === a ? null : a)
+  let evCache = $state({})       // asn -> 'loading' | {path,side} | null(查无)
+
+  async function toggle(it) {
+    if (openAsn === it.asn) { openAsn = null; return }
+    openAsn = it.asn
+    // ev 是 {pid} 且未缓存 -> 懒查那条样本路径(只在点开时, 不拖慢 ASN 加载)。
+    if (it.ev?.path == null && it.ev?.pid != null && evCache[it.asn] === undefined) {
+      evCache = { ...evCache, [it.asn]: 'loading' }
+      const e = await loadEvidence(it.ev.pid, subject, it.asn)
+      evCache = { ...evCache, [it.asn]: e }
+    }
+  }
+  const evOf = it => (it.ev?.path ? it.ev : evCache[it.asn])   // 现成 / 懒查结果
 
   // 浮层右缘若超出视口则改为右对齐锚点, 避免溢出窄面板产生横向滚动。
   $effect(() => {
-    openAsn
+    openAsn; evCache
     if (openAsn == null || !pop || typeof window === 'undefined') return
     pop.style.left = '0'; pop.style.right = 'auto'
     const r = pop.getBoundingClientRect()
@@ -31,14 +44,21 @@
         <span class="tag" class:noev={!it.ev} class:open={openAsn === it.asn}>
           <button class="nav" onclick={() => showAsn(it.asn)} title="AS{it.asn}"><AsnTag asn={it.asn} /><span class="cnt">{it.n}</span></button>
           {#if it.ev}
-            <button class="ev" class:on={openAsn === it.asn} onclick={() => toggle(it.asn)} title={t('rel_evidence')} aria-label={t('rel_evidence')}><Fa icon={iAbout} /></button>
+            <button class="ev" class:on={openAsn === it.asn} onclick={() => toggle(it)} title={t('rel_evidence')} aria-label={t('rel_evidence')}><Fa icon={iAbout} /></button>
             {#if openAsn === it.asn}
+              {@const e = evOf(it)}
               <div class="evpop" bind:this={pop}>
-                <div class="evhead">
-                  <span class="evpx">{it.ev.prefix}</span>
-                  <span class="evside">{it.ev.side === 'd' ? t('rel_side_down') : t('rel_side_up')}</span>
-                </div>
-                <AsPath asns={it.ev.path} hi={[subject, it.asn]} nav />
+                {#if e === 'loading' || e === undefined}
+                  <span class="evload"><Fa icon={iSpinner} spin /></span>
+                {:else if e}
+                  <div class="evhead">
+                    {#if e.prefix}<span class="evpx">{e.prefix}</span>{/if}
+                    <span class="evside">{e.side === 'd' ? t('rel_side_down') : t('rel_side_up')}</span>
+                  </div>
+                  <AsPath asns={e.path} hi={[subject, it.asn]} nav />
+                {:else}
+                  <span class="evload muted">{t('none_in_db')}</span>
+                {/if}
               </div>
             {/if}
           {/if}
@@ -68,6 +88,7 @@
     padding: 8px 10px; background: var(--panel); border: 1px solid var(--line);
     border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, .22);
   }
+  .evload { color: var(--muted); font-size: 11.5px; display: inline-flex; padding: 2px 0; }
   .evhead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
   .evhead .evpx { font: 11px var(--mono); color: var(--link); }
   .evhead .evside { font-size: 10.5px; color: var(--muted); }

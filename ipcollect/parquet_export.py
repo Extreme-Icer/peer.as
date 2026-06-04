@@ -369,28 +369,29 @@ def _build_asn_neigh(con, pq: Path) -> bool:
     con.execute(f"""
         CREATE TABLE asn_neigh AS
         WITH base AS (
-            SELECT path_arr AS a, len(path_arr) AS L, {ft1} AS ft1
+            SELECT pid, path_arr AS a, len(path_arr) AS L, {ft1} AS ft1
             FROM {src} WHERE path_arr IS NOT NULL AND len(path_arr) >= 2
         ),
-        adj AS (   -- 每条路径展开成相邻 AS 对; weak = X 收集器侧之前无 Tier-1(方向证据不可靠)
-            SELECT list_extract(a, j) AS asn, list_extract(a, j + 1) AS nb, (ft1 >= j) AS weak, FALSE AS isleft
+        adj AS (   -- 每条路径展开成相邻 AS 对; weak = X 收集器侧之前无 Tier-1(方向证据不可靠)。带 pid/L 供取代表样本。
+            SELECT pid, L, list_extract(a, j) AS asn, list_extract(a, j + 1) AS nb, (ft1 >= j) AS weak, FALSE AS isleft
             FROM base, range(1, L) g(j) WHERE list_extract(a, j) <> list_extract(a, j + 1)
             UNION ALL
-            SELECT list_extract(a, j) AS asn, list_extract(a, j - 1) AS nb, (ft1 >= j) AS weak, TRUE AS isleft
+            SELECT pid, L, list_extract(a, j) AS asn, list_extract(a, j - 1) AS nb, (ft1 >= j) AS weak, TRUE AS isleft
             FROM base, range(2, L + 1) g(j) WHERE list_extract(a, j) <> list_extract(a, j - 1)
         )
         SELECT asn, nb AS neighbor,
                count(*) FILTER (WHERE NOT isleft AND NOT weak)::INT AS d,
                count(*) FILTER (WHERE isleft     AND NOT weak)::INT AS u,
                count(*) FILTER (WHERE isleft     AND weak)::INT     AS w,
-               count(*) FILTER (WHERE NOT isleft AND weak)::INT     AS wd
+               count(*) FILTER (WHERE NOT isleft AND weak)::INT     AS wd,
+               arg_min(pid, L)::BIGINT AS ev_pid   -- 代表样本: 含该邻接的最短路径的 pid(前端点 ℹ 时按 pid 懒查)
         FROM adj WHERE asn IS NOT NULL AND nb IS NOT NULL GROUP BY asn, nb;
     """)
     n = con.execute("SELECT count(*) FROM asn_neigh").fetchone()[0]
     (pq / "asn_neigh").mkdir(parents=True, exist_ok=True)
     con.execute("PRAGMA threads=1;")
     con.execute("SET preserve_insertion_order=true;")   # 按 asn 连续区段写 -> 数值区间索引可裁到 1 文件
-    con.execute(f"""COPY (SELECT asn, neighbor, d, u, w, wd FROM asn_neigh ORDER BY asn)
+    con.execute(f"""COPY (SELECT asn, neighbor, d, u, w, wd, ev_pid FROM asn_neigh ORDER BY asn)
         TO '{pq}/asn_neigh' (FORMAT parquet, FILE_SIZE_BYTES '6MB', OVERWRITE_OR_IGNORE);""")
     con.execute("SET preserve_insertion_order=false;")
     con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")

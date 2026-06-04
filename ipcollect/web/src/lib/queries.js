@@ -411,13 +411,10 @@ export async function showAsn(asn) {
         q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`),
       ])
     }
-    // evacc: 从该 AS 自己通告前缀的 best_path 取样本邻接(含 evd/evu 样本路径), 用于给预计算邻居补「依据」弹窗。
-    const evacc = new Map()
-    for (const r of rows) accPath(evacc, parseBest(r.best_path), asn, r.prefix)
     S.asnView = {
       asn, name: asnName(asn),
       count4: Number(cnt[0]?.c4 || 0), count6: Number(cnt[0]?.c6 || 0),
-      prefixes: rows, evacc, neigh: null,
+      prefixes: rows, neigh: null,
     }
   } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }
   // 反查该 ASN 被哪些 as-set 直接包含(member-of), 异步补到面板。
@@ -449,7 +446,8 @@ function groupRelations(asn, acc, limit) {
   const out = emptyRel()
   for (const [y, o] of acc) {
     const rel = classifyRelation(asn, y, o.d, o.u)         // wd/w 不传入, 不污染方向 ⇒ 仅假象者落 peer
-    const ev = rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd)
+    // 依据: 预计算路径带代表样本 pid(点开懒查); 旧数据全表扫路径已有现成 evd/evu(含 path/prefix)。
+    const ev = o.ev_pid != null ? { pid: o.ev_pid } : (rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd))
     // 计数: 上下游用可靠证据; peer(含假象)用总观测次数, 以反映其被看到的频度。
     const n = rel === 'peer' ? (o.d + o.u + o.w + o.wd) : (o.d + o.u)
     out[rel].push({ asn: y, n, d: o.d, u: o.u, ev })
@@ -486,12 +484,11 @@ export async function scanNeighbors(asn) {
     if (S.meta?.has_asn_neigh) {
       const files = asnNeighFilesForAsn(asn)
       if (!files.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0, precomputed: true } }; return }
-      const rows = await q(`SELECT neighbor, d, u, w, wd FROM ${rpList(files)} WHERE asn=${asn}`)
+      const rows = await q(`SELECT neighbor, d, u, w, wd, ev_pid FROM ${rpList(files)} WHERE asn=${asn}`)
       const acc = new Map()
-      for (const r of rows) acc.set(Number(r.neighbor), { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd), evd: null, evu: null })
-      // 补「依据」样本路径: 用该 AS 自己通告前缀里观测到的样本(evacc); 没样本的邻居就不显示 ℹ(RelGroup 自适应)。
-      const ev = S.asnView?.evacc
-      if (ev) for (const [y, o] of acc) { const e = ev.get(y); if (e) { o.evd = e.evd; o.evu = e.evu } }
+      for (const r of rows) acc.set(Number(r.neighbor),
+        { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd), ev_pid: r.ev_pid == null ? null : Number(r.ev_pid) })
+      // 每对带代表样本 pid -> ℹ 依据在点开时才按 pid 懒查(loadEvidence), 不在此处取, 不拖慢 ASN 加载。
       S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, precomputed: true } }
       return
     }
@@ -510,6 +507,21 @@ export async function scanNeighbors(asn) {
     }
     S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, capped: rows.length >= 20000 } }
   } catch (e) { S.asnView = { ...S.asnView, neigh: { error: e.message } } }
+}
+
+// 按代表样本 pid 懒查一条含 (subj,nb) 相邻的路径 -> {path, side}。RelGroup 点开 ℹ 时才调, 不在 ASN 加载时取(不拖慢)。
+export async function loadEvidence(pid, subj, nb) {
+  try {
+    const rows = await q(`SELECT path_arr FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC`)
+    for (const r of rows) {
+      const arr = Array.from(r.path_arr || []).map(Number)
+      for (let k = 0; k < arr.length; k++) if (arr[k] === subj) {
+        if (arr[k + 1] === nb) return { path: arr, side: 'd' }   // nb 在 origin 侧(右) = 下行
+        if (arr[k - 1] === nb) return { path: arr, side: 'u' }   // nb 在收集器侧(左) = 上行
+      }
+    }
+  } catch (e) { /* 证据取失败不影响列表 */ }
+  return null
 }
 
 // dn42: 无 DoH 解析, 域名 -> 直接展示 registry whois(右侧域名详情面板; 左侧不进 DNS 记录视图)。

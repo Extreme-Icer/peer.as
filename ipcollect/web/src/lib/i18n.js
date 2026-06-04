@@ -25,7 +25,6 @@ export const STRINGS = {
     no_cover: '库内无前缀覆盖该 IP', query_failed: '查询失败',
     paths_all: '全部去重路径', sup: '更大段（母段）', sub: '更小段（更具体段）', none_in_db: '库内无',
     graph_title: '路由图 · origin → 上游 / Tier-1', segs_title: '本前缀在此地实际路由的子段（CIDR）',
-    rel_note: '仅基于已采集前缀（全球 v4+v6 全表），父子段以数值范围实时查得。',
     peers: 'peer 观测', distinct: '去重路径', subnet_done: '匹配前缀', global: '全表',
     moas: '多源', moas_origins: '该前缀的所有 origin AS', moas_note: '此前缀被多个 origin AS 同时通告（MOAS）',
     // RPKI ROA / IRR 路由起源验证
@@ -110,7 +109,6 @@ export const STRINGS = {
     no_cover: 'no prefix covers this IP', query_failed: 'Query failed',
     paths_all: 'All distinct paths', sup: 'Larger (covering)', sub: 'More specific', none_in_db: 'none in DB',
     graph_title: 'Route graph · origin → upstream / Tier-1', segs_title: 'Segments actually routed here (CIDR)',
-    rel_note: 'Based on collected prefixes (global IPv4+IPv6); parent/child found live by numeric range.',
     peers: 'peer obs', distinct: 'distinct paths', subnet_done: 'matching prefixes', global: 'global',
     moas: 'MOAS', moas_origins: 'all origin ASes of this prefix', moas_note: 'This prefix is announced by multiple origin ASes (MOAS)',
     // RPKI ROA / IRR route-origin validation

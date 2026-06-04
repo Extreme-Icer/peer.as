@@ -121,7 +121,6 @@
               <div class="rels">{#each ins.sub as r}<button class="rellink" onclick={() => showInsight(r.pid, r.prefix)}>{r.prefix}</button>{/each}</div>
             {:else}<span class="muted">{t('none_in_db')}</span>{/if}
           </div>
-          <div class="relnote">{t('rel_note')}</div>
         </div>
 
         <h3 class="dsec" data-sec="paths">{t('paths_all')}</h3>
@@ -224,7 +223,6 @@
   .rellink:hover { text-decoration: underline; }
   .sub-sep { color: var(--muted); margin: 0 6px; }
   .muted { color: var(--muted); }
-  .relnote { color: var(--muted); font-size: 11px; margin: 10px 0 2px; line-height: 1.5; }
   .irrlist { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
   .irritem { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
   .irritem .originlink b { font-family: var(--mono); }

@@ -226,6 +226,24 @@ print(c.execute('SELECT family,count(*) FROM prefix GROUP BY family').fetchall()
 调用即得一致结果。**勿再手敲 `wrangler pages deploy` / `rsync` / 手动 build —— 那正是导致部署不一致事故的根源。**
 **维护改动：直接跑 deploy.sh 推，无需再确认（用户已授权直接推）。**
 
+### 部署注意事项（踩坑清单，部署前必读）
+- **GitOps 推送前先 rebase 到 `origin/main`**：deploy.sh 开头会 `git fetch + merge --ff-only origin/main`，cron(peeras 8h)
+  与 dn42 实例(10min)都从 `origin/main` 拉代码。`origin/main` 可能已被 **dn42 的提交推进**，本地分支会**分叉、无法 ff-push**。
+  流程：`git rebase origin/main`(解 AGENTS.md/db.js 等共改文件的冲突) → 确认 `merge-base --is-ancestor origin/main HEAD` → `git push origin HEAD:main`。
+  **必须 push 到 `origin/main` 才持久**，否则下次 cron(≤8h)会把线上回滚到旧代码。
+- **从 git worktree 部署：除 data 产物外，`.env` 也必须 symlink**（最隐蔽的坑）。deploy.sh 的 **CN rsync 凭据
+  (`CN_DEPLOY_SSH`/`CN_DEPLOY_PATH`)只在 `.env`**；worktree 缺 `.env` ⇒ **CN 步静默跳过、cn.peer.as 服旧数据，而 CF 照常成功**
+  (wrangler 用 `HOME` 的 OAuth，不读 .env) ⇒ **两端 meta 不一致**。worktree 要复用主 checkout 时一并软链：
+  `ipcollect.duckdb`、`ipdb.txt`、`config.json`、`.env`、`.venv`、`cache`、`ipcollect/web/node_modules`。
+- **含完整 fresh dist 的 worktree 可直接 `deploy.sh`（无 --data）**：copy_web 保留 `dist/data`、只重 build 前端。
+  （承接「deploy-from-main-checkout」记忆：关键是**该 checkout 必须有完整 dist/data**——主 checkout 或自己导出过数据的 worktree 都行；
+  全新空 worktree 缺 data/SSG 会推残缺快照。）
+- **部署后两端都要核**：`curl https://peer.as/data/meta.json` 与 `https://cn.peer.as/data/meta.json` 的 `version` 必须**一致**，
+  且新特性标志(`has_rpki`/`has_irr`/`has_asset`/`has_asn_neigh`)符合预期。**peer.as 入口 hash 校验的 ⚠ 多是 CF 传播延迟**(秒级)，
+  稍后复查即一致；但 **cn.peer.as 入口/meta 不一致 = CN rsync 真没成功**(查 `.env`/SSH)，不是延迟。
+- **改了 import 数据源/profile 开关影响 dn42**：rpki/irr/asset 的 dn42 路径(registry)若未充分验证，靠 export 里的 try/except
+  降级(`has_*=False`)兜底，不会拖垮 dn42 刷新；但仍应留意 dn42 实例首轮日志。
+
 ```bash
 # 改完前端 / 只动前端: build 前端 + 部署 CF+CN(复用现有数据):
 scripts/deploy.sh

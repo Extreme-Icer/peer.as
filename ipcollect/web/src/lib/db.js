@@ -1,5 +1,6 @@
 // DuckDB-WASM 数据层 (从 web_ref/app.js 移植)。无后端: 浏览器对静态 parquet 发 HTTP Range 查询。
 import { S } from './store.svelte.js'
+import { features } from './site.js'
 // DuckDB-WASM 资产经 Vite `?url` 打包: 输出带内容 hash 的独立资源(不内联到 JS), 随 dist 部署。
 // **wasm 自托管的边界**: CN 镜像(Caddy, 无大小限制)同源托管完整 wasm;**CF Pages 单文件 ≤25MiB,
 // 而 duckdb-eh/mvp.wasm 达 33/39MB 放不下** -> CF 部署临时移出这俩 wasm(见 daily-refresh 3b),
@@ -56,6 +57,9 @@ async function fetchT(url, opts = {}, ms = 2000) {
 // 启动时调用一次: 选定数据宿主(wasm/worker 已打包同源, 见 wasmSrcs)。
 export async function configure() {
   DATA = SAME; edge = 'cf'
+  // 本站无 cn.peer.as 整站镜像(profile cn_mirror=false, 如 dn42): 永远同源, 不做任何 CN 探测/分流。
+  // 否则会把数据切到 cn.peer.as —— 而 cn.peer.as 只镜像 peeras 全球数据集, dn42 切过去会加载错 meta/parquet 直接炸。
+  if (!features.cnMirror) return edge
   // 1) 直连 CN 机器(host=cn.peer.as): 同源即 CN 机器 —— 数据 /data 同源。
   if (location.hostname === CN_HOST) {
     DATA = SAME; edge = 'cn'

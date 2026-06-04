@@ -14,11 +14,13 @@ const PROFILES = {
     geo: true,         // 地区(国家/城市)导航 + geo 数据视图
     rdapWhois: true,   // whois 走公网 RDAP 直连 + 兜底 worker(dn42 改 registry 静态数据)
     dns: true,         // DNS 解析视图(DoH)
+    cnMirror: true,    // 存在 cn.peer.as 整站镜像 -> 前端 configure() 才做 CN 分流(切数据到镜像)
   },
   dn42: {
     geo: false,
     rdapWhois: false,  // whois 走静态 registry JSON
     dns: false,        // 无 DoH 解析; 但域名仍可查 registry whois(见 queries.js)
+    cnMirror: false,   // dn42 只上 CF Pages、无 cn.peer.as 镜像 -> 前端永不做 CN 分流(否则会切到只镜像 peeras 数据的 cn.peer.as, 加载错数据集炸掉)
   },
 }
 

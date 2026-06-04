@@ -113,18 +113,23 @@ def _rows_from_registry(cfg) -> tuple[list[tuple], list[str]]:
     for sub, fam in (("route", 4), ("route6", 6)):
         for _name, kv in registry._read_dir(data, sub).items():
             pfx = registry._first(kv, sub)
-            origin = registry._first(kv, "origin")
-            if not pfx or not origin:
+            if not pfx:
                 continue
             try:
                 net = ipaddress.ip_network(pfx.strip(), strict=False)
-                o = origin.strip().upper()
-                if o.startswith("AS"):
-                    o = o[2:]
-                o = int(o)
             except Exception:  # noqa
                 continue
-            rows.append((fam, int(net.network_address), int(net.broadcast_address), net.prefixlen, o, "DN42"))
+            # 一个 route 对象可登记多条 origin(MOAS) -> 每个 origin 各出一条, 否则 MOAS 里
+            # 非首个 origin 会被误判为 mismatch/not-found。
+            for origin in registry._all(kv, "origin"):
+                try:
+                    o = origin.strip().upper()
+                    if o.startswith("AS"):
+                        o = o[2:]
+                    o = int(o)
+                except Exception:  # noqa
+                    continue
+                rows.append((fam, int(net.network_address), int(net.broadcast_address), net.prefixlen, o, "DN42"))
     return rows, ["DN42"]
 
 

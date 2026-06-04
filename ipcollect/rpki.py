@@ -68,24 +68,29 @@ def _rows_from_json(obj) -> list[tuple]:
 
 
 def _rows_from_registry(cfg) -> list[tuple]:
-    """dn42: registry route/route6 对象的 max-length 即 ROA(本地, 无需联网)。"""
+    """dn42: registry route/route6 对象的 max-length 即 ROA(本地, 无需联网)。
+    一个 route 对象可登记多条 origin(MOAS) -> 每个 origin 各出一条 VRP, 否则 MOAS 里
+    非首个 origin 会被误判 Invalid。"""
     from . import registry
     data = registry.ensure_registry(cfg)
     rows: list[tuple] = []
     for sub, fam in (("route", 4), ("route6", 6)):
         for _name, kv in registry._read_dir(data, sub).items():
             pfx = registry._first(kv, sub)
-            origin = registry._first(kv, "origin")
             maxl = registry._first(kv, "max-length")
-            if not pfx or not origin:
+            if not pfx:
                 continue
             try:
                 net = ipaddress.ip_network(pfx.strip(), strict=False)
-                asn = _parse_asn(origin)
                 maxlen = int(maxl) if maxl else net.prefixlen
             except Exception:  # noqa
                 continue
-            rows.append((fam, int(net.network_address), int(net.broadcast_address), net.prefixlen, maxlen, asn))
+            for origin in registry._all(kv, "origin"):
+                try:
+                    asn = _parse_asn(origin)
+                except Exception:  # noqa
+                    continue
+                rows.append((fam, int(net.network_address), int(net.broadcast_address), net.prefixlen, maxlen, asn))
     return rows
 
 

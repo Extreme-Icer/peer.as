@@ -79,6 +79,11 @@ def _first(rows: list[tuple[str, str]], key: str) -> Optional[str]:
     return None
 
 
+def _all(rows: list[tuple[str, str]], key: str) -> list[str]:
+    """某 attr 的全部值(保序)。dn42 route 对象可登记多条 origin(MOAS), 取全部而非首个。"""
+    return [v for k, v in rows if k == key]
+
+
 def _read_dir(data: Path, sub: str) -> dict[str, list[tuple[str, str]]]:
     d = data / sub
     out: dict[str, list[tuple[str, str]]] = {}

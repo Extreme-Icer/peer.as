@@ -108,10 +108,14 @@
   - `parquet_export.py`：`geo_on = features["geo"]`；为假时 pgeo 不连 geo（cc/省/市 NULL→下游 `'ZZ'`）、跳过 carve
     `_carve_geo_dirs`、无 geo 目录、无国家/城市 meta、无国家 SSG。**carve 已抽成 `_carve_geo_dirs` 单独函数**（geo profile 才调）。
   - `scripts/deploy.sh`：开头算 `CN_MIRROR`（读 profile，失败回退 1）；为 0 时跳过 `deploy_cn` 与 cn.peer.as 校验。
-  - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns）。
+  - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns/**cnMirror**）。
     组件按 `features` 分支：`Topbar`（geo→国家/城市；!geo→**person 选择框**，列表 `meta.persons`，值=nic-hdl）、
     `Whois.svelte`（rdapWhois→在线 RDAP；否则 `lib/registry.js` 读静态 JSON）、`queries.js`（!dns 时域名走
     `runDomainWhois`=registry 域名 whois 而非 DoH；person 选定→其 origin ASN 集合走全表 origin 过滤，复用 `pathsearchFilesForOrigins`）。
+  - **前端 CN 分流必须 site-aware（踩过坑，2026-06 修）**：`db.js` `configure()` 在 `!features.cnMirror` 时**直接同源返回、不做任何
+    `/cdn-cgi/trace` 探测/切数据**。否则境内用户访问 dn42.peer.as → trace=CN → 健康探测 `cn.peer.as/data/meta.json` 通 → 把 `DATA`
+    切到 `cn.peer.as/data`，**而 cn.peer.as 只镜像 peeras 全球数据集**（geo/多分片），dn42 前端（无 geo/单分片/person 导航）拿到错
+    meta/parquet 直接炸。`cn_mirror` 是后端部署开关，**必须同步透传到前端 `features.cnMirror`**（新增 CN 镜像类站点开关时记得两侧都加）。
   - **文案 / 品牌**：`web/src/lib/i18n.dn42.js`（dn42 专属字符串覆盖，i18n.js 在 `SITE==='dn42'` 时 merge 进 STRINGS）；
     logo/品牌在 `site.js` 的 `brand`（peeras=PEER.AS / dn42=DN42.PEER.AS），`Sidebar`/`MobileBar` 据此渲染。
     `bgp.js` 的域名判定按 `SITE` 选正则：dn42 用 `DOMAIN_RE_DN42`（TLD 允许字母开头的字母数字，认 `.dn42`）。

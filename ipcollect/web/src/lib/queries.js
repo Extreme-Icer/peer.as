@@ -2,7 +2,7 @@
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
 import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange, irrFilesForRange,
-  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey } from './db.js'
+  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
 import {
@@ -403,25 +403,29 @@ export async function showAsn(asn) {
   try {
     const psAll = pathsearchFilesForOrigin(asn)
     const psFiles = psAll === null ? [] : byFam(psAll)
-    if (!psFiles.length) {   // 该 ASN 不是库内任何前缀的 origin(可能是纯 transit / 不在库)
-      S.asnView = { asn, name: asnName(asn), count4: 0, count6: 0, prefixes: [], rel: emptyRel(), neigh: null }
-      return
+    let rows = [], cnt = [{}]
+    if (psFiles.length) {    // 该 ASN 是库内某些前缀的 origin -> 取通告前缀 + 计数(纯 transit/不在库则为空, 仍展示邻居)
+      const from = rpList(psFiles)
+      ;[rows, cnt] = await Promise.all([
+        q(`SELECT pid, prefix, cc, n_paths, best_path FROM ${from} WHERE origin_asn=${asn} ORDER BY n_paths DESC LIMIT 400`),
+        q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`),
+      ])
     }
-    const from = rpList(psFiles)
-    const [rows, cnt] = await Promise.all([
-      q(`SELECT pid, prefix, cc, n_paths, best_path FROM ${from} WHERE origin_asn=${asn} ORDER BY n_paths DESC LIMIT 400`),
-      q(`SELECT SUM(CASE WHEN prefix LIKE '%:%' THEN 0 ELSE 1 END) AS c4, SUM(CASE WHEN prefix LIKE '%:%' THEN 1 ELSE 0 END) AS c6 FROM ${from} WHERE origin_asn=${asn}`),
-    ])
+    // evacc: 从该 AS 自己通告前缀的 best_path 取样本邻接(含 evd/evu 样本路径), 用于给预计算邻居补「依据」弹窗。
+    const evacc = new Map()
+    for (const r of rows) accPath(evacc, parseBest(r.best_path), asn, r.prefix)
     S.asnView = {
       asn, name: asnName(asn),
       count4: Number(cnt[0]?.c4 || 0), count6: Number(cnt[0]?.c6 || 0),
-      prefixes: rows, rel: deriveRelations(rows, asn), neigh: null,
+      prefixes: rows, evacc, neigh: null,
     }
   } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }
   // 反查该 ASN 被哪些 as-set 直接包含(member-of), 异步补到面板。
   if (S.meta?.has_asset && S.asnView?.asn === asn && !S.asnView.error) {
     loadMemberOf('AS' + asn).then(ms => { if (S.asnView?.asn === asn) S.asnView = { ...S.asnView, memberOf: ms } })
   }
+  // 完整邻居已预计算(asn_neigh)-> 廉价, 自动加载(不再需要「按需」按钮; 旧数据无此列时仍由按钮触发全表扫)。
+  if (S.meta?.has_asn_neigh && S.asnView?.asn === asn && !S.asnView.error) scanNeighbors(asn)
 }
 // ── 邻居关系(三态: up=provider / peer / down=customer) ──────────────────────────────────
 const emptyRel = () => ({ up: [], peer: [], down: [] })
@@ -468,19 +472,30 @@ function accPath(acc, arr, asn, prefix) {
     }
   }
 }
-// 从通告前缀的 best_path 推邻居关系, 廉价、随通告前缀一起拿到(X=origin, 只会得到上游/对端)。
-function deriveRelations(rows, asn) {
-  const acc = new Map()
-  for (const r of rows) accPath(acc, parseBest(r.best_path), asn, r.prefix)
-  return groupRelations(asn, acc, 30)
-}
-// 按需「完整邻居」分析: 全表扫 pathsearch 里所有含该 ASN 的路径, 两侧邻接全收 → 三态分类。
+// (deriveRelations 已删: 「观测关系」与「完整邻居」合并 —— 详情面板只剩一个邻居分区, 用预计算的完整邻接,
+//  样本「依据」由 showAsn 的 evacc 补。accPath/groupRelations 仍由 scanNeighbors 复用。)
+// 「完整邻居」: has_asn_neigh 时读预计算 asn_neigh; 否则(旧数据)回退全表扫 pathsearch。
 // 重(大 transit ASN 命中分片多), 故不自动触发, 由面板按钮触发; LIMIT 兜底防超大。
 export async function scanNeighbors(asn) {
   asn = +asn
   if (!S.asnView || S.asnView.asn !== asn) return
   S.asnView = { ...S.asnView, neigh: { loading: true } }
   try {
+    // 预计算路径(has_asn_neigh): 只读覆盖该 asn 的 1 个 asn_neigh 分片取邻接计数 d/u/w/wd，
+    // up/peer/down 分类仍用前端 groupRelations(算法可调)。无 2 万截断、瞬时返回。
+    if (S.meta?.has_asn_neigh) {
+      const files = asnNeighFilesForAsn(asn)
+      if (!files.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0, precomputed: true } }; return }
+      const rows = await q(`SELECT neighbor, d, u, w, wd FROM ${rpList(files)} WHERE asn=${asn}`)
+      const acc = new Map()
+      for (const r of rows) acc.set(Number(r.neighbor), { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd), evd: null, evu: null })
+      // 补「依据」样本路径: 用该 AS 自己通告前缀里观测到的样本(evacc); 没样本的邻居就不显示 ℹ(RelGroup 自适应)。
+      const ev = S.asnView?.evacc
+      if (ev) for (const [y, o] of acc) { const e = ev.get(y); if (e) { o.evd = e.evd; o.evu = e.evu } }
+      S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, precomputed: true } }
+      return
+    }
+    // 旧数据回退: 前端全表扫 pathsearch(重 + 2 万截断)。
     const psAll = pathsearchFilesForOrigin(null)
     const psFiles = psAll === null ? [] : byFam(psAll)
     if (!psFiles.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0 } }; return }

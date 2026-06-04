@@ -335,6 +335,15 @@ function _strIdxFiles(allName, idxName, key) {
   const hits = idx.filter(it => it.lo <= key && key <= it.hi).map(it => it.f)
   return hits.length ? hits : []
 }
+// ASN 邻接计数(asn_neigh)按 asn 数值区间索引: 完整邻居只读覆盖该 asn 的 1 分片。无覆盖=该 asn 不在邻接表。
+export function asnNeighFilesForAsn(asn) {
+  const idx = S.meta?.files?.asn_neigh_key
+  const all = S.meta?.files?.asn_neigh || []
+  if (!idx || !idx.length || asn == null) return all
+  const hit = idx.filter(e => e.lo != null && e.hi != null && asn >= e.lo && asn <= e.hi).map(e => e.f)
+  return hit.length ? hit : []
+}
+
 export const assetSetFiles = () => S.meta?.files?.asset_set || []   // 全部(小; 按名查集合时整扫)
 export const assetSetFilesForKey = key => _strIdxFiles('asset_set', 'asset_set_key', key)
 export const assetMemberFilesForKey = key => _strIdxFiles('asset_member', 'asset_member_key', key)

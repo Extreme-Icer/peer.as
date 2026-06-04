@@ -11,7 +11,6 @@
   let a = $derived(S.asnView)
   let total = $derived((a?.count4 || 0) + (a?.count6 || 0))
   let t1 = $derived(a && isTier1(a.asn))
-  let relEmpty = $derived(a?.rel && !a.rel.up.length && !a.rel.peer.length && !a.rel.down.length)
   let neighEmpty = $derived(a?.neigh && !a.neigh.loading && !a.neigh.error && !a.neigh.up.length && !a.neigh.peer.length && !a.neigh.down.length)
 
   // 通告前缀默认只显示 5 行, 可展开。换 ASN 时重置。
@@ -74,22 +73,14 @@
         {/if}
       {/if}
 
-      <!-- 观测关系(据通告前缀最优路径推得; 三态) -->
-      {#if a.rel && !relEmpty}
-        <h3 class="dsec" data-sec="relations"><Fa icon={iRange} /> {t('asn_rel')}</h3>
-        <RelGroup title={t('rel_up')} icon={iUp} items={a.rel.up} subject={a.asn} />
-        <RelGroup title={t('rel_peer')} icon={iRange} items={a.rel.peer} subject={a.asn} />
-        <RelGroup title={t('rel_down')} icon={iDown} items={a.rel.down} subject={a.asn} />
-        <div class="relnote">{t1 ? t('asn_rel_t1_note') : t('asn_rel_note')}</div>
-      {/if}
-
-      <!-- 完整邻居(按需全表扫) -->
-      <h3 class="dsec" data-sec="neighbors"><Fa icon={iNodes} /> {t('asn_neigh')}</h3>
+      <!-- 观测关系 = 完整邻居(三态 up/peer/down): 预计算邻接(asn_neigh)自动加载、完整无截断;
+           旧数据无该列时回退「按需全表扫」按钮。「观测关系」与「完整邻居」已合并为本分区。 -->
+      <h3 class="dsec" data-sec="relations"><Fa icon={iRange} /> {t('asn_rel')}</h3>
       {#if !a.neigh}
         <button class="scanbtn" onclick={() => scanNeighbors(a.asn)}><Fa icon={iNodes} /> {t('asn_neigh_btn')}</button>
         <div class="relnote">{t('asn_neigh_note')}</div>
       {:else if a.neigh.loading}
-        <div class="muted small"><Fa icon={iSpinner} spin /> {t('searching_global')}</div>
+        <div class="muted small"><Fa icon={iSpinner} spin /> {t('querying')}</div>
       {:else if a.neigh.error}
         <div class="dload err">{a.neigh.error}</div>
       {:else}
@@ -97,7 +88,7 @@
         <RelGroup title={t('rel_up')} icon={iUp} items={a.neigh.up} subject={a.asn} />
         <RelGroup title={t('rel_peer')} icon={iRange} items={a.neigh.peer} subject={a.asn} />
         <RelGroup title={t('rel_down')} icon={iDown} items={a.neigh.down} subject={a.asn} />
-        <div class="relnote">{t('asn_scanned').replace('{n}', a.neigh.scanned.toLocaleString())}{a.neigh.capped ? t('asn_capped') : ''}{t1 ? ' · ' + t('asn_rel_t1_note') : ''}</div>
+        <div class="relnote">{a.neigh.precomputed ? t('asn_neigh_pre') : t('asn_scanned').replace('{n}', a.neigh.scanned.toLocaleString())}{a.neigh.capped ? t('asn_capped') : ''}{t1 ? ' · ' + t('asn_rel_t1_note') : ''}</div>
       {/if}
     {/if}
   {/if}

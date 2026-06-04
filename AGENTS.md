@@ -160,7 +160,6 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
   （对齐 dn42 GRC 10min 发布；与 peeras 8h 并存，各自 `flock`(各自 logs/deploy.lock) 互不阻塞；改 cron 用 `fcrontab -` stdin 灌入）。
 - **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN + 域名 whois，IP 占位）、
   按 ASN/person 的 SSG 落地页、dn42 DNS 的 DoH 实时解析（现为 registry whois，无 A/AAAA 记录解析）、
-  ASN 详情邻居预计算（现 scanNeighbors 全表扫 + 2 万截断，可预计算 AS 邻接图，见 `docs/RPKI_IRR_RESEARCH.md` 讨论）、
   index.html 静态 `<title>` 仍是 peeras（运行时 `document.title` 已按 profile 改；SEO 预渲染未做）。
 
 ---
@@ -456,9 +455,13 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   `Whois` 自取 RDAP(props `kind`,`rkey`), 与 queries.js 解耦。前缀详情面板尾部嵌 `<Whois kind="ip">`。
 - **ASN 详情视图**(`AsnDetail.svelte`, `S.detailKind='asn'` + `S.asnView`)：精确框输入 ASN(`classifyQuery` kind=asn)
   → `setSubjectAsn` 自动开面板。内容 = WHOIS(autnum) + **通告前缀**(origin 索引, 廉价: `pathsearchFilesForOrigin(asn)`
-  + COUNT v4/v6) + **观测上游**(据通告前缀 best_path 左侧一跳推得, 随结果免费拿到) + **按需「完整邻居」**
-  (`scanNeighbors`: 全表扫 `paths_blob LIKE '% asn %'` 取两侧邻居, 重、故按钮触发 + LIMIT 2 万兜底)。**无 ASN 级路由图**
-  (路由图是 per-prefix 的)。
+  + COUNT v4/v6) + **观测上游**(据通告前缀 best_path 左侧一跳推得, 随结果免费拿到) + **完整邻居**
+  (`scanNeighbors`: 现读**导出期预计算的 `asn_neigh`**(按 asn 数值索引取 1 分片的邻接计数 d/u/w/wd)→ `groupRelations` 前端分类,
+  **自动加载、完整无截断**；旧数据无 `has_asn_neigh` 时回退全表扫 `paths_blob LIKE` + 2 万截断)。**无 ASN 级路由图**(路由图是 per-prefix 的)。
+- **ASN 邻接预计算(`asn_neigh`, `parquet_export._build_asn_neigh`)**：从 `paths{,_v6}` 把每条 AS_PATH 展开成相邻对, 按
+  Tier-1 位置门控算 **d**(强下游)/**u**(强上游)/**w**(弱上)/**wd**(弱下) 计数, GROUP BY (asn,neighbor)。**只预计算邻接事实(计数),
+  不预计算 up/peer/down 分类**(分类留前端 `groupRelations`/`classifyRelation`, 改判定不必重导出)。约 +30s / ~4MB / ~44 万对。
+  **`parquet_export.TIER1` 必须与 `web/src/lib/bgp.js` 的 `TIER1` 一致**(弱/强门控用; 改一处同步两处)。
 - **URL 路由 / PJAX(`queries.js` `applyRoute`/`go`)**：**浏览器历史 = 单一真相**。开详情 `pushState('/<asn>'`
   或 `'/<prefix>')`；面板前进/后退按钮 = `history.back()/forward()`；`popstate` 调 `applyRoute()` 按 URL 重渲染
   (`_suppressUrl` 屏蔽回写防环)。`S.nav={idx,max}` 仅供 ←/→ 可用态。支持: `/<asn>`(如 `/4842`)、`/<prefix>`

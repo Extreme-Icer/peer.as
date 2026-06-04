@@ -347,6 +347,59 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, h
 
 
 # ----------------------------------------------------------------------------
+# ASN 邻接事实预计算
+# ----------------------------------------------------------------------------
+# TIER1 **必须镜像** web/src/lib/bgp.js 的 TIER1(弱/强证据门控用)。改一处务必同步两处。
+TIER1 = [174, 701, 702, 1239, 1299, 2828, 2914, 3257, 3320, 3356, 3491, 5511, 6453, 6461,
+         6762, 6830, 6939, 7018, 7473, 12956, 1273, 3549, 3551, 209]
+
+
+def _build_asn_neigh(con, pq: Path) -> bool:
+    """从已写出的 paths{,_v6} parquet 算全局 AS 邻接计数 -> asn_neigh/(按 asn 排序 + 数值区间索引)。
+    每条 (asn,neighbor)：d=强下游证据(neighbor 在 origin 侧 且 X 的收集器侧已过 Tier-1) / u=强上游 / w=弱上 / wd=弱下。
+    **只算计数(事实)**；up/peer/down 分类不在此做、留前端 groupRelations。无 paths 则返回 False(has_asn_neigh=False)。"""
+    import glob
+    files = glob.glob(str(pq / "paths" / "*.parquet")) + glob.glob(str(pq / "paths_v6" / "*.parquet"))
+    if not files:
+        return False
+    src = "read_parquet([" + ",".join("'" + f.replace("\\", "/") + "'" for f in files) + "])"
+    ft1 = "least(" + ",".join(f"coalesce(list_position(a,{x}),2000000000)" for x in TIER1) + ")"
+    util.log("  asn_neigh: 预计算 AS 邻接计数(d/u/w/wd)...")
+    con.execute("DROP TABLE IF EXISTS asn_neigh;")
+    con.execute(f"""
+        CREATE TABLE asn_neigh AS
+        WITH base AS (
+            SELECT path_arr AS a, len(path_arr) AS L, {ft1} AS ft1
+            FROM {src} WHERE path_arr IS NOT NULL AND len(path_arr) >= 2
+        ),
+        adj AS (   -- 每条路径展开成相邻 AS 对; weak = X 收集器侧之前无 Tier-1(方向证据不可靠)
+            SELECT list_extract(a, j) AS asn, list_extract(a, j + 1) AS nb, (ft1 >= j) AS weak, FALSE AS isleft
+            FROM base, range(1, L) g(j) WHERE list_extract(a, j) <> list_extract(a, j + 1)
+            UNION ALL
+            SELECT list_extract(a, j) AS asn, list_extract(a, j - 1) AS nb, (ft1 >= j) AS weak, TRUE AS isleft
+            FROM base, range(2, L + 1) g(j) WHERE list_extract(a, j) <> list_extract(a, j - 1)
+        )
+        SELECT asn, nb AS neighbor,
+               count(*) FILTER (WHERE NOT isleft AND NOT weak)::INT AS d,
+               count(*) FILTER (WHERE isleft     AND NOT weak)::INT AS u,
+               count(*) FILTER (WHERE isleft     AND weak)::INT     AS w,
+               count(*) FILTER (WHERE NOT isleft AND weak)::INT     AS wd
+        FROM adj WHERE asn IS NOT NULL AND nb IS NOT NULL GROUP BY asn, nb;
+    """)
+    n = con.execute("SELECT count(*) FROM asn_neigh").fetchone()[0]
+    (pq / "asn_neigh").mkdir(parents=True, exist_ok=True)
+    con.execute("PRAGMA threads=1;")
+    con.execute("SET preserve_insertion_order=true;")   # 按 asn 连续区段写 -> 数值区间索引可裁到 1 文件
+    con.execute(f"""COPY (SELECT asn, neighbor, d, u, w, wd FROM asn_neigh ORDER BY asn)
+        TO '{pq}/asn_neigh' (FORMAT parquet, FILE_SIZE_BYTES '6MB', OVERWRITE_OR_IGNORE);""")
+    con.execute("SET preserve_insertion_order=false;")
+    con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+    con.execute("DROP TABLE IF EXISTS asn_neigh;")
+    util.log(f"  asn_neigh: {util.human(n)} 条 (asn,neighbor) 邻接")
+    return True
+
+
+# ----------------------------------------------------------------------------
 # 主导出
 # ----------------------------------------------------------------------------
 def export(cfg: dict, con, out_dir: str = "dist") -> dict:
@@ -465,6 +518,12 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         con.execute("SET preserve_insertion_order=false;")
         con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
 
+    # ── ASN 邻接事实预计算(asn_neigh): 替代前端「完整邻居」的全表扫(原 LIKE 全 pathsearch + 2 万截断)。
+    #    **只预计算邻接计数**(d/u/w/wd = 强下/强上/弱上/弱下证据)；up/peer/down **分类仍在前端**
+    #    (queries.js groupRelations/classifyRelation)做 —— 算法可调、改判定不必重导出。约 +30s / ~4MB。
+    #    **TIER1 必须与 web/src/lib/bgp.js 的 TIER1 一致**(弱/强证据按"X 收集器侧之前是否有 Tier-1"门控)。
+    has_asn_neigh = _build_asn_neigh(con, pq)
+
     # 数据里出现过的 ASN(路径上 + origin), 名称表只保留这些。
     seen: set[int] = set()
     for f in families:
@@ -541,6 +600,15 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                          "hi": (int(hi) if hi is not None else None)})
         return out_
 
+    def _num_index(file_list, col):
+        out_ = []
+        for f in file_list:
+            lo, hi = con.execute(f"SELECT min({col}), max({col}) FROM read_parquet('{pq}/{f}')").fetchone()
+            out_.append({"f": f, "lo": (int(lo) if lo is not None else None),
+                         "hi": (int(hi) if hi is not None else None)})
+        out_.sort(key=lambda e: (e["lo"] if e["lo"] is not None else 0))
+        return out_
+
     def _str_index(file_list, col):
         # 每文件 [min,max] 字符串区间(前端按 set_key/member 字符串相等裁文件; 数据已按该列排序 -> 区间不重叠)。
         out_ = []
@@ -574,6 +642,9 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files["asset_set_key"] = _str_index(files["asset_set"], "set_key")
         files["asset_member_key"] = _str_index(files["asset_member"], "set_key")
         files["asset_memberof_key"] = _str_index(files["asset_memberof"], "member")
+    if has_asn_neigh:   # ASN 邻接计数 + asn 数值区间索引(完整邻居只读覆盖该 asn 的 1 分片)
+        files["asn_neigh"] = _rel("asn_neigh")
+        files["asn_neigh_key"] = _num_index(files["asn_neigh"], "asn")
 
     # 国家清单(union 两 family) + 双语名(country_dim) + focus 国家城市清单(侧栏导航)。
     # geo 关闭(dn42)则全空 —— 无 country_dim 表、无地理可言。
@@ -630,6 +701,8 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "asset": ({"as_of": asset_meta.get("as_of_str"), "n_sets": asset_meta.get("n_sets"),
                    "n_edges": asset_meta.get("n_edges"), "sources": asset_meta.get("sources"),
                    "authoritative": asset_meta.get("authoritative")} if has_asset else None),
+        # ASN 邻接计数预计算(完整邻居视图改读索引分片, 不再前端全表扫; 分类仍前端做)。
+        "has_asn_neigh": has_asn_neigh,
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

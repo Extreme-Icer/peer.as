@@ -24,6 +24,11 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
   source-qualified `RIPE::AS-FOO`) and the main pane shows it as an **expandable nested list** — click a child as-set to
   expand the next level in place (lazy-loaded, with cycle detection and a depth cap); member ASNs drill down. The ASN
   detail panel also gains a «member of as-sets» reverse lookup (which as-sets directly list this AS).
+- **改进：ASN 完整邻居改为自动、完整、即时。** ASN 详情的「邻居」从原来「点按钮 → 全表扫描（慢、且超 2 万条截断）」改为
+  **导出期预计算的全网 AS 邻接**，打开 ASN 即自动展示上游/对端/下游，完整无截断、瞬时返回。
+  **Improved: complete ASN neighbors are now automatic, complete and instant.** The ASN detail «neighbors» section
+  switched from «click to full-scan (slow, capped at 20k)» to **export-time precomputed global AS adjacency** — opening
+  an ASN shows upstream/peer/downstream immediately, complete and uncapped.
 
 ## 2026-06-03
 

@@ -5,8 +5,9 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog } from '../lib/icons.js'
-  import { brand } from '../lib/site.js'
+  import { setView } from '../lib/queries.js'
+  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
+  import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -26,6 +27,16 @@
 {#if S.menu}
   <div class="scrim" onclick={close} role="presentation"></div>
   <div class="menu" role="menu">
+    {#if features.whoisView}
+      <nav class="vnav" aria-label={t('nav_views')}>
+        <button class="vitem" class:on={S.view === 'routing'} onclick={() => { close(); setView('routing') }}>
+          <Fa icon={iNet} /> {t('nav_routing')}
+        </button>
+        <button class="vitem" class:on={S.view === 'whois'} onclick={() => { close(); setView('whois') }}>
+          <Fa icon={iWhois} /> {t('nav_whois')}
+        </button>
+      </nav>
+    {/if}
     <dl class="stats">
       <div><dt><Fa icon={iPrefix} /> {t('t_prefix4')}</dt><dd>{fmt(counts.prefixes)}</dd></div>
       <div><dt><Fa icon={iPrefix} /> {t('t_prefix6')}</dt><dd>{fmt(counts.prefixes_v6)}</dd></div>
@@ -78,6 +89,16 @@
       display: flex; flex-direction: column; gap: 12px; animation: drop .14s ease;
     }
     @keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
+
+    .vnav { display: flex; gap: 6px; }
+    .vnav .vitem {
+      flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+      background: transparent; border: 1px solid var(--line); border-radius: 8px;
+      padding: 10px 8px; font: 600 12.5px var(--sans); color: var(--fg); cursor: pointer;
+    }
+    .vnav .vitem :global(svg) { width: 13px; color: var(--muted); }
+    .vnav .vitem.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .vnav .vitem.on :global(svg) { color: var(--accent); }
 
     .stats { margin: 0; }
     .stats > div { display: flex; justify-content: space-between; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line2); font-size: 13px; }

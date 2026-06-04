@@ -3,8 +3,9 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog } from '../lib/icons.js'
-  import { brand } from '../lib/site.js'
+  import { setView } from '../lib/queries.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
+  import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
   let nCountry = $derived((S.meta?.countries || []).length)
@@ -16,6 +17,19 @@
   <div class="brand">
     <div class="logo"><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></div>
   </div>
+
+  {#if features.whoisView}
+    <nav class="vnav" aria-label={t('nav_views')}>
+      <button class="vitem" class:on={S.view === 'routing'} aria-current={S.view === 'routing'}
+        onclick={() => setView('routing')}>
+        <Fa icon={iNet} /> <span>{t('nav_routing')}</span>
+      </button>
+      <button class="vitem" class:on={S.view === 'whois'} aria-current={S.view === 'whois'}
+        onclick={() => setView('whois')}>
+        <Fa icon={iWhois} /> <span>{t('nav_whois')}</span>
+      </button>
+    </nav>
+  {/if}
 
   <section class="sec">
     <h3>{t('overview')}</h3>
@@ -75,6 +89,27 @@
   }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
   .brand .tag { font-size: 10.5px; color: #5d6b80; margin-top: 7px; line-height: 1.4; }
+
+  /* 顶层视图导航(路由分析 / WHOIS)。左侧 accent 竖条标记当前视图。 */
+  .vnav { display: flex; flex-direction: column; gap: 3px; margin-top: -6px; }
+  .vitem {
+    display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    padding: 8px 10px; cursor: pointer; position: relative;
+    font: 600 12.5px var(--sans); color: #aeb9c9; transition: all .14s;
+  }
+  .vitem :global(svg) { width: 13px; color: #4d5a70; transition: color .14s; }
+  .vitem:hover { background: #101a28; color: #f3f6fa; }
+  .vitem:hover :global(svg) { color: #8693a6; }
+  .vitem.on {
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent);
+    border-color: #1c2c40; color: #fff;
+  }
+  .vitem.on::before {
+    content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--accent); box-shadow: 0 0 10px var(--accent);
+  }
+  .vitem.on :global(svg) { color: var(--accent); }
 
   .sec h3 {
     margin: 0 0 9px; font: 700 10px/1 var(--sans); letter-spacing: .14em;

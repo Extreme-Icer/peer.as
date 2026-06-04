@@ -10,6 +10,8 @@ import BOOT from './rdap-bootstrap.json'
 import { S } from './store.svelte.js'
 import { cnProxyBase } from './db.js'
 import { ip2int, ip6ToBig } from './bgp.js'
+// WHOIS 兜底文本解析(无 RDAP 的 ccTLD): 标签->规范 key 字典 + 多格式解析器(详见该文件)。fmtDate 也由它统一提供。
+import { parseWhois, fmtDate } from './whois-labels.js'
 
 const FALLBACK = 'https://rdap.org/'
 // 域名无 RDAP(典型 .de 等 ccTLD)时的 WHOIS over HTTP 兜底(CF Worker, 源码见 whois-worker/)。
@@ -120,12 +122,6 @@ function eventsRows(d) {
   }
   return out
 }
-function fmtDate(s) {
-  if (!s) return ''
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(s)
-  return m ? m[1] : s
-}
-
 // 把原始 RDAP 对象规范化成渲染模型
 export function normalize(kind, key, d) {
   const head = []
@@ -169,46 +165,8 @@ export function normalize(kind, key, d) {
   }
 }
 
-// ── WHOIS 兜底(纯文本 -> 规范化模型)─────────────────────────────
-// 把扁平 whois 文本的常见 "Key: Value" 行映射到与 RDAP 一致的规范 key, 拍成 head 行;
-// 各注册局格式差异大, 故只挑高置信字段, 并始终保留全文(rawWhois)由 <pre> 展示, 不丢信息。
-function whoisKey(lk) {
-  if (lk === 'domain name' || lk === 'domain') return 'ldhname'
-  if (lk.startsWith('registrar abuse contact email')) return 'email'
-  if (lk === 'registrar' || lk === 'sponsoring registrar' || lk === 'registrar name') return 'registrar'
-  if (lk.startsWith('creation date') || lk === 'created' || lk.startsWith('created on') ||
-      lk.startsWith('registered on') || lk.startsWith('registration time') || lk.startsWith('registration date')) return 'registration'
-  if (lk.startsWith('updated date') || lk.startsWith('last updated') || lk.startsWith('last modified') ||
-      lk.startsWith('modified') || lk.startsWith('changed') || lk.startsWith('last update')) return 'lastchanged'
-  if (lk.startsWith('registry expiry date') || lk.startsWith('registrar registration expiration') ||
-      lk.startsWith('expir') || lk.startsWith('paid-till') || lk.startsWith('valid until')) return 'expiration'
-  if (lk === 'domain status' || lk === 'status') return 'status'
-  if (lk.startsWith('name server') || lk === 'nserver' || lk === 'nameserver') return 'ns'
-  if (lk.startsWith('registrant organization') || lk.startsWith('registrant organisation') ||
-      lk === 'org' || lk === 'holder' || lk === 'organization') return 'org'
-  if (lk === 'registrant country' || lk === 'country') return 'country'
-  if (lk.startsWith('dnssec')) return 'dnssec'
-  return null
-}
-function whoisToModel(key, server, text) {
-  const head = [{ key: 'ldhname', value: key }]
-  const seen = new Set()
-  for (const raw of String(text).split(/\r?\n/)) {
-    const i = raw.indexOf(':')
-    if (i < 0) continue
-    const lk = raw.slice(0, i).trim().toLowerCase()
-    let v = raw.slice(i + 1).trim()
-    if (!v) continue
-    const ck = whoisKey(lk)
-    if (!ck || ck === 'ldhname') continue
-    if (ck === 'registration' || ck === 'lastchanged' || ck === 'expiration') v = fmtDate(v)
-    const sig = ck + ' ' + v
-    if (seen.has(sig)) continue
-    seen.add(sig)
-    head.push({ key: ck, value: v })
-  }
-  return { kind: 'domain', key, title: key, head, entities: [], remarks: [], rawWhois: String(text).trim(), source: server, via: 'whois' }
-}
+// ── WHOIS 兜底 ────────────────────────────────────────────────────
+// 无 RDAP 的 ccTLD: 全文解析 + 标签->规范 key 映射全部抽到 ./whois-labels.js(parseWhois), 见其文件头。
 // 调 worker 取 whois(application/json -> {server,domain,whois})。失败/空抛错, 由调用方决定是否再降级。
 // 境内经 CN 机器 /whois 中转; referrerPolicy 保证跨域中转时带本站 Referer(过 Caddy 白名单)。
 async function whoisFallback(domain) {
@@ -218,7 +176,7 @@ async function whoisFallback(domain) {
   if (!res.ok) { const e = new Error(`WHOIS HTTP ${res.status}`); e.status = res.status; throw e }
   const j = await res.json()
   if (!j || !j.whois || !String(j.whois).trim()) throw new Error('WHOIS empty')
-  return whoisToModel(domain, j.server || '', j.whois)
+  return parseWhois(domain, j.server || '', j.whois)
 }
 
 // ── fetch + 缓存 ──────────────────────────────────────────────────
@@ -241,7 +199,7 @@ async function doFetch(kind, key) {
     const cached = sessionStorage.getItem(ssKey)
     if (cached) {
       const o = JSON.parse(cached)
-      if (o.whois) return whoisToModel(key, o.server, o.text)   // 上次走的 WHOIS 兜底
+      if (o.whois) return parseWhois(key, o.server, o.text)   // 上次走的 WHOIS 兜底
       const n = normalize(kind, key, o.body); n.source = o.host; return n
     }
   } catch (e) { /* ignore */ }

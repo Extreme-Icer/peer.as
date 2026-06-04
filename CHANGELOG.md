@@ -8,6 +8,20 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-04
 
+- **新增：独立的 WHOIS 查询视图。** 侧栏新增视图切换（「路由分析」/「WHOIS」），WHOIS 不再只是查询结果的附属面板——独立页面
+  用一个命令行式输入框直查任意 **ASN / IP / 前缀 / 域名** 的注册信息，结果以「注册局卷宗」样式呈现，并标注数据所用协议
+  （RDAP / WHOIS）。无 RDAP 的 ccTLD（如 `.de`）自动回退到传统 WHOIS。可经 `/whois/<查询>` 直达与分享。
+  **Added: a standalone WHOIS lookup view.** The sidebar now switches between «Routing» and «WHOIS»; WHOIS is no longer just
+  a side panel of a query — a dedicated page lets you look up registration data for any **ASN / IP / prefix / domain** from
+  one command-line-style box, rendered as a «registry dossier» that notes which protocol served the data (RDAP / WHOIS).
+  ccTLDs without RDAP (e.g. `.de`) fall back to traditional WHOIS automatically. Deep-linkable & shareable via `/whois/<query>`.
+  每条结果底部提供「查看更多信息」，一键跳到路由分析里该 ASN / 前缀 / 域名的完整详情（邻居与关系、RPKI/IRR、DNS）。
+  无 RDAP 的 ccTLD（.jp / .kr / .de / .ru / .it / .nl / .uk … ）的 WHOIS 原文现在会被解析成与 RDAP 一致的友好字段
+  （注册商 / 注册与到期时间 / 名称服务器 / 状态 / DNSSEC 等），日期统一格式化；原始全文仍完整保留。
+  Each result offers a «view more details» jump into the Routing view's full record for that ASN / prefix / domain (neighbors &
+  relationships, RPKI/IRR, DNS). WHOIS text from ccTLDs without RDAP (.jp / .kr / .de / .ru / .it / .nl / .uk …) is now parsed into
+  the same friendly fields as RDAP (registrar / created & expiry / nameservers / status / DNSSEC), with normalized dates; the full
+  raw text is still preserved.
 - **新增：RPKI ROA 与 IRR 路由起源验证。** 每个前缀的 origin 现在会显示 **RPKI** 状态徽章（有效=绿 / 无效=红，
   无效细分「origin 未授权」与「比 maxLength 更具体」/ 未找到=中性，参照 bgp.he.net、bgp.tools）；前缀详情面板新增
   **IRR 路由对象**区块，列出该前缀在各 IRR 库（RIPE/APNIC/ARIN/AFRINIC/LACNIC…）登记的 route 对象并标注**权威/第三方**

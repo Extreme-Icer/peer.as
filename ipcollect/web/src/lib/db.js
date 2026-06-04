@@ -209,6 +209,25 @@ export async function initDuck() {
   await tuneSession()
 }
 
+// 惰性初始化「路由分析」引擎: DuckDB-WASM(34MB+) + 全量 ASN 名(~1MB)/org 表。
+// **WHOIS 视图不需要引擎**(纯 RDAP/网络), 故直开 /whois 不加载; 切到路由分析(或路由 URL)时才调。
+// 幂等: 缓存 promise, 只跑一次; 成功置 S.ready, 失败置 S.fatal 并重置(允许后续重试)。需先有 S.meta(version 决定 ?v=)。
+let _enginePromise = null
+export function ensureEngine() {
+  if (_enginePromise) return _enginePromise
+  _enginePromise = (async () => {
+    S.loading = true
+    const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
+    const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
+    try { await initDuck() }
+    catch (e) { S.fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; _enginePromise = null; throw e }
+    try { await asnP } catch (e) { /* 可选, 忽略 */ }
+    try { await orgP } catch (e) { /* 可选, 忽略 */ }
+    S.ready = true; S.loading = false; S.msg = ''
+  })()
+  return _enginePromise
+}
+
 // 会话级缓存设置(内存, **仅本会话、不跨刷新**): 减少对同一文件的重复元数据请求 —— 主要是 read_parquet
 // 前为取文件大小发的 HEAD(~200ms RTT), 以及 parquet footer 重复解析。同一会话内重复读同一分片即可跳过。
 // 逐条 try: 不同 duckdb 版本设置名可能有差异, 缺失则忽略, 不影响主流程。

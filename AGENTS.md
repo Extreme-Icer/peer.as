@@ -116,10 +116,30 @@
   - `parquet_export.py`：`geo_on = features["geo"]`；为假时 pgeo 不连 geo（cc/省/市 NULL→下游 `'ZZ'`）、跳过 carve
     `_carve_geo_dirs`、无 geo 目录、无国家/城市 meta、无国家 SSG。**carve 已抽成 `_carve_geo_dirs` 单独函数**（geo profile 才调）。
   - `scripts/deploy.sh`：开头算 `CN_MIRROR`（读 profile，失败回退 1）；为 0 时跳过 `deploy_cn` 与 cn.peer.as 校验。
-  - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns/**cnMirror**）。
+  - **前端** `web/src/lib/site.js`：`SITE = import.meta.env.VITE_SITE || 'peeras'` + `features`（geo/rdapWhois/dns/**cnMirror**/**whoisView**）。
     组件按 `features` 分支：`Topbar`（geo→国家/城市；!geo→**person 选择框**，列表 `meta.persons`，值=nic-hdl）、
     `Whois.svelte`（rdapWhois→在线 RDAP；否则 `lib/registry.js` 读静态 JSON）、`queries.js`（!dns 时域名走
     `runDomainWhois`=registry 域名 whois 而非 DoH；person 选定→其 origin ASN 集合走全表 origin 过滤，复用 `pathsearchFilesForOrigins`）。
+  - **顶层视图开关 `whoisView`（peeras 开 / dn42 关）**：`S.view`（`'routing'`|`'whois'`）= 侧栏/移动菜单切换的顶层视图。
+    `'whois'` = 独立 **WHOIS 查询视图**（`WhoisView.svelte`，「注册局卷宗」气质：命令行式输入 → 复用 `Whois.svelte` 渲染 record，
+    支持 ASN/IP/前缀/域名）。**UI 只用「WHOIS」概念，不暴露 RDAP/whois 这类底层协议名**（侧栏标签=「WHOIS」）；底层仍 RDAP 直连，
+    协议类型只在结果「来源」行注明（`Whois.svelte` 的 `.wsrc`：RDAP / WHOIS / dn42 registry——此标注路由分析的详情面板同样生效）。
+    解析+路由在 `queries.js` 的 `runWhois`/`setView`，URL `/whois[/<q>]`（`applyRoute` 首个分支，受 `whoisView` 门控；非 whois 路由把
+    `S.view` 复位 `'routing'`）。结果卡片底部「查看更多信息」= `openInRouting(input)`：切回路由分析并打开该对象完整详情
+    （ASN 邻居/关系、前缀 RPKI/IRR、域名 DNS）。**dn42 `whoisView:false`** → 侧栏/菜单不出导航项、`applyRoute` 不进 whois 分支、
+    `App` 不渲染 `WhoisView`（组件仍打包，纯 no-op）；dn42 的域名/ASN 注册信息照旧由详情面板 registry whois 提供。
+  - **WHOIS 兜底文本解析 = `web/src/lib/whois-labels.js`**（独立文件）：无 RDAP 的 ccTLD 经 whois-worker 取回 port-43 原文后，
+    把各注册局列名映射到统一规范 key。含**标签字典**（实测 + richardpenman/whois、mboot-github/WhoisDomain 两解析器的逐 TLD 字面量）
+    与**多格式解析器**（inline `Label: value` · JPRS 括号 `[Label] value` · RPSL `key:` · Nominet/.it/.dk/.eu 缩进段 indented-block），
+    日期归一化 `fmtDate` 也在此（rdap.js 改为 import）。`rdap.js` 的 `doFetch`/`whoisFallback` 调 `parseWhois()`；新增 ccTLD 列名只改这一个文件。
+  - **DuckDB 引擎懒加载（`db.js` `ensureEngine()`）**：WHOIS 视图纯 RDAP/网络、不需引擎，故 `App.onMount` **不再 eager `initDuck`**——
+    只做 `configure`+`meta.json`+注册 popstate/Esc，然后 `applyRoute`。引擎（34MB DuckDB-WASM + 全量 asnames/asnorg）改由 `ensureEngine()`
+    **首次进路由分析时才加载**（幂等缓存 promise；置 `S.ready`/`S.loading`，失败置 `S.fatal`）。触发点：`applyRoute` 路由分支、
+    `setView('routing')`、`openInRouting()`。**直开 `/whois` 不下载引擎**（`onMount` 早判 URL 即切 `S.view='whois'`、`loading=false`，秒出查询壳）。
+    `fatal` 已挪进 store（`S.fatal`），meta 失败不再 early-return（不阻断 WHOIS 视图）。
+  - **本地 worktree 预览数据**：`dist/data` 与 `dist/parquet` 等只在主 checkout（`ipc build` 仅拷前端壳、不动数据）。在 worktree 里
+    `ipc serve` 会因缺 `/data/meta.json` 报「Unexpected token '<' … not valid JSON」。修复：`ln -s 主checkout/dist/data` 与 `…/dist/duckdb-ext`
+    进 worktree 的 `dist/`（静态服务即时生效，刷新浏览器即可）。
   - **前端 CN 分流必须 site-aware（踩过坑，2026-06 修）**：`db.js` `configure()` 在 `!features.cnMirror` 时**直接同源返回、不做任何
     `/cdn-cgi/trace` 探测/切数据**。否则境内用户访问 dn42.peer.as → trace=CN → 健康探测 `cn.peer.as/data/meta.json` 通 → 把 `DATA`
     切到 `cn.peer.as/data`，**而 cn.peer.as 只镜像 peeras 全球数据集**（geo/多分片），dn42 前端（无 geo/单分片/person 导航）拿到错

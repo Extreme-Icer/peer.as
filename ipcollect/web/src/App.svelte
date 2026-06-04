@@ -2,16 +2,17 @@
   import { onMount } from 'svelte'
   import Fa from 'svelte-fa'
   import { S } from './lib/store.svelte.js'
-  import { getData, initDuck, configure, dv } from './lib/db.js'
+  import { getData, configure } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
   import { applyRoute, hardCloseDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
-  import { brand } from './lib/site.js'
+  import { brand, features } from './lib/site.js'
   import { iSpinner } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
   import MobileBar from './components/MobileBar.svelte'
   import Topbar from './components/Topbar.svelte'
+  import WhoisView from './components/WhoisView.svelte'
   import Results from './components/Results.svelte'
   import DnsView from './components/DnsView.svelte'
   import AsSetView from './components/AsSetView.svelte'
@@ -20,12 +21,11 @@
   import ChangelogModal from './components/ChangelogModal.svelte'
   import PathHelpModal from './components/PathHelpModal.svelte'
 
-  let fatal = $state('')
-
   // 当前正在查看的详情(prefix/asn/domain/dns)对应的页标题 —— 让每个 pushState 历史项可辨识(便于翻历史记录)；
   // 无详情时回落默认页标题。随详情状态 + 语言响应式变化(与 queries.js 的 go() pushState 同源, 故历史项标题对应正确)。
   function pageTitle() {
     const B = brand.main + brand.hi
+    if (S.view === 'whois') return `${S.whois?.input ? S.whois.input + ' · ' : ''}WHOIS · ${B}`
     if (S.detailKind === 'prefix' && S.insight?.prefix) return `${S.insight.prefix} · ${B}`
     if (S.detailKind === 'asn' && S.asnView) {
       const n = S.asnView.name
@@ -46,6 +46,8 @@
 
   onMount(async () => {
     applyTheme(localStorage.getItem('ipc-theme') || 'auto')
+    // 直开 /whois 深链: 尽早切到 WHOIS 视图, 这样首屏直接渲染查询壳(纯 RDAP, 不等引擎/数据), 不闪路由分析的加载转圈。
+    if (features.whoisView && /^\/whois(\/|$)/.test(location.pathname)) { S.view = 'whois'; S.loading = false }
     const qp = new URLSearchParams(location.search)
     setLang(qp.get('lang') || localStorage.getItem('ipc-lang')
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))
@@ -56,50 +58,50 @@
     // edge 存入 store, 供空状态显示「正在使用中国优化服务器」赞助提示。
     S.edge = await configure()
 
+    // 路由监听 + Esc 尽早注册(独立于数据/引擎): 直开 /whois 也要能 PJAX 前进后退、Esc。
+    window.addEventListener('popstate', () => applyRoute())
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.detailKind) hardCloseDetail() } })
+
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
-    // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。
+    // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。失败置 fatal(路由视图显示), 但不 return ——
+    // WHOIS 视图不依赖 meta, 仍要能用; 故继续 applyRoute。
     try { S.meta = await getData('/meta.json', { cache: 'no-cache' }) }
-    catch (e) { fatal = `meta.json: ${e.message}（先跑 ipc export-parquet）`; S.loading = false; return }
+    catch (e) { S.fatal = `meta.json: ${e.message}（先跑 ipc export-parquet）` }
 
     const cc0 = qp.get('cc'); if (cc0) S.filters.cc = ccLabel(cc0.toUpperCase())
     const city0 = qp.get('city'); if (city0) S.filters.city = city0
 
-    S.msg = t('loading')
-    // 全量 ASN 名(~1MB)与 org 表与 DuckDB 初始化并行加载; 失败则降级到 meta 里的精选名。
-    const asnP = getData(`/asnames.json${dv()}`).then(n => { S.asnNames = n }).catch(() => {})
-    const orgP = getData(`/asnorg.json${dv()}`).then(o => { S.asnOrg = o }).catch(() => {})
-    try { await initDuck() } catch (e) { fatal = `DuckDB-WASM: ${e.message}`; S.loading = false; return }
-    try { await asnP } catch (e) { /* 可选, 忽略 */ }
-    try { await orgP } catch (e) { /* 可选, 忽略 */ }
-    S.ready = true; S.loading = false; S.msg = ''
-    // 解析当前 URL(路径 /<asn|prefix> 或 ?q=) 渲染; 浏览器前进/后退经 popstate 重渲染(PJAX)。
+    // 解析当前 URL 渲染。WHOIS 分支(setView 起始亦然)不碰引擎并置 loading=false; 路由分析分支先 await ensureEngine()
+    // (34MB DuckDB + 全量 ASN 名按需懒加载, 期间保持 loading 转圈)。前进/后退经 popstate 重渲染(PJAX)。
     applyRoute({ initial: true })
-    window.addEventListener('popstate', () => applyRoute())
-
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.detailKind) hardCloseDetail() } })
   })
 </script>
 
 <div class="app">
   <Sidebar />
-  <main class="main">
-    <MobileBar />
-    <Topbar />
-    <div class="content">
-      {#if fatal}
-        <div class="fatal"><b>×</b> {fatal}</div>
-      {:else if S.loading}
-        <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>
-      {:else if S.mode === 'dns'}
-        <DnsView />
-      {:else if S.mode === 'asset'}
-        <AsSetView />
-      {:else}
-        <Results />
-      {/if}
-    </div>
-  </main>
-  <InsightDrawer />
+  {#if S.view === 'whois'}
+    <!-- WHOIS·RDAP 独立视图(自带 MobileBar + 全宽 record, 无 Topbar 过滤器 / 无右侧详情面板) -->
+    <WhoisView />
+  {:else}
+    <main class="main">
+      <MobileBar />
+      <Topbar />
+      <div class="content">
+        {#if S.fatal}
+          <div class="fatal"><b>×</b> {S.fatal}</div>
+        {:else if S.loading}
+          <div class="boot"><Fa icon={iSpinner} spin /> <span>{S.msg || t('loading')}</span></div>
+        {:else if S.mode === 'dns'}
+          <DnsView />
+        {:else if S.mode === 'asset'}
+          <AsSetView />
+        {:else}
+          <Results />
+        {/if}
+      </div>
+    </main>
+    <InsightDrawer />
+  {/if}
 </div>
 <AboutModal />
 <ChangelogModal />

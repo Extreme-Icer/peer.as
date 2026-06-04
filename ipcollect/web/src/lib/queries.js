@@ -2,12 +2,13 @@
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
 import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange, irrFilesForRange,
-  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn } from './db.js'
+  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey, asnNeighFilesForAsn, ensureEngine } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
 import {
   int2ip, parseSeq, sqlStr, ccLabel, regionName, lowCut, lowCutFor, isLowVis, asnName, classifyQuery,
   asnsMatchingName, compilePathQuery, ip2range, ip6Range, parseBest, placeLabel, classifyRelation, isTier1,
+  registrableDomain,
 } from './bgp.js'
 
 const NAME_CAP = 200   // AS 名称命中的 origin ASN 上限(过多则提示精确化)
@@ -572,6 +573,55 @@ export function openWhoisFromBox() {
   else if (S.subject?.kind === 'domain') showDomain(S.subject.id)
 }
 
+// ── WHOIS·RDAP 独立视图(features.whoisView) ────────────────────────
+// 解析输入串 -> 设 S.whois 载荷并切到 whois 视图; 不跑 BGP 搜索(纯网络 RDAP/WHOIS, 与 DuckDB 无关)。
+// kind 映射: asn->autnum; ipv4/ipv6(含 CIDR)->ip(key=原串); domain->domain(RDAP 站取可注册根域名, registry 站取原域名)。
+// as-set / 其它 -> err(i18n 键), 由 WhoisView 显示提示。go() 在 applyRoute(_suppressUrl) 内为 no-op, 故首屏/popstate 不会重复入栈。
+export function runWhois(input) {
+  const raw = String(input || '').trim()
+  S.view = 'whois'
+  if (!raw) { S.whois = { input: '', kind: null, key: null, err: '' }; go('/whois'); return }
+  const p = classifyQuery(raw)
+  let kind = null, key = null, err = ''
+  if (p.kind === 'asn') { kind = 'autnum'; key = String(p.asn) }
+  else if (p.kind === 'ipv4' || p.kind === 'ipv6') { kind = 'ip'; key = raw }
+  else if (p.kind === 'domain') { kind = 'domain'; key = features.rdapWhois ? registrableDomain(p.domain) : p.domain }
+  else if (p.kind === 'asset') { err = 'wv_asset_na' }
+  else { err = 'wv_invalid' }   // name/text(无 TLD 等)无 WHOIS 对象
+  S.whois = { input: raw, kind, key, err }
+  go('/whois/' + encodeURIComponent(raw))
+}
+
+// WHOIS 视图「查看更多信息」: 跳到路由分析并打开该对象的完整详情(ASN 邻居/关系、前缀 RPKI/IRR、域名 DNS)。
+// 复用主查询入口: 把对象填进精确框跑一次, 再按类型开对应详情面板(与 applyRoute 的 path 分支同语义)。
+export async function openInRouting(input) {
+  const s = String(input || '').trim()
+  if (!s) return
+  S.view = 'routing'
+  S.filters.ip = s
+  try { await ensureEngine() } catch { return }     // 从 WHOIS 跳来时引擎多半还没加载, 先确保就绪
+  const probe = classifyQuery(s)
+  await runSearch()                                  // 域名 -> runDns/registry; asn -> origin 搜索; ip/前缀 -> 子网搜索
+  if (probe.kind === 'asn') showAsn(probe.asn)        // 显式开 ASN 详情(移动端 setSubjectAsn 不自动开)
+  else if (probe.kind === 'ipv4' || probe.kind === 'ipv6') await openPrefixByString(s)
+}
+
+// 顶层视图切换(侧栏 / 移动菜单)。各视图保留自身 S 状态, 仅翻 S.view + 还原对应 URL(入历史栈, 可前进/后退)。
+export function setView(v) {
+  if (v === S.view) return
+  if (v === 'whois') {
+    S.view = 'whois'
+    const inp = (S.whois?.input || '').trim()
+    go(inp ? '/whois/' + encodeURIComponent(inp) : '/whois')
+  } else {
+    S.view = 'routing'
+    const box = (S.filters.ip || '').trim()
+    go(box ? `/?q=${encodeURIComponent(box)}` : '/')
+    // 首次进路由分析才加载引擎(34MB), 就绪后渲染当前框。失败则 S.fatal 已置, 路由视图显示错误。
+    ensureEngine().then(() => runSearch()).catch(() => {})
+  }
+}
+
 // ── 浏览器历史路由(PJAX) ──────────────────────────────────────────
 // 单一真相 = 浏览器历史。开详情 pushState('/<asn|prefix>'); 面板 ←/→ = history.back()/forward();
 // popstate 按 URL 重渲染。S.nav.{idx,max} 仅用于 ←/→ 的可用态。_suppressUrl 在按 URL 渲染时屏蔽回写。
@@ -628,6 +678,15 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
+    S.view = 'routing'                             // 默认顶层视图; 仅 /whois 分支改 'whois'(从 whois 后退到路由 URL 即自动复位)
+    // /whois[/<q>] -> WHOIS 独立视图(纯 RDAP, 不碰引擎; dn42 关此开关时降级为普通路由查询, 不进 whois 视图)
+    if (features.whoisView && (path === 'whois' || path.startsWith('whois/'))) {
+      S.loading = false
+      runWhois(path === 'whois' ? '' : decodeURIComponent(path.slice(6)))
+      return
+    }
+    // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。
+    try { await ensureEngine() } catch { return }
     if (path.startsWith('asset/')) {               // /asset/<as-set 键> -> 左侧嵌套列表
       const key = decodeURIComponent(path.slice(6))
       S.filters.ip = key

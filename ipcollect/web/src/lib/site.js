@@ -15,12 +15,14 @@ const PROFILES = {
     rdapWhois: true,   // whois 走公网 RDAP 直连 + 兜底 worker(dn42 改 registry 静态数据)
     dns: true,         // DNS 解析视图(DoH)
     cnMirror: true,    // 存在 cn.peer.as 整站镜像 -> 前端 configure() 才做 CN 分流(切数据到镜像)
+    whoisView: true,   // 侧栏「WHOIS·RDAP」独立查询视图(直查任意 ASN/IP/前缀/域名注册信息)
   },
   dn42: {
     geo: false,
     rdapWhois: false,  // whois 走静态 registry JSON
     dns: false,        // 无 DoH 解析; 但域名仍可查 registry whois(见 queries.js)
     cnMirror: false,   // dn42 只上 CF Pages、无 cn.peer.as 镜像 -> 前端永不做 CN 分流(否则会切到只镜像 peeras 数据的 cn.peer.as, 加载错数据集炸掉)
+    whoisView: false,  // dn42 关掉独立 WHOIS 视图(no-op): 域名/ASN 信息仍由详情面板 registry whois 提供, 不另立公网式入口
   },
 }
 

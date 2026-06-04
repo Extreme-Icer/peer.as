@@ -52,7 +52,8 @@
       <pre class="wraw">{d.rawWhois}</pre>
     {/if}
     {#if d.source}
-      <div class="wsrc"><Fa icon={iDb} /> {d.via === 'whois' ? 'WHOIS' : t('whois_src')}: {d.source}</div>
+      <!-- 协议类型 + 来源主机: peeras RDAP 标 RDAP, ccTLD 兜底标 WHOIS; dn42(registry) 仍用通用「来源」标签。 -->
+      <div class="wsrc"><Fa icon={iDb} /> {d.via === 'whois' ? 'WHOIS' : (features.rdapWhois ? 'RDAP' : t('whois_src'))}: {d.source}</div>
     {/if}
   {/if}
 </div>

@@ -22,16 +22,25 @@ from typing import Any
 #   geo        geo 管线总开关(geoip ensure/build、export carve+国家 SSG、前端地区导航)。dn42 无地理 => False。
 #   cn_mirror  部署 cn.peer.as 整站镜像(deploy.sh 的 CN 段)。dn42 只上 CF Pages => False。
 #   whois      前端 whois 后端: "rdap"(公网直连 RDAP+兜底 worker) / "registry"(dn42 registry 静态数据)。[Phase2 前端接线]
+#   rpki       RPKI ROA 路由起源验证(rpki.py)。peeras=Cloudflare VRP; dn42=registry max-length。数据缺失时 has_rpki=False 自动 no-op。
+#   irr        IRR route 对象登记态(irr.py)。peeras=RIR/RADB dump; dn42=registry route 对象。数据缺失时 has_irr=False 自动 no-op。
+#   asset      IRR as-set 客户锥层级树(asset.py)。peeras=RIR/RADB as-set dump; dn42=registry data/as-set。数据缺失时 has_asset=False 自动 no-op。
 PROFILES: dict[str, dict[str, Any]] = {
     "peeras": {
         "geo": True,
         "cn_mirror": True,
         "whois": "rdap",
+        "rpki": True,
+        "irr": True,
+        "asset": True,
     },
     "dn42": {
         "geo": False,
         "cn_mirror": False,
         "whois": "registry",
+        "rpki": True,
+        "irr": True,
+        "asset": True,
     },
 }
 

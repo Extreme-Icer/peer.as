@@ -1,7 +1,8 @@
 // 搜索 / insight 逻辑 (从 web_ref/app.js 移植), 结果写入 S。
 import { S } from './store.svelte.js'
 import { t } from './i18n.js'
-import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange } from './db.js'
+import { q, rpList, pathsFileFor, pathsearchFilesForOrigin, pathsearchFilesForOrigins, prefixesFilesForRange, irrFilesForRange,
+  assetSetFiles, assetSetFilesForKey, assetMemberFilesForKey, assetMemberOfFilesForKey } from './db.js'
 import { resolveDns } from './dns.js'
 import { features } from './site.js'
 import {
@@ -44,7 +45,8 @@ export async function runSearch() {
   // 域名 -> DNS 解析视图(左:记录, 右:域名详情面板); 抢占其它一切, 自成一支。
   // 域名: peeras 走 DoH 解析视图; dn42(无 DoH)直接展示 registry 域名 whois。
   if (probe.kind === 'domain') return features.dns ? runDns(probe.domain) : runDomainWhois(probe.domain)
-  S.dns = null   // 离开 DNS 模式: 清空记录, 主内容区回到结果表
+  if (probe.kind === 'asset') return runAsSet(probe.key)   // as-set -> 左侧嵌套列表视图
+  S.dns = null; S.asset = null   // 离开 DNS / as-set 模式: 清空, 主内容区回到结果表
   // 精确框是 ASN 时: 设为「主体」并自动展开右侧 ASN 详情面板(whois + 上下游)。其它输入(含 IP/空)清空
   // 主体上下文(影响关闭语义)。已在展示同一 ASN 则不打断(避免点开 prefix 后被搜索拽回)。放在子网早返回之前。
   setSubjectAsn(probe.kind === 'asn' ? probe.asn : null)
@@ -83,6 +85,8 @@ export async function runSearch() {
   // MOAS 角标列: geo/pathsearch 的 n_origins 是新增列, 旧数据无 -> 由 meta.has_n_origins 门控, 缺标志即不 SELECT
   // (避免新前端 + 旧数据 SELECT 缺列报错; 下次刷新后自动点亮)。结尾留空格以拼进列表。
   const moasCol = S.meta?.has_n_origins ? ' n_origins,' : ''
+  // RPKI/IRR 状态列(门控: 旧数据无此列不 SELECT)。结尾留逗号以拼进列表。
+  const statSel = (S.meta?.has_rpki ? ' rpki,' : '') + (S.meta?.has_irr ? ' irr,' : '')
   const w = []
   let fromExpr, cols, isGlobal = false
   if (cc) {
@@ -91,7 +95,7 @@ export async function runSearch() {
     const geoFiles = byFam([...(S.meta?.files?.geo?.[cc] || []), ...(S.meta?.files?.geo_v6?.[cc] || [])])
     if (!geoFiles.length) { S.rows = []; S.mode = 'country'; S.msg = t('no_data_cc'); return }
     fromExpr = rpList(geoFiles)
-    cols = `pid, prefix, city, province, plen, origin_asn,${moasCol} n_paths, segs, best_path`
+    cols = `pid, prefix, city, province, plen, origin_asn,${statSel}${moasCol} n_paths, segs, best_path`
     if (city && S.meta?.cities?.[cc]) w.push(`city = ${sqlStr(city)}`)
   } else {
     if (!hasPath && !originAsns) { S.rows = []; S.mode = 'prompt'; S.msg = ''; return }
@@ -106,7 +110,7 @@ export async function runSearch() {
       return
     }
     fromExpr = rpList(psFiles)
-    cols = `pid, prefix, cc, origin_asn,${moasCol} n_paths, best_path`
+    cols = `pid, prefix, cc, origin_asn,${statSel}${moasCol} n_paths, best_path`
   }
   if (hasPath) for (const c of pq.sqlConds('paths_blob')) w.push(c)
   if (originAsns) w.push(originAsns.length === 1 ? `origin_asn = ${originAsns[0]}` : `origin_asn IN (${originAsns.join(',')})`)
@@ -171,7 +175,8 @@ async function runSubnet(r, f) {
   const limit = Math.max(1, parseInt(f.limit || '500', 10))
   let rows
   try {
-    rows = await q(`SELECT pid, prefix, plen, cc, city, origin_asn, n_origins, n_paths
+    const statSel = (S.meta?.has_rpki ? 'rpki, ' : '') + (S.meta?.has_irr ? 'irr, ' : '')
+    rows = await q(`SELECT pid, prefix, plen, cc, city, origin_asn, ${statSel}n_origins, n_paths
       FROM ${src} WHERE ${w.join(' AND ')}
       ORDER BY plen DESC, ip_start LIMIT ${limit + 1}`)
   } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
@@ -232,6 +237,68 @@ export async function runDns(domain) {
     : (res.status === 3 ? `${domain}: NXDOMAIN` : `${domain}: ${n} DNS records · DNS over HTTPS`))
 }
 
+// ── as-set 嵌套列表(Phase 3): 左侧主内容区显示客户锥层级树, 点子 as-set 就地懒展开 ──────────────
+const ASSET_SRC_PRIO = ['RIPE', 'APNIC', 'ARIN', 'AFRINIC', 'LACNIC', 'RIPE-NONAUTH', 'RADB', 'DN42']
+// 择优: ① 先排掉空壳(0 成员的同名占位, 如 ARIN::AS-HURRICANE) ② 非空者按来源优先级(权威优先) ③ 再按成员数。
+// 这样既避免默认落到空集合, 又在多个非空版本间偏好权威库; 其余版本仍列在「也登记于」供切换。
+function pickBestAssetSource(cands) {
+  const rank = s => { const i = ASSET_SRC_PRIO.indexOf(String(s).toUpperCase()); return i < 0 ? 99 : i }
+  return [...cands].sort((a, b) =>
+    (a.n_members ? 0 : 1) - (b.n_members ? 0 : 1)
+    || rank(a.source) - rank(b.source)
+    || (b.n_members - a.n_members))[0]
+}
+
+// 精确框输入 as-set 名(AS-FOO / AS123:AS-X / SOURCE::AS-X) -> 在左侧主内容区展开嵌套树。
+export async function runAsSet(input) {
+  const key = String(input || '').trim().toUpperCase()
+  if (!key) return
+  S.mode = 'asset'; S.rows = []; S.dns = null; S.selectedPid = null; S.subject = null
+  closeDetailState()                       // as-set 是主内容(左), 关掉右侧子页
+  S.asset = { input: key, loading: true }
+  go('/asset/' + encodeURIComponent(key))
+  S.msg = `as-set ${key} …`
+  try {
+    let row, candidates = null
+    if (key.includes('::')) {              // 显式来源键 SOURCE::NAME
+      const src = rpList(assetSetFilesForKey(key))
+      row = src ? (await q(`SELECT set_key,source,name,descr,n_members FROM ${src} WHERE set_key=${sqlStr(key)} LIMIT 1`))[0] : null
+    } else {                               // 按名查(可能多来源): 整扫 asset_set(小) 取候选, 按优先级择优
+      const cands = await q(`SELECT set_key,source,name,descr,n_members FROM ${rpList(assetSetFiles())} WHERE name=${sqlStr(key)} ORDER BY n_members DESC`)
+      if (cands.length) { row = pickBestAssetSource(cands); candidates = cands }
+    }
+    if (S.asset?.input !== key) return     // 用户已切走
+    if (!row) {
+      S.asset = { input: key, notfound: true }
+      S.msg = (S.lang === 'zh' ? `as-set ${key}：库内无登记` : `as-set ${key}: not registered in IRR`)
+      return
+    }
+    S.asset = { key: row.set_key, source: row.source, name: row.name, descr: row.descr,
+      n_members: Number(row.n_members), candidates }
+    S.msg = (S.lang === 'zh' ? `as-set ${row.set_key} · ${row.n_members} 个直接成员`
+                             : `as-set ${row.set_key} · ${row.n_members} direct members`)
+  } catch (e) { S.asset = { input: key, error: e.message }; S.msg = `${t('query_failed')}: ${e.message}` }
+}
+
+// 懒加载某 as-set 的直接成员(AsSetTree 展开一层时调) -> [{ord, kind:'asn'|'set', val}]。
+export async function loadAsSetMembers(setKey) {
+  const files = assetMemberFilesForKey(setKey)
+  if (!files || !files.length) return []
+  const rows = await q(`SELECT ord,kind,val FROM ${rpList(files)} WHERE set_key=${sqlStr(setKey)} ORDER BY ord`)
+  return rows.map(r => ({ ord: Number(r.ord), kind: r.kind, val: r.val }))
+}
+
+// 反查: 某成员(ASN 'AS123' 或子 set_key)被哪些 as-set 直接包含 -> [parent_key]。
+export async function loadMemberOf(member) {
+  if (!S.meta?.has_asset) return []
+  const files = assetMemberOfFilesForKey(member)
+  if (!files || !files.length) return []
+  try {
+    const rows = await q(`SELECT DISTINCT parent_key FROM ${rpList(files)} WHERE member=${sqlStr(member)} ORDER BY parent_key LIMIT 500`)
+    return rows.map(r => r.parent_key)
+  } catch (e) { return [] }
+}
+
 export function cmpBy(key, dir, a, b) {
   let x = a[key], y = b[key]
   if (x == null) x = -Infinity; if (y == null) y = -Infinity
@@ -259,7 +326,9 @@ export async function showInsight(pid, prefix) {
     // 不取 ip_start/ip_end(v6 取回 JS 会丢精度); 范围从 prefix 串算。
     // MOAS: origin_asns/origin_npaths 是新数组列(仅 has_moas 数据有, 且仅多源前缀非空) -> 完整 origin 列表。
     const moasCols = S.meta?.has_moas ? ', origin_asns, origin_npaths' : ''
-    det = (await q(`SELECT prefix, plen, origin_asn, n_origins${moasCols}, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
+    // RPKI/IRR: 代表 origin 状态 + MOAS 每 origin 数组(与 origin_asns 对齐)。门控缺列不 SELECT。
+    const statCols = (S.meta?.has_rpki ? ', rpki, origin_rpki' : '') + (S.meta?.has_irr ? ', irr, origin_irr' : '')
+    det = (await q(`SELECT prefix, plen, origin_asn, n_origins${moasCols}${statCols}, n_paths, cc, city, province FROM ${src} WHERE pid=${pid} LIMIT 1`))[0]
     paths = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(pid))} WHERE pid=${pid} ORDER BY path_len ASC, n_peers DESC`)
   } catch (e) { S.insight = { error: e.message }; return }
   if (!det) { S.insight = { error: 'not found' }; return }
@@ -269,10 +338,13 @@ export async function showInsight(pid, prefix) {
   // MOAS 全部 origin: 优先用 prefixes 的 origin_asns/origin_npaths 数组(权威完整, 不受 PATH_CAP 截断);
   // 缺数组时(单源前缀 / 旧数据)退化为从去重路径末端 AS 聚合(可能不全 -> 由 +N… 提示)。
   let origins
+  // RPKI/IRR 每 origin 状态数组(与 origin_asns 对齐; 仅 MOAS 多源前缀非空)。
+  const orpki = det.origin_rpki ? Array.from(det.origin_rpki).map(Number) : null
+  const oirr = det.origin_irr ? Array.from(det.origin_irr).map(Number) : null
   if (det.origin_asns) {
     const asns = Array.from(det.origin_asns).map(Number)
     const nps = Array.from(det.origin_npaths || []).map(Number)
-    origins = asns.map((a, i) => ({ asn: a, peers: nps[i] || 0, paths: 0 }))
+    origins = asns.map((a, i) => ({ asn: a, peers: nps[i] || 0, paths: 0, rpki: orpki ? orpki[i] : 0, irr: oirr ? oirr[i] : 0 }))
   } else {
     const oAgg = new Map()
     for (const p of pmap) {
@@ -282,6 +354,8 @@ export async function showInsight(pid, prefix) {
       c.peers += Number(p.peers) || 0; c.paths += 1; oAgg.set(o, c)
     }
     origins = [...oAgg.values()].sort((a, b) => (b.peers - a.peers) || (b.paths - a.paths))
+    // 单源前缀: 代表 origin 的 rpki/irr 取自 det(prefixes 行)。
+    for (const o of origins) if (o.asn === Number(det.origin_asn)) { o.rpki = Number(det.rpki) || 0; o.irr = Number(det.irr) || 0 }
   }
   S.insight = {
     pid, prefix: det.prefix,
@@ -289,9 +363,23 @@ export async function showInsight(pid, prefix) {
     origin_asn: det.origin_asn, origin_name: asnName(det.origin_asn), n_paths: det.n_paths,
     n_origins: Number(det.n_origins ?? origins.length), origins,
     lowvis: isLowVis(det),
+    rpki: Number(det.rpki) || 0, irr: Number(det.irr) || 0, irrObjs: [],
     paths: pmap,
     sup, sub,
   }
+  // IRR route 对象明细(精确前缀): 异步加载, 不阻塞详情主体。
+  if (S.meta?.has_irr && rng) loadInsightIrr(pid, rng, v6)
+}
+
+// 该前缀(精确)在 IRR 里登记的全部 route 对象 -> [{origin, sources:[库名]}], 写回 S.insight.irrObjs。
+async function loadInsightIrr(pid, rng, v6) {
+  try {
+    const src = rpList(irrFilesForRange(rng.start, rng.end, v6))
+    const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
+    const rows = await q(`SELECT origin, sources FROM ${src} WHERE ip_start=${lit(rng.start)} AND ip_end=${lit(rng.end)} ORDER BY origin`)
+    const objs = rows.map(r => ({ origin: Number(r.origin), sources: Array.from(r.sources || []).map(String) }))
+    if (S.insight && S.insight.pid === pid) S.insight = { ...S.insight, irrObjs: objs }
+  } catch (e) { /* IRR 明细失败不影响详情主体 */ }
 }
 // 父子段(更大/更小): v6 用 prefixes_v6 + ::UHUGEINT 字面量(范围在 SQL 里比, 不取回原始整数)。
 async function relData(pid, s, e, v6) {
@@ -330,6 +418,10 @@ export async function showAsn(asn) {
       prefixes: rows, rel: deriveRelations(rows, asn), neigh: null,
     }
   } catch (e) { S.asnView = { asn, name: asnName(asn), error: e.message } }
+  // 反查该 ASN 被哪些 as-set 直接包含(member-of), 异步补到面板。
+  if (S.meta?.has_asset && S.asnView?.asn === asn && !S.asnView.error) {
+    loadMemberOf('AS' + asn).then(ms => { if (S.asnView?.asn === asn) S.asnView = { ...S.asnView, memberOf: ms } })
+  }
 }
 // ── 邻居关系(三态: up=provider / peer / down=customer) ──────────────────────────────────
 const emptyRel = () => ({ up: [], peer: [], down: [] })
@@ -502,7 +594,11 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
-    if (path.startsWith('dns/')) {                 // /dns/<域名> -> DNS 视图(dn42 无 DoH: registry 域名 whois)
+    if (path.startsWith('asset/')) {               // /asset/<as-set 键> -> 左侧嵌套列表
+      const key = decodeURIComponent(path.slice(6))
+      S.filters.ip = key
+      await runAsSet(key)
+    } else if (path.startsWith('dns/')) {          // /dns/<域名> -> DNS 视图(dn42 无 DoH: registry 域名 whois)
       const domain = path.slice(4)
       S.filters.ip = domain
       if (features.dns) await runDns(domain)

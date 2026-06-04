@@ -11,8 +11,12 @@
   import AsnDetail from './AsnDetail.svelte'
   import DomainDetail from './DomainDetail.svelte'
   import DetailNav from './DetailNav.svelte'
+  import OriginStatus from './OriginStatus.svelte'
 
   let ins = $derived(S.insight)
+  // IRR 来源库权威性(RIR 直营=权威绿; 第三方=中性灰)。
+  let irrAuth = $derived(new Set(S.meta?.irr?.authoritative || []))
+  const isAuth = s => irrAuth.has(String(s).toUpperCase())
   let pq = $derived(compilePathQuery(S.filters.path))
   let canBack = $derived(navCanBack())
   let canFwd = $derived(navCanFwd())
@@ -74,7 +78,7 @@
       {:else if ins}
         <h2>{ins.prefix} <span class="loc">· {ins.loc}</span></h2>
         <div class="pill">
-          origin asn <button class="originlink" onclick={() => showAsn(ins.origin_asn)} disabled={!ins.origin_asn}><b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}</button>
+          origin asn <button class="originlink" onclick={() => showAsn(ins.origin_asn)} disabled={!ins.origin_asn}><b>{ins.origin_asn || ''}</b>{ins.origin_name ? ` (${ins.origin_name})` : ''}</button><OriginStatus rpki={ins.rpki} irr={ins.irr} unknown />
           {#if ins.n_origins > 1}<span class="badge b-moas moastag" title={t('moas_note')}>{t('moas')} · {ins.n_origins}</span>{/if}
           · {ins.paths.length} {t('distinct')} / {ins.n_paths || 0} {t('peers')}
           {#if S.meta?.dfz_ref}
@@ -88,7 +92,7 @@
             <div class="moaslist">
               {#each shownOrigins as o}
                 <button class="moasitem" onclick={() => showAsn(o.asn)}>
-                  <b>AS{o.asn}</b>{#if asnName(o.asn)}<span class="onm">{asnName(o.asn)}</span>{/if}{#if o.peers}<span class="opeers">{o.peers} {t('peers')}</span>{/if}
+                  <b>AS{o.asn}</b>{#if asnName(o.asn)}<span class="onm">{asnName(o.asn)}</span>{/if}{#if o.peers}<span class="opeers">{o.peers} {t('peers')}</span>{/if}<OriginStatus rpki={o.rpki} irr={o.irr} />
                 </button>
               {/each}
               {#if originsOpen && ins.origins.length < ins.n_origins}<span class="omore">+{ins.n_origins - ins.origins.length}…</span>{/if}
@@ -137,6 +141,28 @@
           <button class="expandrow" onclick={() => (pathsOpen = !pathsOpen)}>
             {pathsOpen ? t('collapse') : t('show_all').replace('{n}', ins.paths.length)}
           </button>
+        {/if}
+
+        {#if S.meta?.has_irr}
+          <h3 class="dsec" data-sec="irr">{t('sec_irr')}</h3>
+          {#if ins.irrObjs?.length}
+            <div class="irrlist">
+              {#each ins.irrObjs as o}
+                <div class="irritem">
+                  <button class="originlink" onclick={() => showAsn(o.origin)}><b>AS{o.origin}</b></button>{#if asnName(o.origin)}<span class="irrnm">{asnName(o.origin)}</span>{/if}{#if o.origin === ins.origin_asn}<span class="badge b-ok irrcur" title={t('irr_observed')}>●</span>{/if}
+                  <span class="irrsrcs">{#each o.sources as s}<span class="badge {isAuth(s) ? 'b-ok' : 'b-mute'} srcb" title={isAuth(s) ? t('irr_auth') : t('irr_thirdparty')}>{s}</span>{/each}</span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="muted irrnone">{t('irr_none')}</div>
+          {/if}
+        {/if}
+        {#if S.meta?.rpki?.as_of || S.meta?.irr?.as_of}
+          <div class="provenance">
+            {#if S.meta?.rpki?.as_of}<span>RPKI {t('data_asof')} {S.meta.rpki.as_of}</span>{/if}
+            {#if S.meta?.irr?.as_of}<span>IRR {t('data_asof')} {S.meta.irr.as_of}</span>{/if}
+          </div>
         {/if}
 
         <Whois kind="ip" rkey={ins.prefix} />
@@ -199,6 +225,15 @@
   .sub-sep { color: var(--muted); margin: 0 6px; }
   .muted { color: var(--muted); }
   .relnote { color: var(--muted); font-size: 11px; margin: 10px 0 2px; line-height: 1.5; }
+  .irrlist { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+  .irritem { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
+  .irritem .originlink b { font-family: var(--mono); }
+  .irrnm { color: var(--fg); }
+  .irrcur { font-size: 8px; padding: 0 4px; align-self: center; }
+  .irrsrcs { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+  .srcb { font-size: 9.5px; padding: 0 5px; cursor: help; }
+  .irrnone { font-size: 12px; margin-top: 2px; }
+  .provenance { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 10.5px; margin: 14px 0 2px; }
   table.paths { border-collapse: collapse; width: 100%; font-size: 12px; }
   table.paths th { text-align: left; font: 700 10px var(--mono); text-transform: uppercase; color: var(--muted); padding: 4px 9px; border-bottom: 1px solid var(--line); }
   table.paths td { padding: 5px 9px; border-bottom: 1px solid var(--line2); vertical-align: top; }

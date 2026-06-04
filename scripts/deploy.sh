@@ -87,8 +87,12 @@ if [ "$WITH_DATA" = 1 ]; then
   log "数据 1/2: 清缓存(mrt/duck_tmp; 保留 geo)"
   rm -f  "$PROJ"/cache/mrt/*.gz "$PROJ"/cache/mrt/*.part "$PROJ"/cache/mrt/dl.log 2>/dev/null || true
   rm -rf "$PROJ"/cache/duck_tmp/* 2>/dev/null || true
-  log "数据 2/2: ipc ingest --reset（全表 v4+v6）→ export-parquet"
+  log "数据 2/2: ipc ingest --reset（全表 v4+v6）→ rpki/irr/asset 导入 → export-parquet"
   ./ipc ingest --reset
+  # RPKI ROA / IRR route / as-set: 下载校验数据(best-effort, 某源失败不阻断; 开关关或无网时 export 自动降级 has_*=False)
+  ./ipc rpki-import  || log "  ! rpki-import 失败(继续, 本轮无 RPKI 标注)"
+  ./ipc irr-import   || log "  ! irr-import 失败(继续, 本轮无 IRR 标注)"
+  ./ipc asset-import || log "  ! asset-import 失败(继续, 本轮无 as-set 树)"
   ./ipc export-parquet --out dist
 fi
 

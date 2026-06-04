@@ -174,10 +174,22 @@ export function registrableDomain(domain) {
   return labels.slice(-2).join('.')
 }
 
-// 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / domain / text / empty
+// as-set 名判定: AS-FOO(扁平) / AS2914:AS-GLOBAL(层级) / RADB::AS-FOO(显式来源键)。排除纯 ASN 与 IPv6。
+// 用于把这类查询路由到 as-set 嵌套列表视图(而非 IPv6 / AS 名称搜索)。
+export function isAsSet(s) {
+  const u = (s || '').trim().toUpperCase()
+  if (!u || /\s/.test(u)) return false
+  if (!/^[A-Z0-9:_.-]+$/.test(u)) return false
+  if (/^AS\d+$/.test(u)) return false                 // 纯 ASN 不是 as-set
+  if (u.includes('::')) return /::AS-?\w/.test(u)      // SOURCE::AS-FOO 显式来源键
+  return /^AS-/.test(u) || /^AS\d+:AS/.test(u) || /:AS-/.test(u)
+}
+
+// 把精确框文本归类成查询类型并路由: asn / ipv4 / ipv6 / domain / asset / text / empty
 export function classifyQuery(s) {
   s = (s || '').trim()
   if (!s) return { kind: 'empty' }
+  if (isAsSet(s)) return { kind: 'asset', key: s.toUpperCase() }  // as-set 嵌套列表(须早于 ':' -> IPv6 分支)
   if (s.includes(':')) {                                        // 冒号 -> IPv6
     const r = ip6Range(s)
     return r ? { kind: 'ipv6', ...r } : { kind: 'text' }

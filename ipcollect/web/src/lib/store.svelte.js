@@ -14,6 +14,9 @@ export const S = $state({
   // DNS 解析视图载荷(mode==='dns' 时主内容区改渲染 DnsView): { domain, loading, error, status, a:[], aaaa:[], others:[] }
   // a/aaaa 行已富集前缀+origin asn(由 queries.runDns 查 prefixes 得到); others = 其它记录类型分组。
   dns: null,
+  // as-set 嵌套列表载荷(mode==='asset' 时主内容区改渲染 AsSetView): { key, name, source, descr, n_members, loading, error, candidates }
+  // 树的子层由 AsSetTree 组件经 loadAsSetMembers(setKey) 懒加载(点一层查一层 + 环检测)。
+  asset: null,
   filters: { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' },
   selectedPid: null,       // 选中行(高亮 + 展开本段)
   // ── 右侧详情面板 ──────────────────────────────────────────────

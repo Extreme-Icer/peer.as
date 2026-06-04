@@ -318,6 +318,28 @@ export function prefixesFilesForRange(start, end, v6) {
   return hits.length ? hits : all
 }
 
+// IRR route 对象明细数据集(meta.files.irr / irr_v6 + v4 区间索引 irr_ip), 同 prefixesFilesForRange 思路。
+export function irrFilesForRange(start, end, v6) {
+  const all = v6 ? (S.meta?.files?.irr_v6 || []) : (S.meta?.files?.irr || [])
+  const idx = v6 ? null : S.meta?.files?.irr_ip
+  if (!idx || !idx.length || start == null || end == null) return all
+  const hits = idx.filter(it => it.lo <= end && it.hi >= start).map(it => it.f)
+  return hits.length ? hits : all
+}
+
+// as-set 字符串键文件级索引(数据按键排序 -> 各文件 [lo,hi] 区间不重叠; 字符串字典序与 DuckDB 二进制序一致)。
+function _strIdxFiles(allName, idxName, key) {
+  const all = S.meta?.files?.[allName] || []
+  const idx = S.meta?.files?.[idxName]
+  if (!idx || !idx.length || key == null) return all
+  const hits = idx.filter(it => it.lo <= key && key <= it.hi).map(it => it.f)
+  return hits.length ? hits : []
+}
+export const assetSetFiles = () => S.meta?.files?.asset_set || []   // 全部(小; 按名查集合时整扫)
+export const assetSetFilesForKey = key => _strIdxFiles('asset_set', 'asset_set_key', key)
+export const assetMemberFilesForKey = key => _strIdxFiles('asset_member', 'asset_member_key', key)
+export const assetMemberOfFilesForKey = m => _strIdxFiles('asset_memberof', 'asset_memberof_key', m)
+
 // 多个 origin ASN -> 覆盖它们的 pathsearch 文件并集(两族)。全都无覆盖才返回 null。
 export function pathsearchFilesForOrigins(asns) {
   const idx = _psOriginIdx()

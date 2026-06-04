@@ -5,9 +5,9 @@
   import { tick } from 'svelte'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { iNodes, iPrefix, iPath, iWhois, iRange } from '../lib/icons.js'
+  import { iNodes, iPrefix, iPath, iWhois, iRange, iUsers, iShield } from '../lib/icons.js'
 
-  const ICON = { graph: iNodes, rel: iPrefix, paths: iPath, whois: iWhois, originated: iPrefix, relations: iRange, neighbors: iNodes }
+  const ICON = { graph: iNodes, rel: iPrefix, paths: iPath, whois: iWhois, originated: iPrefix, relations: iRange, neighbors: iNodes, memberof: iUsers, irr: iShield }
 
   let root = $state()
   let secs = $state([])      // [{id, key, el}]

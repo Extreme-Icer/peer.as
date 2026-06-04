@@ -50,6 +50,14 @@
   `_forest_duck`/`_subtract`/`_segments_duck` 是 carve(纯 Python, 位宽无关)。`copy_web()` 只拷前端。**主战场**。
 - **`ssg.py`** — 每国家双语 SEO 落地页 `c/<cc>.html` + `countries.html` + sitemap/robots；`_origins` 读导出期建的 `pgeo`。
 - `serve.py` — 本地 debug 静态托管(支持 Range)；`--rebuild` 只重拷前端(数据需 `export-parquet`)。
+- **`rpki.py`** — RPKI ROA 路由起源验证(RFC 6811)。`refresh`下载 VRP(peeras=Cloudflare `rpki.json`/dn42=registry max-length)→
+  `cache/rpki/vrp.csv`；`attach`建 `vrp` 表；`classify`用**按前缀长度分桶 + 物化候选键的等值 hash join**(切忌写双不等式区间
+  join, 110万×93万会退化成 nested-loop 跑不完, 详见 `docs/RPKI_IRR_RESEARCH.md`)产 `rpki_status(pid,origin,rpki)`。
+- **`irr.py`** — IRR route/route6 对象登记态。`refresh`流式解析各 RIR/RADB 的 gzip RPSL dump(精确前缀+origin)→
+  `cache/irr/route.csv`；`classify`产 `irr_status(pid,origin,irr)`(present/mismatch/not-found)。
+- **`asset.py`** — IRR as-set 客户锥层级树。`refresh`解析 as-set 对象的一级 `members:`(ASN/子 as-set)→ `cache/asset/`
+  三 CSV(as_set 头 / as_set_member 一级边 / as_memberof 反查)；**绝不预展开**(最大锥 10万+ ASN)。
+  **下载走 `util.download_file`(支持 http(s) + ftp)**: RADB 只有 `ftp://`(requests 不认 ftp://)。
 - (已删) `db.py`/`report.py`/`build.py` —— SQLite schema / CLI 查询渲染 / 旧 JSON 导出, 随 SQLite 退役删除。
 - **`web/`** — 前端 = **Vite + Svelte 5 项目**(不再是裸 JS)。`src/App.svelte` + `src/components/*`(Sidebar/
   Topbar/Results/InsightDrawer/PathGraph/AboutModal/AsnTag/AsPath/Field + **AsnDetail/Whois/WhoisEntity/WhoisRow**
@@ -150,8 +158,9 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
 - 跑：实例目录 `scripts/deploy.sh --data`（≈3min：ingest ~131s + export + build + wrangler 上传）；cn_mirror=0 ⇒ 只上 CF。**线上正常**。
 - **cron 每 10min（已装，见 `fcrontab -l`）**：`*/10 * * * * REFRESH_KEEP=144 /home/aosc/dn42-peer-as/scripts/daily-refresh.sh`
   （对齐 dn42 GRC 10min 发布；与 peeras 8h 并存，各自 `flock`(各自 logs/deploy.lock) 互不阻塞；改 cron 用 `fcrontab -` stdin 灌入）。
-- **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN + 域名 whois，IP 占位）、ROA（route 对象 vs
-  observed origin）展示、按 ASN/person 的 SSG 落地页、dn42 DNS 的 DoH 实时解析（现为 registry whois，无 A/AAAA 记录解析）、
+- **未做 / 可改进**：IP/前缀的 registry whois（route/inetnum 长前缀匹配；现仅 ASN + 域名 whois，IP 占位）、
+  按 ASN/person 的 SSG 落地页、dn42 DNS 的 DoH 实时解析（现为 registry whois，无 A/AAAA 记录解析）、
+  ASN 详情邻居预计算（现 scanNeighbors 全表扫 + 2 万截断，可预计算 AS 邻接图，见 `docs/RPKI_IRR_RESEARCH.md` 讨论）、
   index.html 静态 `<title>` 仍是 peeras（运行时 `document.title` 已按 profile 改；SEO 预渲染未做）。
 
 ---
@@ -494,8 +503,32 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   `hardCloseDetail` 在 DNS 模式下保留 `/dns/<域名>` URL(左侧记录仍在)。
 - **刷新 dns bootstrap**：`scripts/vendor-rdap-bootstrap.sh` 现一并下 `dns.json`(全 TLD RDAP base, ~39KB) 再 build。
 
+## RPKI / IRR / as-set（路由起源验证 + 客户锥；调研见 `docs/RPKI_IRR_RESEARCH.md`）
+三层数据**全在导出期用 DuckDB 预计算成静态列/数据集**，前端零后端按 parquet 查询。**数据缺失(import 没跑/开关关/无网)
+即 `meta.has_*=False`，前端不 SELECT 对应列、自动降级**(同 `has_moas` 门控惯例)，不报错。两站(peeras/dn42)默认全开。
+
+- **采集(`ipc rpki-import` / `irr-import` / `asset-import`)**：下载/解析 → `cache/{rpki,irr,asset}/*.csv`(+`meta.json` 含 `as_of`)。
+  best-effort：某源失败只跳过。`deploy.sh --data` 在 ingest 后、export 前自动跑这三个(失败不阻断)。
+  **RADB 只有 `ftp://`**(`util.download_file` 支持 ftp；requests 不认 ftp://，曾误用 https 致 SSL EOF)。
+- **导出(`parquet_export.py`)**：先 `route_origin`(每 (前缀,origin) 对，含 MOAS 次要 origin) → `rpki.classify`/`irr.classify`。
+  - `rpki`(UTINYINT 0=NotFound 1=Valid 2=Invalid-ASN 3=Invalid-len) / `irr`(0=not-found 1=present 2=mismatch) 列贴到
+    `prefixes{,_v6}`(代表 origin)、`pathsearch{,_v6}`(每 origin 行)、`geo{,_v6}`(代表)；MOAS 数组 `origin_rpki`/`origin_irr`(与 `origin_asns` 对齐)。
+  - **RPKI 覆盖判定必须按前缀长度分桶 + 物化候选键的等值 hash join**(`rpki.classify`)——切忌写 `vrp.ip_start<=p.ip_start AND vrp.ip_end>=p.ip_end`
+    双不等式区间 join，DuckDB 对 ~110万×93万会退化成 nested-loop、**30 分钟跑不完**(踩过)。VRP 存 `vlen`(前缀长度)用于分桶。
+  - IRR 对象明细数据集 `irr{,_v6}/`(精确前缀 ∩ 已观测前缀，每 (pid,origin) 一行 + `sources` 数组) + v4 区间索引 `irr_ip`。
+  - as-set 三数据集 `asset_set`/`asset_member`/`asset_memberof`，各按字符串键排序 + **字符串区间文件索引**(`asset_*_key`，`_str_index`)。
+  - `meta`：`has_rpki`/`has_irr`/`has_asset` + `rpki`/`irr`/`asset`(各含 `as_of`/计数/`sources`/`authoritative`)。
+- **前端**：
+  - `OriginStatus.svelte`(rpki/irr 码 → 徽章；Valid 绿/Invalid 红分 ASN·长度/NotFound 中性；IRR present·mismatch)。
+    挂 `Results`(origin 列)、`InsightDrawer`(origin pill + MOAS 每 origin + **IRR 路由对象区块**列来源库 + 权威/第三方 trust)。列选择门控在 `queries.js`。
+  - **as-set 嵌套列表(左侧主内容, `mode='asset'`)**：`AsSetView.svelte` + 递归 `AsSetTree.svelte`(点子 as-set 懒查一层 +
+    `loadAsSetMembers`，**环检测**(祖先 set 集)+ 深度上限 24)。`classifyQuery` 的 **asset** 分支(`isAsSet`：`AS-FOO`/`AS123:AS-X`/
+    `SOURCE::AS-X`，**须早于 `:`→IPv6 分支**)；路由 `/asset/<键>`。ASN 详情面板加「所属 as-set」反查(`loadMemberOf`，读预计算 `asset_memberof` 索引)。
+  - db.js：`irrFilesForRange`(同 prefixes_ip)、`asset*FilesForKey`(字符串索引)。**改 `ipcollect/web/*` 后必须 `npm run build`**。
+
 ## 不变量 / 常见坑（改动前必读）
 - **不要重新引入"线路质量"评分**。CN2/GIA 从境外回程 BGP 分不出（GIA ⊂ CN2 同走 4809）。只看 AS_PATH。
+- **RPKI 覆盖判定别写双不等式区间 join**（会退化 nested-loop 卡死）——用 `rpki.classify` 的分桶等值 hash join。改 import 源列表见 `irr.py`/`asset.py` 的 `DEFAULT_SOURCES`。
 - **`origin asn` 仅展示**，不得参与筛选/排序；命名永远叫 "origin asn"，不叫"回程 asn"。
 - path 搜索是**连续相邻子序列**（`1299 23764 4809` ≠ `1299 4809`），不是"含且无序"。`--asn` 才是无序含任一。
 - **ASN 名称/分组在 `config.json` 的 `asn_registry`**，不在代码里；改名加 ASN 改这里即可（中文 `name` + 可选英文 `name_en`）。

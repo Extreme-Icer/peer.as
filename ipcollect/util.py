@@ -121,3 +121,29 @@ def human_bytes(n: float) -> str:
             return f"{n:.1f}{unit}"
         n /= 1024.0
     return f"{n:.1f}PB"
+
+
+def download_file(url: str, dest, *, reuse: bool = False, timeout: int = 600) -> bool:
+    """下载 url -> dest, 支持 **http(s) 与 ftp**(RADB 等只走 FTP; requests 不认 ftp:// -> 用 urllib 被动模式)。
+    reuse=True 且本地已存在非空文件则跳过。http 连接超时 15s(避免死链长时间阻塞)。失败返回 False(不抛)。"""
+    from pathlib import Path
+    dest = Path(dest)
+    if reuse and dest.exists() and dest.stat().st_size > 1000:
+        return True
+    try:
+        if url.lower().startswith("ftp://"):
+            import shutil
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=timeout) as r, open(dest, "wb") as f:
+                shutil.copyfileobj(r, f, length=1 << 20)
+        else:
+            import requests
+            with requests.get(url, timeout=(15, timeout), stream=True) as resp:
+                resp.raise_for_status()
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+        return True
+    except Exception as e:  # noqa
+        log(f"  ! 下载失败({url}): {e}", err=True)
+        return False

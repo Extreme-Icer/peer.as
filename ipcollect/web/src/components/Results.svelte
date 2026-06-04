@@ -7,6 +7,7 @@
   import { iStar, iSignal, iChevD, iChevR } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
   import AsPath from './AsPath.svelte'
+  import OriginStatus from './OriginStatus.svelte'
 
   // DMIT 赞助 logo(本地 public/dmit.svg)。绝对化以适配任意部署根(同 db.js 的做法)。
   const DMIT = new URL('./dmit.svg', document.baseURI).href
@@ -43,7 +44,7 @@
             <td class="pfx">
               <span class="chev"><Fa icon={sel ? iChevD : iChevR} /></span>{r.prefix}
             </td>
-            <td><AsnTag asn={r.origin_asn} />{#if r.n_origins > 1}<span class="badge b-moas moas" title={t('moas_note')}>{t('moas')} {r.n_origins}</span>{/if}</td>
+            <td><AsnTag asn={r.origin_asn} /><OriginStatus rpki={r.rpki} irr={r.irr} />{#if r.n_origins > 1}<span class="badge b-moas moas" title={t('moas_note')}>{t('moas')} {r.n_origins}</span>{/if}</td>
             <td class="loc">{loc(r)}</td>
             <td class="num">
               <span class="np">{r.n_paths ?? 0}</span>

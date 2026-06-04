@@ -24,7 +24,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import bgp, geoip, profile, util
+from . import asset, bgp, geoip, irr, profile, rpki, util
 
 
 def _subtract(s: int, e: int, holes: list) -> list[tuple]:
@@ -209,10 +209,13 @@ def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: 
         CREATE TABLE geo_full AS
         SELECT g.cc, g.city, g.province, g.pid, pfx.prefix, g.plen, g.origin_asn,
                pfx.n_origins, g.n_paths,
+               COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,  -- 代表 origin 的 RPKI/IRR
                g.segs, pp.paths_blob, pp.best_path
         FROM seg g
         LEFT JOIN pp{suffix} pp ON pp.pid = g.pid
-        LEFT JOIN prefix pfx ON pfx.pid = g.pid;
+        LEFT JOIN prefix pfx ON pfx.pid = g.pid
+        LEFT JOIN rpki_status rs  ON rs.pid = g.pid  AND rs.origin = g.origin_asn
+        LEFT JOIN irr_status  irs ON irs.pid = g.pid AND irs.origin = g.origin_asn;
     """)
     (pq / geodir).mkdir(parents=True, exist_ok=True)
     ccs = [r[0] for r in con.execute(
@@ -230,7 +233,7 @@ def _carve_geo_dirs(con, cfg: dict, pq: Path, family: int, suffix: str, geodir: 
 # ----------------------------------------------------------------------------
 # 单 family 导出
 # ----------------------------------------------------------------------------
-def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -> dict:
+def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True, has_irr: bool = False) -> dict:
     suffix = "" if family == 4 else "_v6"
     iptype = "BIGINT" if family == 4 else "UHUGEINT"
     geodir = "geo" if family == 4 else "geo_v6"
@@ -247,6 +250,7 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -
           SELECT pid, prefix, ip_start::{iptype} AS ip_start, ip_end::{iptype} AS ip_end,
                  plen, family, origin_asn, n_origins, n_paths,
                  origin_asns, origin_npaths,   -- MOAS: 全部 origin(详情抽屉, n_origins=1 时为 NULL)
+                 rpki, irr, origin_rpki, origin_irr,   -- RPKI/IRR: 代表 origin 状态 + MOAS 每 origin 数组(与 origin_asns 对齐)
                  COALESCE(cc,'ZZ') AS cc, province, city
           FROM pgeo WHERE family={family} ORDER BY ip_start
         ) TO '{pq}/prefixes{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PREFIX_FILE_SIZE}',
@@ -299,16 +303,40 @@ def _export_family(con, cfg: dict, pq: Path, family: int, geo_on: bool = True) -
           SELECT p.pid, p.prefix, COALESCE(p.cc,'ZZ') AS cc,
                  po.o_asn AS origin_asn, p.n_origins, p.n_paths,
                  (po.o_asn IS NOT DISTINCT FROM p.origin_asn) AS is_primary,
+                 COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,  -- 该 origin 的 RPKI/IRR 状态
                  pp.paths_blob, pp.best_path
           FROM pgeo p
           JOIN po ON po.pid = p.pid
           LEFT JOIN pp{suffix} pp ON pp.pid = p.pid
+          LEFT JOIN rpki_status rs  ON rs.pid = p.pid  AND rs.origin = po.o_asn
+          LEFT JOIN irr_status  irs ON irs.pid = p.pid AND irs.origin = po.o_asn
           WHERE p.family={family} ORDER BY po.o_asn NULLS LAST
         ) TO '{pq}/pathsearch{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
               ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
     """)
     con.execute("SET preserve_insertion_order=false;")
     con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
+
+    # irr{suffix}: 库内已观测前缀 ∩ IRR route 对象(精确前缀匹配), 每 (pid,origin) 一行 + 来源库数组。
+    # 按 ip_start 排序 + v4 区间索引(irr_ip), 供详情面板按前缀范围只读相交分片(同 prefixes 思路)。
+    if has_irr:
+        (pq / f"irr{suffix}").mkdir(parents=True, exist_ok=True)
+        con.execute("PRAGMA threads=1;")
+        con.execute("SET preserve_insertion_order=true;")
+        con.execute(f"""
+            COPY (
+              SELECT p.pid, p.prefix, p.ip_start::{iptype} AS ip_start, p.ip_end::{iptype} AS ip_end,
+                     ir.origin, list(DISTINCT ir.source ORDER BY ir.source) AS sources
+              FROM prefix p JOIN irr_route ir
+                ON ir.family = p.family AND ir.ip_start = p.ip_start AND ir.ip_end = p.ip_end
+              WHERE p.family={family}
+              GROUP BY p.pid, p.prefix, p.ip_start, p.ip_end, ir.origin
+              ORDER BY p.ip_start
+            ) TO '{pq}/irr{suffix}' (FORMAT parquet, FILE_SIZE_BYTES '{PATHSEARCH_FILE_SIZE}',
+                  ROW_GROUP_SIZE 15000, OVERWRITE_OR_IGNORE);
+        """)
+        con.execute("SET preserve_insertion_order=false;")
+        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
 
     n_prefix = con.execute("SELECT count(*) FROM prefix WHERE family=?", [family]).fetchone()[0]
     n_paths = con.execute("SELECT count(*) FROM pathobs WHERE family=?", [family]).fetchone()[0]
@@ -338,16 +366,45 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     # geo 关闭时(无 geo 表)退化为不连地理的 pgeo(cc/province/city 全 NULL), 下游 COALESCE 成 'ZZ'。
     # MOAS: 每个**多源**前缀(n_origins>1)的全部 origin + 各自 peer 观测数(按 peer 降序)。
     # 供详情抽屉完整(可折叠)展示。单源前缀不进表 -> pgeo LEFT JOIN 后 origin_asns 为 NULL(parquet 近乎零成本)。
+    # ── RPKI ROA + IRR route 验证(rpki.py/irr.py): 对每条 (前缀,origin) 标状态; 数据缺失则空表 -> has_*=False 自动 no-op ──
+    rpki_meta = rpki.attach(con, cfg)
+    irr_meta = irr.attach(con, cfg)
+    asset_meta = asset.attach(con, cfg)   # IRR as-set 层级树(Phase 3): as_set/as_set_member/as_memberof 表
+    has_asset = bool(asset_meta)
+    con.execute("DROP TABLE IF EXISTS route_origin;")
+    con.execute("""
+        CREATE TABLE route_origin AS
+        SELECT DISTINCT p.pid, p.family, p.ip_start, p.ip_end, p.plen, po.origin_asn AS origin
+        FROM prefix p JOIN (SELECT DISTINCT pid, origin_asn FROM pathobs) po USING(pid)
+        WHERE po.origin_asn IS NOT NULL;
+    """)
+    if rpki_meta:
+        util.log(f"  RPKI: 验证 (VRP {util.human(rpki_meta['count'])}, as of {rpki_meta.get('as_of_str')})")
+        rpki.classify(con)
+    else:
+        rpki.empty_status(con)
+    if irr_meta:
+        util.log(f"  IRR: 验证 (route {util.human(irr_meta['count'])} 对象, {len(irr_meta.get('sources') or [])} 源)")
+        irr.classify(con)
+    else:
+        irr.empty_status(con)
+    has_rpki, has_irr = bool(rpki_meta), bool(irr_meta)
+
+    # prefix_origins(MOAS 详情): 全部 origin + peer 数 + 各 origin 的 rpki/irr 状态(数组与 origin_asns 对齐)。
     con.execute("DROP TABLE IF EXISTS prefix_origins;")
     con.execute("""
         CREATE TABLE prefix_origins AS
         SELECT pid,
                list(origin_asn ORDER BY ns DESC, origin_asn) AS origin_asns,
-               list(ns        ORDER BY ns DESC, origin_asn) AS origin_npaths
+               list(ns        ORDER BY ns DESC, origin_asn) AS origin_npaths,
+               list(COALESCE(rpki,0)::UTINYINT ORDER BY ns DESC, origin_asn) AS origin_rpki,
+               list(COALESCE(irr,0)::UTINYINT  ORDER BY ns DESC, origin_asn) AS origin_irr
         FROM (
-            SELECT po.pid, po.origin_asn, sum(po.n_peers)::BIGINT AS ns
+            SELECT po.pid, po.origin_asn, sum(po.n_peers)::BIGINT AS ns, rs.rpki, irs.irr
             FROM pathobs po JOIN prefix p ON p.pid = po.pid AND p.n_origins > 1
-            GROUP BY po.pid, po.origin_asn
+            LEFT JOIN rpki_status rs  ON rs.pid = po.pid  AND rs.origin = po.origin_asn
+            LEFT JOIN irr_status  irs ON irs.pid = po.pid AND irs.origin = po.origin_asn
+            GROUP BY po.pid, po.origin_asn, rs.rpki, irs.irr
         ) GROUP BY pid;
     """)
 
@@ -355,14 +412,19 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
     if geo_on:
         con.execute("""
             CREATE TABLE pgeo AS
-            WITH px AS (   -- 先把 MOAS origins 列贴上(普通 join), 再做 ASOF(不与其它 join 类型混链)
+            WITH px AS (   -- 先把 MOAS origins 列 + 代表 origin 的 rpki/irr 贴上(普通 join), 再做 ASOF(不与其它 join 类型混链)
                 SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
-                       p.origin_asn, p.n_origins, p.n_paths, mo.origin_asns, mo.origin_npaths
-                FROM prefix p LEFT JOIN prefix_origins mo ON mo.pid = p.pid
+                       p.origin_asn, p.n_origins, p.n_paths, mo.origin_asns, mo.origin_npaths,
+                       mo.origin_rpki, mo.origin_irr,
+                       COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr
+                FROM prefix p
+                LEFT JOIN prefix_origins mo ON mo.pid = p.pid
+                LEFT JOIN rpki_status rs  ON rs.pid = p.pid  AND rs.origin = p.origin_asn
+                LEFT JOIN irr_status  irs ON irs.pid = p.pid AND irs.origin = p.origin_asn
             )
             SELECT px.pid, px.family, px.prefix, px.ip_start, px.ip_end, px.plen,
                    px.origin_asn, px.n_origins, px.n_paths,
-                   px.origin_asns, px.origin_npaths,
+                   px.origin_asns, px.origin_npaths, px.origin_rpki, px.origin_irr, px.rpki, px.irr,
                    CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.cc END AS cc,
                    CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.province END AS province,
                    CASE WHEN g.start_num IS NOT NULL AND px.ip_start <= g.end_num THEN g.city END AS city
@@ -374,16 +436,34 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
             CREATE TABLE pgeo AS
             SELECT p.pid, p.family, p.prefix, p.ip_start, p.ip_end, p.plen,
                    p.origin_asn, p.n_origins, p.n_paths,
-                   mo.origin_asns, mo.origin_npaths,
+                   mo.origin_asns, mo.origin_npaths, mo.origin_rpki, mo.origin_irr,
+                   COALESCE(rs.rpki,0)::UTINYINT AS rpki, COALESCE(irs.irr,0)::UTINYINT AS irr,
                    CAST(NULL AS VARCHAR) AS cc, CAST(NULL AS VARCHAR) AS province,
                    CAST(NULL AS VARCHAR) AS city
             FROM prefix p
-            LEFT JOIN prefix_origins mo ON mo.pid = p.pid;
+            LEFT JOIN prefix_origins mo ON mo.pid = p.pid
+            LEFT JOIN rpki_status rs  ON rs.pid = p.pid  AND rs.origin = p.origin_asn
+            LEFT JOIN irr_status  irs ON irs.pid = p.pid AND irs.origin = p.origin_asn;
         """)
 
     families = [r[0] for r in con.execute(
         "SELECT DISTINCT family FROM prefix ORDER BY family").fetchall()]
-    fam_results = {f: _export_family(con, cfg, pq, f, geo_on) for f in families}
+    fam_results = {f: _export_family(con, cfg, pq, f, geo_on, has_irr) for f in families}
+
+    # ── as-set 层级树数据集(Phase 3): 一级成员边 + 反查; 各按字符串键排序写, 配文件级区间索引供前端懒展开 ──
+    if has_asset:
+        for nm in ("asset_set", "asset_member", "asset_memberof"):
+            (pq / nm).mkdir(parents=True, exist_ok=True)
+        con.execute("PRAGMA threads=1;")
+        con.execute("SET preserve_insertion_order=true;")
+        con.execute(f"""COPY (SELECT set_key, source, name, descr, n_members FROM as_set ORDER BY set_key)
+            TO '{pq}/asset_set' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+        con.execute(f"""COPY (SELECT set_key, ord, kind, val FROM as_set_member ORDER BY set_key, ord)
+            TO '{pq}/asset_member' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+        con.execute(f"""COPY (SELECT member, parent_key FROM as_memberof ORDER BY member)
+            TO '{pq}/asset_memberof' (FORMAT parquet, FILE_SIZE_BYTES '4MB', OVERWRITE_OR_IGNORE);""")
+        con.execute("SET preserve_insertion_order=false;")
+        con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")
 
     # 数据里出现过的 ASN(路径上 + origin), 名称表只保留这些。
     seen: set[int] = set()
@@ -461,6 +541,16 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
                          "hi": (int(hi) if hi is not None else None)})
         return out_
 
+    def _str_index(file_list, col):
+        # 每文件 [min,max] 字符串区间(前端按 set_key/member 字符串相等裁文件; 数据已按该列排序 -> 区间不重叠)。
+        out_ = []
+        for f in file_list:
+            lo, hi = con.execute(f"SELECT min({col}), max({col}) FROM read_parquet('{pq}/{f}')").fetchone()
+            if lo is not None:
+                out_.append({"f": f, "lo": lo, "hi": hi})
+        out_.sort(key=lambda e: e["lo"])
+        return out_
+
     files: dict = {}
     for f in families:
         r = fam_results[f]; suf = r["suffix"]; gd = r["geodir"]
@@ -472,6 +562,18 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files[f"paths_pid{suf}"] = _pid_index(files[f"paths{suf}"])
         files[f"pathsearch_origin{suf}"] = _origin_index(files[f"pathsearch{suf}"])
         files[("geo" if f == 4 else "geo_v6")] = {cc: _rel(f"{gd}/{cc}") for cc in r["ccs"]}
+        if has_irr:   # IRR route 对象明细数据集 + v4 区间索引(同 prefixes_ip; v6 前端读全部)
+            files[f"irr{suf}"] = _rel(f"irr{suf}")
+            if f == 4:
+                files["irr_ip"] = _ip_index_v4(files["irr"])
+
+    if has_asset:   # as-set 三数据集 + 字符串键文件级索引(前端懒展开/反查只读相关分片)
+        files["asset_set"] = _rel("asset_set")
+        files["asset_member"] = _rel("asset_member")
+        files["asset_memberof"] = _rel("asset_memberof")
+        files["asset_set_key"] = _str_index(files["asset_set"], "set_key")
+        files["asset_member_key"] = _str_index(files["asset_member"], "set_key")
+        files["asset_memberof_key"] = _str_index(files["asset_memberof"], "member")
 
     # 国家清单(union 两 family) + 双语名(country_dim) + focus 国家城市清单(侧栏导航)。
     # geo 关闭(dn42)则全空 —— 无 country_dim 表、无地理可言。
@@ -516,6 +618,18 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         # MOAS v2: pathsearch 按 (前缀,origin) 多行 + is_primary; prefixes 带 origin_asns/origin_npaths 数组。
         # 门控: 详情抽屉完整 origin 列表、纯 path 搜索 is_primary 去重、按次要 origin 搜索命中。
         "has_moas": True,
+        # RPKI ROA / IRR route 验证: 列表/详情徽章 + 详情 IRR 区块。数据缺失(import 没跑/开关关)即 False, 前端不 SELECT 该列。
+        "has_rpki": has_rpki,
+        "has_irr": has_irr,
+        "rpki": ({"as_of": rpki_meta.get("as_of_str"), "count": rpki_meta.get("count"),
+                  "source": rpki_meta.get("source")} if has_rpki else None),
+        "irr": ({"as_of": irr_meta.get("as_of_str"), "count": irr_meta.get("count"),
+                 "sources": irr_meta.get("sources"), "authoritative": irr_meta.get("authoritative")} if has_irr else None),
+        # as-set 客户锥层级树(Phase 3): 懒展开/反查。
+        "has_asset": has_asset,
+        "asset": ({"as_of": asset_meta.get("as_of_str"), "n_sets": asset_meta.get("n_sets"),
+                   "n_edges": asset_meta.get("n_edges"), "sources": asset_meta.get("sources"),
+                   "authoritative": asset_meta.get("authoritative")} if has_asset else None),
         "files": files,
         "generated_ts": now,
         "generated_str": time.strftime("%Y-%m-%d %H:%M", time.localtime(now)),

@@ -106,6 +106,33 @@ def cmd_sync_web(args):
     print(f"前端已同步: {n} 文件 (web/dist -> {args.out}/); 未跑 npm、未重导出 parquet/SSG。")
 
 
+def cmd_rpki_import(args):
+    """下载/解析 RPKI VRP -> cache/rpki/(供 export-parquet 标 RPKI 状态)。"""
+    from . import rpki
+    cfg = config.load()
+    m = rpki.refresh(cfg, force=args.force)
+    print(f"RPKI VRP: {m['count']} 条 (as of {m['as_of_str']}) <- {m['source']}" if m
+          else "RPKI 已跳过(开关关或无数据)")
+
+
+def cmd_irr_import(args):
+    """下载/解析 IRR route 对象 -> cache/irr/(供 export-parquet 标 IRR 登记态 + 明细)。"""
+    from . import irr
+    cfg = config.load()
+    m = irr.refresh(cfg, force=args.force)
+    print(f"IRR route: {m['count']} 对象 / {len(m['sources'])} 源 (as of {m['as_of_str']})" if m
+          else "IRR 已跳过(开关关或无数据)")
+
+
+def cmd_asset_import(args):
+    """下载/解析 IRR as-set 对象 -> cache/asset/(供 export-parquet 出 as-set 层级树)。"""
+    from . import asset
+    cfg = config.load()
+    m = asset.refresh(cfg, force=args.force)
+    print(f"as-set: {m['n_sets']} 集合 / {m['n_edges']} 成员边 / {len(m['sources'])} 源 (as of {m['as_of_str']})" if m
+          else "as-set 已跳过(开关关或无数据)")
+
+
 def cmd_serve(args):
     cfg = config.load()
     serve.serve(cfg, out_dir=args.out, port=args.port, host=args.host, rebuild=args.rebuild)
@@ -153,6 +180,18 @@ def build_parser():
     s = sub.add_parser("sync-web", help="只拷已构建前端 web/dist -> dist(不跑 npm; 要顺带 build 用 `ipc build`)")
     s.add_argument("--out", default="dist", help="输出目录(默认 dist)")
     s.set_defaults(func=cmd_sync_web)
+
+    s = sub.add_parser("rpki-import", help="下载 RPKI VRP -> cache/rpki(供 export 标 RPKI 状态)")
+    s.add_argument("--force", action="store_true", help="忽略本地缓存强制重下")
+    s.set_defaults(func=cmd_rpki_import)
+
+    s = sub.add_parser("irr-import", help="下载 IRR route 对象 -> cache/irr(供 export 标 IRR 登记态)")
+    s.add_argument("--force", action="store_true", help="忽略本地缓存强制重下")
+    s.set_defaults(func=cmd_irr_import)
+
+    s = sub.add_parser("asset-import", help="下载 IRR as-set 对象 -> cache/asset(供 export 出 as-set 层级树)")
+    s.add_argument("--force", action="store_true", help="忽略本地缓存强制重下")
+    s.set_defaults(func=cmd_asset_import)
 
     s = sub.add_parser("serve", help="本地 debug: 静态托管 build 产物")
     s.add_argument("--out", default="dist", help="要托管的目录(默认 dist)")

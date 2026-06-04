@@ -2,9 +2,9 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { showInsight, showAsn, scanNeighbors } from '../lib/queries.js'
+  import { showInsight, showAsn, scanNeighbors, runAsSet } from '../lib/queries.js'
   import { ccLabel, isTier1 } from '../lib/bgp.js'
-  import { iPrefix, iUp, iDown, iRange, iNodes, iSpinner } from '../lib/icons.js'
+  import { iPrefix, iUp, iDown, iRange, iNodes, iSpinner, iUsers } from '../lib/icons.js'
   import Whois from './Whois.svelte'
   import RelGroup from './RelGroup.svelte'
 
@@ -17,7 +17,8 @@
   // 通告前缀默认只显示 5 行, 可展开。换 ASN 时重置。
   const HEAD = 5
   let pfxOpen = $state(false)
-  $effect(() => { a?.asn; pfxOpen = false })
+  let moOpen = $state(false)
+  $effect(() => { a?.asn; pfxOpen = false; moOpen = false })
   let shownPfx = $derived(a?.prefixes ? (pfxOpen ? a.prefixes : a.prefixes.slice(0, HEAD)) : [])
 </script>
 
@@ -58,6 +59,19 @@
         {#if total > a.prefixes.length}<div class="more">… {(total - a.prefixes.length).toLocaleString()} more（取样 {a.prefixes.length}）</div>{/if}
       {:else}
         <div class="muted small">{t('asn_no_origin')}</div>
+      {/if}
+
+      <!-- IRR as-set 反查: 此 ASN 被哪些 as-set 直接列为成员(登记的客户锥归属) -->
+      {#if S.meta?.has_asset && a.memberOf?.length}
+        <h3 class="dsec" data-sec="memberof"><Fa icon={iUsers} /> {t('asn_memberof')} · {a.memberOf.length}</h3>
+        <div class="msets">
+          {#each (moOpen ? a.memberOf : a.memberOf.slice(0, 12)) as k}
+            <button class="msetb" onclick={() => runAsSet(k)} title={t('asset_open')}>{k}</button>
+          {/each}
+        </div>
+        {#if a.memberOf.length > 12}
+          <button class="expandrow" onclick={() => (moOpen = !moOpen)}>{moOpen ? t('collapse') : t('show_all').replace('{n}', a.memberOf.length)}</button>
+        {/if}
       {/if}
 
       <!-- 观测关系(据通告前缀最优路径推得; 三态) -->
@@ -107,6 +121,9 @@
   .more { font-size: 11px; color: var(--muted); padding: 6px 2px 0; }
   .expandrow { width: 100%; margin-top: 6px; padding: 6px; background: transparent; border: 1px dashed var(--line); border-radius: 7px; color: var(--link); cursor: pointer; font: 600 11.5px var(--sans); transition: all .12s; }
   .expandrow:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .msets { display: flex; flex-wrap: wrap; gap: 5px; }
+  .msetb { background: var(--alt); border: 1px solid var(--line); border-radius: 5px; color: var(--link); cursor: pointer; font: 600 11px var(--mono); padding: 2px 7px; transition: border-color .12s; }
+  .msetb:hover { border-color: var(--accent); color: var(--accent); }
   .relnote { color: var(--muted); font-size: 11px; margin: 8px 0 2px; line-height: 1.5; }
   .scanbtn { display: inline-flex; align-items: center; gap: 7px; background: var(--inbg); color: var(--accent); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; padding: 7px 14px; font: 600 12px var(--sans); transition: all .12s; }
   .scanbtn:hover { border-color: var(--accent); background: var(--accent-dim); }

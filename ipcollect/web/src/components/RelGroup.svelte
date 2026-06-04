@@ -48,14 +48,18 @@
             {#if openAsn === it.asn}
               {@const e = evOf(it)}
               <div class="evpop" bind:this={pop}>
+                <div class="evhead">
+                  {#if it.ev.prefix}<span class="evpx">{it.ev.prefix}</span>{/if}
+                  {#if e && e !== 'loading' && e.side}<span class="evside">{e.side === 'd' ? t('rel_side_down') : t('rel_side_up')}</span>{/if}
+                </div>
                 {#if e === 'loading' || e === undefined}
                   <span class="evload"><Fa icon={iSpinner} spin /></span>
                 {:else if e}
-                  <div class="evhead">
-                    {#if e.prefix}<span class="evpx">{e.prefix}</span>{/if}
-                    <span class="evside">{e.side === 'd' ? t('rel_side_down') : t('rel_side_up')}</span>
+                  <div class="evpath">
+                    <span class="end">{t('ev_collector')} →</span>
+                    <AsPath asns={e.path} hi={[subject, it.asn]} arrow nav />
+                    <span class="end">→ {t('ev_origin')}</span>
                   </div>
-                  <AsPath asns={e.path} hi={[subject, it.asn]} nav />
                 {:else}
                   <span class="evload muted">{t('none_in_db')}</span>
                 {/if}
@@ -89,6 +93,8 @@
     border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, .22);
   }
   .evload { color: var(--muted); font-size: 11.5px; display: inline-flex; padding: 2px 0; }
+  .evpath { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 5px; }
+  .evpath .end { font: 9.5px var(--sans); color: var(--muted); white-space: nowrap; letter-spacing: .02em; }
   .evhead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
   .evhead .evpx { font: 11px var(--mono); color: var(--link); }
   .evhead .evside { font-size: 10.5px; color: var(--muted); }

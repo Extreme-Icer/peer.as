@@ -446,8 +446,9 @@ function groupRelations(asn, acc, limit) {
   const out = emptyRel()
   for (const [y, o] of acc) {
     const rel = classifyRelation(asn, y, o.d, o.u)         // wd/w 不传入, 不污染方向 ⇒ 仅假象者落 peer
-    // 依据: 预计算路径带代表样本 pid(点开懒查); 旧数据全表扫路径已有现成 evd/evu(含 path/prefix)。
-    const ev = o.ev_pid != null ? { pid: o.ev_pid } : (rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd))
+    // 依据: 预计算带代表样本 pid(点开懒查 path) + ev_prefix(直接显示在哪条前缀上观测到);
+    //       旧数据全表扫路径已有现成 evd/evu(含 path/prefix/side)。
+    const ev = o.ev_pid != null ? { pid: o.ev_pid, prefix: o.ev_prefix } : (rel === 'down' ? (o.evd || o.evu) : (o.evu || o.evd))
     // 计数: 上下游用可靠证据; peer(含假象)用总观测次数, 以反映其被看到的频度。
     const n = rel === 'peer' ? (o.d + o.u + o.w + o.wd) : (o.d + o.u)
     out[rel].push({ asn: y, n, d: o.d, u: o.u, ev })
@@ -488,11 +489,12 @@ export async function scanNeighbors(asn) {
       // ev_pid 是后加的列: 数据可能比前端旧(两个 CF 项目独立部署有时间差, 如 dn42)。缺列就退而不取证据 pid,
       // 邻居照常显示(只是无 ℹ), 不报错。下次该站重导出补上列后自动恢复证据。
       let rows
-      try { rows = await q(`SELECT neighbor, d, u, w, wd, ev_pid FROM ${src} WHERE asn=${asn}`) }
+      try { rows = await q(`SELECT neighbor, d, u, w, wd, ev_pid, ev_prefix FROM ${src} WHERE asn=${asn}`) }
       catch { rows = await q(`SELECT neighbor, d, u, w, wd FROM ${src} WHERE asn=${asn}`) }
       const acc = new Map()
       for (const r of rows) acc.set(Number(r.neighbor),
-        { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd), ev_pid: r.ev_pid == null ? null : Number(r.ev_pid) })
+        { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd),
+          ev_pid: r.ev_pid == null ? null : Number(r.ev_pid), ev_prefix: r.ev_prefix ?? null })
       // 每对带代表样本 pid -> ℹ 依据在点开时才按 pid 懒查(loadEvidence), 不在此处取, 不拖慢 ASN 加载。
       S.asnView = { ...S.asnView, neigh: { ...groupRelations(asn, acc, 40), scanned: rows.length, precomputed: true } }
       return

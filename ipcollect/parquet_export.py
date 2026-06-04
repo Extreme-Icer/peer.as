@@ -378,20 +378,25 @@ def _build_asn_neigh(con, pq: Path) -> bool:
             UNION ALL
             SELECT pid, L, list_extract(a, j) AS asn, list_extract(a, j - 1) AS nb, (ft1 >= j) AS weak, TRUE AS isleft
             FROM base, range(2, L + 1) g(j) WHERE list_extract(a, j) <> list_extract(a, j - 1)
+        ),
+        agg AS (
+            SELECT asn, nb AS neighbor,
+                   count(*) FILTER (WHERE NOT isleft AND NOT weak)::INT AS d,
+                   count(*) FILTER (WHERE isleft     AND NOT weak)::INT AS u,
+                   count(*) FILTER (WHERE isleft     AND weak)::INT     AS w,
+                   count(*) FILTER (WHERE NOT isleft AND weak)::INT     AS wd,
+                   arg_min(pid, L)::BIGINT AS ev_pid   -- 代表样本: 含该邻接的最短路径的 pid
+            FROM adj WHERE asn IS NOT NULL AND nb IS NOT NULL GROUP BY asn, nb
         )
-        SELECT asn, nb AS neighbor,
-               count(*) FILTER (WHERE NOT isleft AND NOT weak)::INT AS d,
-               count(*) FILTER (WHERE isleft     AND NOT weak)::INT AS u,
-               count(*) FILTER (WHERE isleft     AND weak)::INT     AS w,
-               count(*) FILTER (WHERE NOT isleft AND weak)::INT     AS wd,
-               arg_min(pid, L)::BIGINT AS ev_pid   -- 代表样本: 含该邻接的最短路径的 pid(前端点 ℹ 时按 pid 懒查)
-        FROM adj WHERE asn IS NOT NULL AND nb IS NOT NULL GROUP BY asn, nb;
+        -- 顺手取该 pid 的前缀串(ev_prefix), 详情弹窗直接显示"在哪条 prefix 上观测到"; path 仍点开按 pid 懒查。
+        SELECT g.asn, g.neighbor, g.d, g.u, g.w, g.wd, g.ev_pid, p.prefix AS ev_prefix
+        FROM agg g LEFT JOIN prefix p ON p.pid = g.ev_pid;
     """)
     n = con.execute("SELECT count(*) FROM asn_neigh").fetchone()[0]
     (pq / "asn_neigh").mkdir(parents=True, exist_ok=True)
     con.execute("PRAGMA threads=1;")
     con.execute("SET preserve_insertion_order=true;")   # 按 asn 连续区段写 -> 数值区间索引可裁到 1 文件
-    con.execute(f"""COPY (SELECT asn, neighbor, d, u, w, wd, ev_pid FROM asn_neigh ORDER BY asn)
+    con.execute(f"""COPY (SELECT asn, neighbor, d, u, w, wd, ev_pid, ev_prefix FROM asn_neigh ORDER BY asn)
         TO '{pq}/asn_neigh' (FORMAT parquet, FILE_SIZE_BYTES '6MB', OVERWRITE_OR_IGNORE);""")
     con.execute("SET preserve_insertion_order=false;")
     con.execute(f"PRAGMA threads={os.environ.get('IPC_DUCKDB_THREADS', '4')};")

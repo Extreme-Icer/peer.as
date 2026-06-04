@@ -3,7 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { setView } from '../lib/queries.js'
+  import { setView, goHome } from '../lib/queries.js'
   import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
@@ -15,18 +15,20 @@
 
 <aside class="side">
   <div class="brand">
-    <div class="logo"><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></div>
+    <button class="logo" onclick={goHome} title={t('home')} aria-label={t('home')}>
+      <span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>
+    </button>
   </div>
 
   {#if features.whoisView}
     <nav class="vnav" aria-label={t('nav_views')}>
-      <button class="vitem" class:on={S.view === 'routing'} aria-current={S.view === 'routing'}
-        onclick={() => setView('routing')}>
-        <Fa icon={iNet} /> <span>{t('nav_routing')}</span>
-      </button>
       <button class="vitem" class:on={S.view === 'whois'} aria-current={S.view === 'whois'}
         onclick={() => setView('whois')}>
         <Fa icon={iWhois} /> <span>{t('nav_whois')}</span>
+      </button>
+      <button class="vitem" class:on={S.view === 'routing'} aria-current={S.view === 'routing'}
+        onclick={() => setView('routing')}>
+        <Fa icon={iNet} /> <span>{t('nav_routing')}</span>
       </button>
     </nav>
   {/if}
@@ -81,7 +83,9 @@
   .brand .logo {
     font: 800 18px/1 var(--mono); letter-spacing: -.01em; color: #f3f6fa;
     display: flex; align-items: center;
+    background: none; border: 0; padding: 0; cursor: pointer; transition: opacity .14s;
   }
+  .brand .logo:hover { opacity: .82; }
   .brand .logo .hi { color: var(--accent); }
   .brand .logo .dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--accent);

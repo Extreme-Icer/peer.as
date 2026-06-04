@@ -18,6 +18,8 @@ export const S = $state({
   // WHOIS·RDAP 独立视图载荷: input=用户原始输入串; kind/key=解析后传给 Whois 组件
   // (kind: 'autnum'|'ip'|'domain'; key=ASN号/IP·前缀串/可注册域名); err=识别失败的 i18n 键(空=正常)。
   whois: { input: '', kind: null, key: null, err: '' },
+  // 「高级搜索」开关(localStorage 记忆, App.onMount 初始化): 勾上后首页搜索框任何查询都直接进路由分析(/advanced), 不出简洁 WHOIS。
+  advWhois: false,
   mode: 'prompt',          // prompt | country | global | subnet | dns
   // DNS 解析视图载荷(mode==='dns' 时主内容区改渲染 DnsView): { domain, loading, error, status, a:[], aaaa:[], others:[] }
   // a/aaaa 行已富集前缀+origin asn(由 queries.runDns 查 prefixes 得到); others = 其它记录类型分组。

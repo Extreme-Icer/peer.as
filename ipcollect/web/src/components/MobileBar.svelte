@@ -5,7 +5,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { setView } from '../lib/queries.js'
+  import { setView, goHome } from '../lib/queries.js'
   import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
@@ -18,7 +18,7 @@
 </script>
 
 <header class="mbar">
-  <div class="logo"><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></div>
+  <button class="logo" onclick={() => { S.menu = false; goHome() }} aria-label={t('home')}><span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span></button>
   <button class="menubtn" onclick={() => (S.menu = !S.menu)} aria-label={t('menu')} aria-expanded={S.menu}>
     <Fa icon={S.menu ? iClose : iMenu} />
   </button>
@@ -29,11 +29,11 @@
   <div class="menu" role="menu">
     {#if features.whoisView}
       <nav class="vnav" aria-label={t('nav_views')}>
-        <button class="vitem" class:on={S.view === 'routing'} onclick={() => { close(); setView('routing') }}>
-          <Fa icon={iNet} /> {t('nav_routing')}
-        </button>
         <button class="vitem" class:on={S.view === 'whois'} onclick={() => { close(); setView('whois') }}>
           <Fa icon={iWhois} /> {t('nav_whois')}
+        </button>
+        <button class="vitem" class:on={S.view === 'routing'} onclick={() => { close(); setView('routing') }}>
+          <Fa icon={iNet} /> {t('nav_routing')}
         </button>
       </nav>
     {/if}
@@ -71,7 +71,7 @@
       position: sticky; top: 0; z-index: 8; padding: 10px 14px;
       background: linear-gradient(180deg, #0a0e15, #070a0f); border-bottom: 1px solid #182234;
     }
-    .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: #f3f6fa; display: flex; align-items: center; }
+    .logo { font: 800 17px/1 var(--mono); letter-spacing: -.01em; color: #f3f6fa; display: flex; align-items: center; background: none; border: 0; padding: 0; cursor: pointer; }
     .logo .hi { color: var(--accent); }
     .logo .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 9px; box-shadow: 0 0 10px var(--accent); }
     .menubtn {

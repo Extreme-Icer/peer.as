@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import Fa from 'svelte-fa'
   import { S } from './lib/store.svelte.js'
-  import { getData, configure } from './lib/db.js'
+  import { getData, configure, ensureEngine } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
   import { applyRoute, hardCloseDetail } from './lib/queries.js'
@@ -46,9 +46,12 @@
 
   onMount(async () => {
     applyTheme(localStorage.getItem('ipc-theme') || 'auto')
-    // 直开 /whois 深链: 尽早切到 WHOIS 视图, 这样首屏直接渲染查询壳(纯 RDAP, 不等引擎/数据), 不闪路由分析的加载转圈。
-    if (features.whoisView && /^\/whois(\/|$)/.test(location.pathname)) { S.view = 'whois'; S.loading = false }
+    S.advWhois = localStorage.getItem('ipc-adv-whois') === '1'   // 「高级搜索」记忆态
     const qp = new URLSearchParams(location.search)
+    // peeras 首页(/, 无 ?q)与 /whois 深链 = WHOIS 视图: 尽早切过去, 首屏直接渲染查询壳(纯 RDAP, 不等引擎/数据), 不闪路由分析的加载转圈。
+    if (features.whoisView && (/^\/whois(\/|$)/.test(location.pathname) || (location.pathname === '/' && !qp.has('q')))) {
+      S.view = 'whois'; S.loading = false
+    }
     setLang(qp.get('lang') || localStorage.getItem('ipc-lang')
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))
     const dw = parseFloat(localStorage.getItem('ipc-detail-w')); if (dw) S.detailW = Math.min(72, Math.max(38, dw))
@@ -74,6 +77,13 @@
     // 解析当前 URL 渲染。WHOIS 分支(setView 起始亦然)不碰引擎并置 loading=false; 路由分析分支先 await ensureEngine()
     // (34MB DuckDB + 全量 ASN 名按需懒加载, 期间保持 loading 转圈)。前进/后退经 popstate 重渲染(PJAX)。
     applyRoute({ initial: true })
+
+    // 落地在 WHOIS 首页时, 引擎本不会加载。空闲时**静默后台预载**(ensureEngine 幂等), 这样之后切到「路由分析」无感秒开;
+    // 不阻塞首屏/RDAP, 也不影响 WHOIS 视图(其忽略 S.loading)。meta 缺失则跳过(路由本就不可用)。
+    if (S.view === 'whois' && S.meta) {
+      const idle = window.requestIdleCallback || (cb => setTimeout(cb, 1500))
+      idle(() => ensureEngine().catch(() => {}))
+    }
   })
 </script>
 

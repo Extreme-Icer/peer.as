@@ -50,8 +50,11 @@
     ? ['AS13335', '1.1.1.0/24', '2606:4700::/32', 'cloudflare.com', 'mozz.ie']
     : []
 
-  function submit(e) { e?.preventDefault(); runWhois(box) }
-  function pick(x) { box = x; runWhois(x) }
+  // 「高级搜索」开 -> 任何查询直接进路由分析; 否则简洁 WHOIS(runWhois 内部仍会把 as-set/名称等非 WHOIS 对象转路由)。
+  function run(x) { S.advWhois ? openInRouting(x) : runWhois(x) }
+  function submit(e) { e?.preventDefault(); run(box) }
+  function pick(x) { box = x; run(x) }
+  function persistAdv() { try { localStorage.setItem('ipc-adv-whois', S.advWhois ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ } }
 </script>
 
 <main class="wv">
@@ -59,7 +62,6 @@
   <div class="scroll" class:center={!S.whois.kind}>
     <div class="col">
       <form class="console" onsubmit={submit}>
-        <span class="sigil">whois</span>
         <span class="prompt" aria-hidden="true">▸</span>
         <input
           bind:this={inputEl}
@@ -78,12 +80,15 @@
           {#each EXAMPLES as ex}
             <button class="chip" onclick={() => pick(ex)}>{ex}</button>
           {/each}
+          <label class="adv" class:on={S.advWhois} title={t('wv_adv_hint')}>
+            <input type="checkbox" bind:checked={S.advWhois} onchange={persistAdv} />
+            <span class="adv-sw" aria-hidden="true"><span class="adv-knob"></span></span>
+            <span class="adv-txt">{t('wv_adv')}</span>
+          </label>
         </div>
       {/if}
 
-      {#if S.whois.err}
-        <div class="notice bad">{t(S.whois.err)}</div>
-      {:else if S.whois.kind}
+      {#if S.whois.kind}
         <section class="dossier" data-t={rec.cls}>
           <div class="spine"><span class="spine-lbl">{rec.label}</span></div>
           <div class="doc">
@@ -130,14 +135,14 @@
     transition: border-color .15s, box-shadow .15s;
   }
   .console:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-dim), 0 14px 40px -22px rgba(0,0,0,.55); }
-  .sigil { font: 700 14px var(--mono); color: var(--accent); letter-spacing: .02em; user-select: none; }
-  .prompt { color: var(--accent); font: 700 14px var(--mono); animation: blink 1.25s step-end infinite; user-select: none; }
+  .prompt { color: var(--accent); font: 700 16px var(--mono); animation: blink 1.25s step-end infinite; user-select: none; }
   @keyframes blink { 0%,55% { opacity: 1 } 56%,100% { opacity: .25 } }
   .cmd {
     flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent;
     font: 500 17px var(--mono); color: var(--fg); letter-spacing: -.005em;
   }
-  .cmd::placeholder { color: var(--muted); opacity: .7; }
+  /* 占位符是中文(输入提示), 用 sans —— mono 下中文难看; 实际输入(ASN/IP/域名)仍走上面的 mono。 */
+  .cmd::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); font-size: 14px; }
   .run {
     flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; height: 42px; padding: 0 18px;
     background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 10px;
@@ -174,13 +179,28 @@
   }
   .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
 
-  /* ── 提示态 ── */
-  .notice {
-    margin-top: 26px; padding: 26px 22px; border-radius: 14px; text-align: center;
-    font-size: 13px; line-height: 1.6; border: 1px dashed var(--line); color: var(--muted);
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
+  /* 「高级搜索」开关: 推到示例行最右; 迷你 switch + 文字, 勾上时 accent。状态记忆于 localStorage。 */
+  .adv {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    padding: 4px 10px 4px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--inbg);
+    transition: border-color .15s, background .15s;
   }
-  .notice.bad { border-style: solid; border-color: color-mix(in srgb, #ef4444 40%, transparent); color: #ef4444; background: color-mix(in srgb, #ef4444 8%, transparent); }
+  .adv:hover { border-color: var(--accent); }
+  .adv.on { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-dim); }
+  .adv input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .adv-sw {
+    position: relative; flex: 0 0 auto; width: 28px; height: 16px; border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 45%, transparent); transition: background .18s;
+  }
+  .adv-knob {
+    position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform .18s;
+  }
+  .adv.on .adv-sw { background: var(--accent); }
+  .adv.on .adv-knob { transform: translateX(12px); background: var(--accent-fg); }
+  .adv input:focus-visible + .adv-sw { box-shadow: 0 0 0 3px var(--accent-dim); }
+  .adv-txt { font: 600 12px var(--sans); color: var(--muted); white-space: nowrap; transition: color .15s; }
+  .adv.on .adv-txt { color: var(--accent); }
 
   /* ── record 卷宗 ── */
   .dossier {
@@ -227,10 +247,10 @@
 
   @media (max-width: 820px) {
     .scroll { padding: 22px 12px 48px; }
-    .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px; }
-    .cmd { flex: 1 1 100%; order: 2; height: 34px; font-size: 16px; }
-    .sigil, .prompt { order: 1; }
-    .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }
+    .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
+    .prompt { order: 1; }
+    .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
+    .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }          /* 整行换到下一行 */
     /* 卷宗: 色脊转为顶部横条 */
     .dossier { flex-direction: column; }
     .spine { flex: 0 0 auto; height: 34px; width: 100%; border-right: 0; border-bottom: 1px solid color-mix(in srgb, var(--tc, var(--accent)) 30%, transparent); }

@@ -8,13 +8,15 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-04
 
-- **新增：独立的 WHOIS 查询视图。** 侧栏新增视图切换（「路由分析」/「WHOIS」），WHOIS 不再只是查询结果的附属面板——独立页面
-  用一个命令行式输入框直查任意 **ASN / IP / 前缀 / 域名** 的注册信息，结果以「注册局卷宗」样式呈现，并标注数据所用协议
-  （RDAP / WHOIS）。无 RDAP 的 ccTLD（如 `.de`）自动回退到传统 WHOIS。可经 `/whois/<查询>` 直达与分享。
-  **Added: a standalone WHOIS lookup view.** The sidebar now switches between «Routing» and «WHOIS»; WHOIS is no longer just
-  a side panel of a query — a dedicated page lets you look up registration data for any **ASN / IP / prefix / domain** from
-  one command-line-style box, rendered as a «registry dossier» that notes which protocol served the data (RDAP / WHOIS).
-  ccTLDs without RDAP (e.g. `.de`) fall back to traditional WHOIS automatically. Deep-linkable & shareable via `/whois/<query>`.
+- **新增：WHOIS 查询首页。** peer.as 打开即是一个搜索框，直查任意 **ASN / IP / 前缀 / 域名** 的注册信息，结果以「注册局卷宗」
+  样式呈现，并标注数据所用协议（RDAP / WHOIS）；无 RDAP 的 ccTLD（如 `.de`）自动回退到传统 WHOIS。可经 `/whois/<查询>` 直达与分享。
+  原「路由分析」（前缀表 / AS_PATH / 地区 / 子网等）移到侧栏切换，落地页为 `/advanced`（`peer.as/4134`、`/1.1.1.0/24` 等链接照旧）。
+  搜 as-set、AS 名称等非 WHOIS 对象会自动转到路由分析；搜索框右下角的 **「高级搜索」开关**（记忆状态）勾上后任何查询都直接进路由分析。
+  **Added: a WHOIS lookup home page.** peer.as now opens to a search box for any **ASN / IP / prefix / domain** registration data,
+  rendered as a «registry dossier» noting the protocol used (RDAP / WHOIS); ccTLDs without RDAP (e.g. `.de`) fall back to classic
+  WHOIS. Deep-linkable via `/whois/<query>`. The original «Routing» analysis (prefix table / AS_PATH / region / subnet …) moves to a
+  sidebar toggle, landing at `/advanced` (links like `peer.as/4134`, `/1.1.1.0/24` are unchanged). Searching an as-set or AS-name
+  (not a WHOIS object) jumps to routing; an **«Advanced» toggle** (remembered) sends every query straight to routing analysis.
   每条结果底部提供「查看更多信息」，一键跳到路由分析里该 ASN / 前缀 / 域名的完整详情（邻居与关系、RPKI/IRR、DNS）。
   无 RDAP 的 ccTLD（.jp / .kr / .de / .ru / .it / .nl / .uk … ）的 WHOIS 原文现在会被解析成与 RDAP 一致的友好字段
   （注册商 / 注册与到期时间 / 名称服务器 / 状态 / DNSSEC 等），日期统一格式化；原始全文仍完整保留。

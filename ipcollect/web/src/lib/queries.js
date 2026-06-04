@@ -573,37 +573,45 @@ export function openWhoisFromBox() {
   else if (S.subject?.kind === 'domain') showDomain(S.subject.id)
 }
 
-// ── WHOIS·RDAP 独立视图(features.whoisView) ────────────────────────
+// ── WHOIS 首页视图(features.whoisView; 落地页 = /) ───────────────────
 // 解析输入串 -> 设 S.whois 载荷并切到 whois 视图; 不跑 BGP 搜索(纯网络 RDAP/WHOIS, 与 DuckDB 无关)。
 // kind 映射: asn->autnum; ipv4/ipv6(含 CIDR)->ip(key=原串); domain->domain(RDAP 站取可注册根域名, registry 站取原域名)。
-// as-set / 其它 -> err(i18n 键), 由 WhoisView 显示提示。go() 在 applyRoute(_suppressUrl) 内为 no-op, 故首屏/popstate 不会重复入栈。
+// **as-set / 名称 / 其它非 WHOIS 对象 -> 直接转路由分析**(openInRouting)。go() 在 applyRoute(_suppressUrl) 内为 no-op。
+// 注: 「高级搜索」开关的「任何查询都进路由」由 UI 提交层(WhoisView)决定, 不在此 —— 免得 URL 驱动的 /whois/x 深链被开关劫持。
 export function runWhois(input) {
   const raw = String(input || '').trim()
   S.view = 'whois'
-  if (!raw) { S.whois = { input: '', kind: null, key: null, err: '' }; go('/whois'); return }
+  if (!raw) { S.whois = { input: '', kind: null, key: null, err: '' }; go('/'); return }   // 首页 = /
   const p = classifyQuery(raw)
-  let kind = null, key = null, err = ''
-  if (p.kind === 'asn') { kind = 'autnum'; key = String(p.asn) }
-  else if (p.kind === 'ipv4' || p.kind === 'ipv6') { kind = 'ip'; key = raw }
-  else if (p.kind === 'domain') { kind = 'domain'; key = features.rdapWhois ? registrableDomain(p.domain) : p.domain }
-  else if (p.kind === 'asset') { err = 'wv_asset_na' }
-  else { err = 'wv_invalid' }   // name/text(无 TLD 等)无 WHOIS 对象
-  S.whois = { input: raw, kind, key, err }
+  if (p.kind === 'asn') S.whois = { input: raw, kind: 'autnum', key: String(p.asn), err: '' }
+  else if (p.kind === 'ipv4' || p.kind === 'ipv6') S.whois = { input: raw, kind: 'ip', key: raw, err: '' }
+  else if (p.kind === 'domain') S.whois = { input: raw, kind: 'domain', key: features.rdapWhois ? registrableDomain(p.domain) : p.domain, err: '' }
+  else return openInRouting(raw)   // as-set / name / text -> 路由分析(不在 WHOIS 范围)
   go('/whois/' + encodeURIComponent(raw))
 }
 
-// WHOIS 视图「查看更多信息」: 跳到路由分析并打开该对象的完整详情(ASN 邻居/关系、前缀 RPKI/IRR、域名 DNS)。
-// 复用主查询入口: 把对象填进精确框跑一次, 再按类型开对应详情面板(与 applyRoute 的 path 分支同语义)。
+// 跳到路由分析: 「查看更多信息」、首页搜非 WHOIS 对象、「高级搜索」开关。把对象填进精确框跑一次 + 开对应详情。
+// 基线先压一个路由 URL(/?q=), 详情类(asn/prefix/dns/asset)随后由 showAsn/openPrefix/runDns/runAsSet 各自细化覆盖。
 export async function openInRouting(input) {
   const s = String(input || '').trim()
   if (!s) return
   S.view = 'routing'
   S.filters.ip = s
+  go('/?q=' + encodeURIComponent(s))
   try { await ensureEngine() } catch { return }     // 从 WHOIS 跳来时引擎多半还没加载, 先确保就绪
   const probe = classifyQuery(s)
-  await runSearch()                                  // 域名 -> runDns/registry; asn -> origin 搜索; ip/前缀 -> 子网搜索
+  await runSearch()                                  // 域名 -> runDns(/dns/); as-set -> runAsSet(/asset/); asn/ip -> 搜索
   if (probe.kind === 'asn') showAsn(probe.asn)        // 显式开 ASN 详情(移动端 setSubjectAsn 不自动开)
   else if (probe.kind === 'ipv4' || probe.kind === 'ipv6') await openPrefixByString(s)
+}
+
+// 点 LOGO 回首页。peeras: WHOIS 首页(/); dn42(无 whoisView): 路由分析干净落地页(/)。均清详情/筛选/结果。
+export function goHome() {
+  closeDetailState()
+  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
+  S.dns = null; S.asset = null; S.rows = []; S.msg = ''
+  if (features.whoisView) { S.view = 'whois'; S.whois = { input: '', kind: null, key: null, err: '' }; go('/') }
+  else { S.view = 'routing'; go('/'); ensureEngine().then(() => runSearch()).catch(() => {}) }
 }
 
 // 顶层视图切换(侧栏 / 移动菜单)。各视图保留自身 S 状态, 仅翻 S.view + 还原对应 URL(入历史栈, 可前进/后退)。
@@ -612,15 +620,17 @@ export function setView(v) {
   if (v === 'whois') {
     S.view = 'whois'
     const inp = (S.whois?.input || '').trim()
-    go(inp ? '/whois/' + encodeURIComponent(inp) : '/whois')
+    go(inp ? '/whois/' + encodeURIComponent(inp) : '/')   // 首页 = /
   } else {
     S.view = 'routing'
     const box = (S.filters.ip || '').trim()
-    go(box ? `/?q=${encodeURIComponent(box)}` : '/')
+    go(box ? `/?q=${encodeURIComponent(box)}` : ROUTING_HOME)   // 路由分析落地页 = /advanced(peeras)
     // 首次进路由分析才加载引擎(34MB), 就绪后渲染当前框。失败则 S.fatal 已置, 路由视图显示错误。
     ensureEngine().then(() => runSearch()).catch(() => {})
   }
 }
+// 路由分析的「空落地页」URL: peeras 让出 / 给 WHOIS 首页, 故用 /advanced; dn42(无 whoisView)路由本就是 /。
+const ROUTING_HOME = features.whoisView ? '/advanced' : '/'
 
 // ── 浏览器历史路由(PJAX) ──────────────────────────────────────────
 // 单一真相 = 浏览器历史。开详情 pushState('/<asn|prefix>'); 面板 ←/→ = history.back()/forward();
@@ -652,7 +662,7 @@ export function hardCloseDetail() {
   closeDetailState()
   if (S.mode === 'dns' && S.dns?.domain) { go('/dns/' + S.dns.domain); return }
   const box = (S.filters.ip || '').trim()
-  go(box ? `/?q=${encodeURIComponent(box)}` : '/')
+  go(box ? `/?q=${encodeURIComponent(box)}` : ROUTING_HOME)   // 空 -> 路由分析落地页(/advanced)
 }
 
 // 按前缀串精确开 prefix 详情(URL/popstate 用, 因 URL 只有前缀串无 pid)。命中库内同范围前缀则展开。
@@ -678,16 +688,20 @@ export async function applyRoute({ initial = false } = {}) {
     const sp = new URLSearchParams(location.search)
     const q0 = sp.get('q')
     const path = decodeURIComponent(location.pathname).replace(/^\/+/, '').replace(/\/+$/, '')
-    S.view = 'routing'                             // 默认顶层视图; 仅 /whois 分支改 'whois'(从 whois 后退到路由 URL 即自动复位)
-    // /whois[/<q>] -> WHOIS 独立视图(纯 RDAP, 不碰引擎; dn42 关此开关时降级为普通路由查询, 不进 whois 视图)
-    if (features.whoisView && (path === 'whois' || path.startsWith('whois/'))) {
+    S.view = 'routing'                             // 默认顶层视图; whois 分支改 'whois'(从 whois 后退到路由 URL 即自动复位)
+    // peeras 首页 = WHOIS 视图: 空路径且无 ?q(落地页), 以及 /whois[/<q>] 深链。纯 RDAP, 不碰引擎。
+    // dn42(无 whoisView)空路径仍走下面的路由空落地页, 不进 whois。
+    if (features.whoisView && ((path === '' && q0 == null) || path === 'whois' || path.startsWith('whois/'))) {
       S.loading = false
-      runWhois(path === 'whois' ? '' : decodeURIComponent(path.slice(6)))
+      runWhois(path.startsWith('whois/') ? decodeURIComponent(path.slice(6)) : '')
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。
     try { await ensureEngine() } catch { return }
-    if (path.startsWith('asset/')) {               // /asset/<as-set 键> -> 左侧嵌套列表
+    if (path === 'advanced') {                     // /advanced -> 路由分析空落地页(peeras 让出 / 给 WHOIS 首页后的去处)
+      closeDetailState()
+      await runSearch()
+    } else if (path.startsWith('asset/')) {        // /asset/<as-set 键> -> 左侧嵌套列表
       const key = decodeURIComponent(path.slice(6))
       S.filters.ip = key
       await runAsSet(key)

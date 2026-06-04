@@ -484,7 +484,12 @@ export async function scanNeighbors(asn) {
     if (S.meta?.has_asn_neigh) {
       const files = asnNeighFilesForAsn(asn)
       if (!files.length) { S.asnView = { ...S.asnView, neigh: { ...emptyRel(), scanned: 0, precomputed: true } }; return }
-      const rows = await q(`SELECT neighbor, d, u, w, wd, ev_pid FROM ${rpList(files)} WHERE asn=${asn}`)
+      const src = rpList(files)
+      // ev_pid 是后加的列: 数据可能比前端旧(两个 CF 项目独立部署有时间差, 如 dn42)。缺列就退而不取证据 pid,
+      // 邻居照常显示(只是无 ℹ), 不报错。下次该站重导出补上列后自动恢复证据。
+      let rows
+      try { rows = await q(`SELECT neighbor, d, u, w, wd, ev_pid FROM ${src} WHERE asn=${asn}`) }
+      catch { rows = await q(`SELECT neighbor, d, u, w, wd FROM ${src} WHERE asn=${asn}`) }
       const acc = new Map()
       for (const r of rows) acc.set(Number(r.neighbor),
         { d: Number(r.d), u: Number(r.u), w: Number(r.w), wd: Number(r.wd), ev_pid: r.ev_pid == null ? null : Number(r.ev_pid) })

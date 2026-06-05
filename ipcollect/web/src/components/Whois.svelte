@@ -73,7 +73,7 @@
   /* remark 常含长 URL / 无空格长串: pre-line 保留原换行, overflow-wrap/word-break 强制超长串换行,
      max-width + min-width:0 防止撑宽容器出现横向滚动条。 */
   .wremark {
-    font-size: 11.5px; color: var(--muted); line-height: 1.6; margin-top: 8px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 1.6; margin-top: 8px;
     white-space: pre-line; overflow-wrap: anywhere; word-break: break-word;
     max-width: 100%; min-width: 0;
   }

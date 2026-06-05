@@ -20,6 +20,7 @@
   import AboutModal from './components/AboutModal.svelte'
   import ChangelogModal from './components/ChangelogModal.svelte'
   import PathHelpModal from './components/PathHelpModal.svelte'
+  import ExportModal from './components/ExportModal.svelte'
 
   // 当前正在查看的详情(prefix/asn/domain/dns)对应的页标题 —— 让每个 pushState 历史项可辨识(便于翻历史记录)；
   // 无详情时回落默认页标题。随详情状态 + 语言响应式变化(与 queries.js 的 go() pushState 同源, 故历史项标题对应正确)。
@@ -63,7 +64,7 @@
 
     // 路由监听 + Esc 尽早注册(独立于数据/引擎): 直开 /whois 也要能 PJAX 前进后退、Esc。
     window.addEventListener('popstate', () => applyRoute())
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; if (S.detailKind) hardCloseDetail() } })
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; S.exportOpen = false; if (S.detailKind) hardCloseDetail() } })
 
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
     // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。失败置 fatal(路由视图显示), 但不 return ——
@@ -116,6 +117,7 @@
 <AboutModal />
 <ChangelogModal />
 <PathHelpModal />
+<ExportModal />
 
 <style>
   .app { display: flex; min-height: 100vh; }

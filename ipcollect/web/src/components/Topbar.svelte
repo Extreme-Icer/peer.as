@@ -3,11 +3,13 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { ccLabel, classifyQuery } from '../lib/bgp.js'
-  import { resolveCC, searchNow, openWhoisFromBox } from '../lib/queries.js'
-  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser } from '../lib/icons.js'
+  import { resolveCC, searchNow, openWhoisFromBox, gotoPage, canExport } from '../lib/queries.js'
+  import { iCountry, iCity, iPath, iSubnet, iSearch, iClear, iHelp, iWhois, iUser, iArrowL, iArrowR, iDownload } from '../lib/icons.js'
   import { features } from '../lib/site.js'
   import Field from './Field.svelte'
 
+  // 结果分页 / 导出栏: 仅 global/country/subnet 表格模式且有行时显示。
+  let tableMode = $derived(['global', 'country', 'subnet'].includes(S.mode) && S.rows.length > 0)
   let cc = $derived(resolveCC(S.filters.cc))
   let cities = $derived((cc && S.meta?.cities?.[cc]) || [])
   let f = S.filters
@@ -73,7 +75,21 @@
       {#if pathNA}<span class="locknote">{t('path_na')}</span>{/if}
     </div>
   </div>
-  <div class="statusline">{S.msg}</div>
+  <div class="statusline">
+    <span class="msg">{S.msg}</span>
+    {#if tableMode}
+      <div class="resbar">
+        <div class="pager">
+          <button class="pgbtn" disabled={S.page === 0} onclick={() => gotoPage(-1)} title={t('page_prev')} aria-label={t('page_prev')}><Fa icon={iArrowL} /></button>
+          <span class="pgn">{t('page_n').replace('{n}', (S.page || 0) + 1)}</span>
+          <button class="pgbtn" disabled={!S.more} onclick={() => gotoPage(1)} title={t('page_next')} aria-label={t('page_next')}><Fa icon={iArrowR} /></button>
+        </div>
+        <button class="expbtn" disabled={!canExport()} onclick={() => (S.exportOpen = true)} title={t('exp_title')}>
+          <Fa icon={iDownload} /> <span>{t('export_btn')}</span>
+        </button>
+      </div>
+    {/if}
+  </div>
 
   {#if features.geo}
     <datalist id="cclist">
@@ -161,7 +177,27 @@
     background: var(--inbg); color: var(--fg); border: 1px solid var(--line); box-shadow: none;
   }
   .whoisbtn:hover:not(:disabled) { filter: none; border-color: var(--accent); color: var(--accent); }
-  .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); }
+  .statusline { margin-top: 9px; min-height: 16px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 12px; }
+  .statusline .msg { min-width: 0; flex: 1; }
+  /* 分页 + 导出: 同行最右 */
+  .resbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+  .pager { display: inline-flex; align-items: center; gap: 2px; }
+  .pgbtn {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    background: transparent; border: 1px solid var(--line); border-radius: 6px; color: var(--muted);
+    cursor: pointer; transition: all .12s; font-size: 11px;
+  }
+  .pgbtn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+  .pgbtn:disabled { opacity: .35; cursor: default; }
+  .pgn { font: 600 11.5px var(--mono); color: var(--fg); padding: 0 6px; white-space: nowrap; }
+  .expbtn {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 11px;
+    background: var(--inbg); border: 1px solid var(--line); border-radius: 6px; color: var(--fg);
+    font: 600 11.5px var(--sans); cursor: pointer; transition: all .12s; white-space: nowrap;
+  }
+  .expbtn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+  .expbtn:disabled { opacity: .4; cursor: default; }
+  .expbtn :global(svg) { width: 11px; }
   .numbox:disabled { opacity: .45; cursor: not-allowed; }
   .chk input:disabled ~ span { opacity: .45; }
   /* Field 组件被禁用时统一变暗(兼容根为 input 或包裹 input 两种结构) */

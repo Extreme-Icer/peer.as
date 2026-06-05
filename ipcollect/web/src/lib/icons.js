@@ -60,4 +60,5 @@ export {
   faUsers as iUsers,
   faUser as iUser,
   faDatabase as iDb,
+  faDownload as iDownload,
 } from '@fortawesome/free-solid-svg-icons'

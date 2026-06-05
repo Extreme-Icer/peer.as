@@ -8,6 +8,13 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
 
 ## 2026-06-04
 
+- **新增：结果分页与 CSV 导出。** 路由分析的结果表（全表 / 国家 / 子网搜索）状态栏右侧新增**翻页**（上一页 / 下一页，按
+  每页条数 offset 翻）和**导出**按钮。点导出弹出浮窗，勾选要导出的列（前缀 / origin AS / AS 名称 / 国家 / 位置 / 前缀长度 /
+  观测路径数 / RPKI / IRR / MOAS 源数 / 最优路径 / 覆盖网段），把**当前搜索的全部匹配结果**导出为 UTF-8 CSV（带 BOM，Excel 直接打开不乱码）。
+  **Added: result pagination & CSV export.** The routing-analysis result table (global / country / subnet search) gains
+  **prev/next paging** (by offset) and an **Export** button on the right of the status bar. Export opens a dialog to pick columns
+  (prefix / origin AS / AS name / country / location / prefix length / path count / RPKI / IRR / MOAS / best path / sub-prefixes)
+  and downloads **all matching rows of the current search** as a UTF-8 CSV (with BOM, opens cleanly in Excel).
 - **新增：WHOIS 查询首页。** peer.as 打开即是一个搜索框，直查任意 **ASN / IP / 前缀 / 域名** 的注册信息，结果以「注册局卷宗」
   样式呈现，并标注数据所用协议（RDAP / WHOIS）；无 RDAP 的 ccTLD（如 `.de`）自动回退到传统 WHOIS。可经 `/whois/<查询>` 直达与分享。
   原「路由分析」（前缀表 / AS_PATH / 地区 / 子网等）移到侧栏切换，落地页为 `/advanced`（`peer.as/4134`、`/1.1.1.0/24` 等链接照旧）。

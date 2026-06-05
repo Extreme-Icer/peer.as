@@ -45,5 +45,9 @@ export const S = $state({
   menu: false,                // 移动端下拉菜单开关
   sortKey: 'n_paths',
   sortDir: -1,
+  // ── 结果表分页 + 导出(仅 global/country/subnet 表格模式)──
+  page: 0,                 // 0-based 当前页; 翻页按 offset=page*limit 重查。新搜索归 0。
+  more: false,             // 当前页之后是否还有更多(取 limit+1 判断)
+  exportOpen: false,       // 数据导出浮窗开关
   detailW: 42,             // 详情栏宽度 %
 })

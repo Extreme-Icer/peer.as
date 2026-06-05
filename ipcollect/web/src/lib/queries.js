@@ -35,11 +35,16 @@ export function resolveCC(v) {
 }
 
 let _timer = null
+// 当前表格搜索(global/country/subnet)的 SQL 片段缓存, 供「数据导出」无 offset、大上限地复用整套查询。
+// 仅这三种模式置之; domain/asset/空 置 null(导出按钮随之不可用)。
+let _tableQuery = null
 export function scheduleSearch(ms = 700) { clearTimeout(_timer); _timer = setTimeout(runSearch, ms) }
 export function searchNow() { clearTimeout(_timer); runSearch() }
 
-export async function runSearch() {
+export async function runSearch(keepPage = false) {
   if (!S.ready) return
+  if (!keepPage) S.page = 0          // 新搜索归首页; 翻页(gotoPage)调 runSearch(true) 保留 S.page
+  _tableQuery = null                 // 默认清空; 仅 global/country/subnet 分支重新缓存
   const f = S.filters
   // 精确框(子网/express)优先：非空即抢占，其余筛选忽略(并在 UI 禁用)。
   const probe = classifyQuery(f.ip)
@@ -122,12 +127,16 @@ export async function runSearch() {
   if (!inclLow) w.push(`n_paths >= (CASE WHEN prefix LIKE '%:%' THEN ${Math.ceil(lowCutFor(true))} ELSE ${Math.ceil(lowCutFor(false))} END)`)
   const bestExpr = pq.sqlBest('best_path')
   const order = (bestExpr ? `(${bestExpr}) DESC, ` : '') + 'n_paths DESC'
-  const sql = `SELECT ${cols} FROM ${fromExpr} ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${order} LIMIT ${limit + 1}`
+  const where = w.length ? w.join(' AND ') : ''
+  const off = (S.page || 0) * limit
+  const sql = `SELECT ${cols} FROM ${fromExpr} ${where ? 'WHERE ' + where : ''} ORDER BY ${order} LIMIT ${limit + 1}${off ? ` OFFSET ${off}` : ''}`
+  _tableQuery = { src: fromExpr, where, cols, order, cc: cc || '' }   // 供导出复用
 
   S.msg = (isGlobal && hasPath) ? t('searching_global') : t('querying')
   let rows
   try { rows = await q(sql) } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
+  S.more = more
   rows.forEach(r => { r._best = !!(pq.hasInclude && pq.testStr(r.best_path)) })
   rows.sort((a, b) => (pq.hasInclude ? (b._best ? 1 : 0) - (a._best ? 1 : 0) : 0) || cmpBy('n_paths', -1, a, b))
   S.rows = rows
@@ -177,12 +186,14 @@ async function runSubnet(r, f) {
   let rows
   try {
     const statSel = (S.meta?.has_rpki ? 'rpki, ' : '') + (S.meta?.has_irr ? 'irr, ' : '')
-    rows = await q(`SELECT pid, prefix, plen, cc, city, origin_asn, ${statSel}n_origins, n_paths
-      FROM ${src} WHERE ${w.join(' AND ')}
-      ORDER BY plen DESC, ip_start LIMIT ${limit + 1}`)
+    const subCols = `pid, prefix, plen, cc, city, origin_asn, ${statSel}n_origins, n_paths`
+    const subWhere = w.join(' AND '), subOrder = 'plen DESC, ip_start'
+    const off = (S.page || 0) * limit
+    rows = await q(`SELECT ${subCols} FROM ${src} WHERE ${subWhere} ORDER BY ${subOrder} LIMIT ${limit + 1}${off ? ` OFFSET ${off}` : ''}`)
+    _tableQuery = { src, where: subWhere, cols: subCols, order: subOrder, cc: cc || '' }   // 供导出复用
   } catch (e) { S.rows = []; S.msg = `${t('query_failed')}: ${e.message}`; return }
   const more = rows.length > limit; if (more) rows = rows.slice(0, limit)
-  S.rows = rows; S.mode = 'subnet'
+  S.rows = rows; S.mode = 'subnet'; S.more = more
   const extra = [cc && ccLabel(cc), city, !f.incllow && (S.lang === 'zh' ? '隐藏低可见' : 'low-vis hidden')].filter(Boolean).join(' · ')
   const tail = extra ? ' · ' + extra : ''
   if (!rows.length) { S.msg = `${label}${tail} · ${t('no_cover')}`; return }
@@ -212,6 +223,7 @@ async function enrichIp(ip, v6) {
 export async function runDns(domain) {
   domain = String(domain || '').toLowerCase().replace(/\.$/, '')
   if (!domain) return
+  _tableQuery = null   // DNS 视图非表格: 禁用导出
   S.mode = 'dns'
   S.rows = []; S.selectedPid = null
   setSubjectDomain(domain)            // 设主体 + 桌面端自动开域名详情面板
@@ -254,6 +266,7 @@ function pickBestAssetSource(cands) {
 export async function runAsSet(input) {
   const key = String(input || '').trim().toUpperCase()
   if (!key) return
+  _tableQuery = null   // as-set 视图非表格: 禁用导出
   S.mode = 'asset'; S.rows = []; S.dns = null; S.selectedPid = null; S.subject = null
   closeDetailState()                       // as-set 是主内容(左), 关掉右侧子页
   S.asset = { input: key, loading: true }
@@ -612,6 +625,64 @@ export function goHome() {
   S.dns = null; S.asset = null; S.rows = []; S.msg = ''
   if (features.whoisView) { S.view = 'whois'; S.whois = { input: '', kind: null, key: null, err: '' }; go('/') }
   else { S.view = 'routing'; go('/'); ensureEngine().then(() => runSearch()).catch(() => {}) }
+}
+
+// ── 结果表分页 + 导出 ─────────────────────────────────────────────
+// 翻页: 调 runSearch(true) 保留 S.page; OFFSET=page*limit 重查(复用整套搜索逻辑与 _best/排序后处理)。
+export function gotoPage(delta) {
+  const cur = S.page || 0
+  const np = Math.max(0, cur + delta)
+  if (np === cur || (delta > 0 && !S.more)) return
+  S.page = np
+  runSearch(true)
+}
+export function canExport() { return !!_tableQuery && S.rows.length > 0 }
+
+// 导出列注册表: 仅列出当前 _tableQuery 真正取得的列(按 cols 串 + meta 门控)。值函数从结果行取/廉价派生(AS 名/地理)。
+function colDefs() {
+  const tq = _tableQuery || {}, has = s => (tq.cols || '').includes(s), cc = tq.cc || ''
+  return [
+    { key: 'prefix', label: t('col_prefix'), on: true, val: r => r.prefix },
+    { key: 'origin', label: t('col_origin'), on: true, val: r => r.origin_asn },
+    { key: 'origin_name', label: t('exp_origin_name'), on: true, val: r => asnName(r.origin_asn) || '' },
+    { key: 'cc', label: t('exp_cc'), on: has('cc') || !!cc, val: r => r.cc || cc || '' },
+    { key: 'loc', label: t('col_loc'), on: true, val: r => placeLabel(r.province, r.city, r.cc || cc) },
+    { key: 'plen', label: t('exp_plen'), on: has('plen'), val: r => r.plen ?? '' },
+    { key: 'n_paths', label: t('col_path'), on: true, val: r => r.n_paths ?? 0 },
+    { key: 'rpki', label: t('exp_rpki'), on: has('rpki'), val: r => r.rpki ?? '' },
+    { key: 'irr', label: t('exp_irr'), on: has('irr'), val: r => r.irr ?? '' },
+    { key: 'moas', label: t('exp_moas'), on: has('n_origins'), val: r => r.n_origins ?? '' },
+    { key: 'best', label: t('exp_best'), on: has('best_path'), val: r => (r.best_path ? parseBest(r.best_path).join(' ') : '') },
+    { key: 'segs', label: t('exp_segs'), on: has('segs'), val: r => Array.from(r.segs || []).join(' ') },
+  ].filter(c => c.on)
+}
+// 当前可导出的列(给浮窗渲染勾选框)。
+export function exportColumns() { return colDefs().map(c => ({ key: c.key, label: c.label })) }
+
+function csvEsc(v) { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v }
+function exportFilename() {
+  const d = new Date(), p = n => String(n).padStart(2, '0')
+  return `peer.as_${S.mode}_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.csv`
+}
+// 完整导出当前搜索结果为 CSV: 复用 _tableQuery, 去 offset、大上限(CAP)取全量, 取所选列。返回 {ok,n,capped}。
+const EXPORT_CAP = 100000
+export async function exportCsv(keys) {
+  if (!_tableQuery) return { ok: false }
+  const defs = colDefs().filter(c => keys.includes(c.key))
+  if (!defs.length) return { ok: false }
+  const { src, where, cols, order } = _tableQuery
+  let rows
+  try { rows = await q(`SELECT ${cols} FROM ${src} ${where ? 'WHERE ' + where : ''} ORDER BY ${order} LIMIT ${EXPORT_CAP}`) }
+  catch (e) { return { ok: false, error: e.message } }
+  const head = defs.map(c => csvEsc(c.label)).join(',')
+  const body = rows.map(r => defs.map(c => csvEsc(c.val(r))).join(',')).join('\n')
+  const csv = '﻿' + head + '\n' + body + '\n'   // BOM: Excel 正确识别 UTF-8(中文不乱码)
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a'); a.href = url; a.download = exportFilename()
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return { ok: true, n: rows.length, capped: rows.length >= EXPORT_CAP }
 }
 
 // 顶层视图切换(侧栏 / 移动菜单)。各视图保留自身 S 状态, 仅翻 S.view + 还原对应 URL(入历史栈, 可前进/后退)。

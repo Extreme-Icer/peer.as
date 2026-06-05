@@ -141,6 +141,11 @@
     `setView('routing')`、`openInRouting()`。**直开 `/whois` / 首页 `/` 不阻塞于引擎**（`onMount` 早判 URL 即切 `S.view='whois'`、`loading=false`，秒出查询壳）。
     **落地 WHOIS 时空闲静默后台预载引擎**（`onMount` 末 `requestIdleCallback → ensureEngine()`，不阻塞首屏/RDAP；之后切路由分析无感秒开；
     WHOIS 视图忽略 `S.loading` 故预载期间无感）。`fatal` 已挪进 store（`S.fatal`），meta 失败不再 early-return（不阻断 WHOIS 视图）。
+  - **结果表分页 + CSV 导出（仅 `global`/`country`/`subnet` 表格模式）**：`statusline`（Topbar）同行最右 = 分页器（`gotoPage(±1)` 翻页，
+    `OFFSET=page*limit` 由 `runSearch(true)` 复用整套搜索逻辑重查；新搜索 `S.page` 归 0）+ 导出按钮。`S.page`/`S.more` 在 store。
+    导出：`runSearch`/`runSubnet` 把查询片段缓存进 `_tableQuery`（`{src,where,cols,order,cc}`；domain/asset/dns 置 null → 按钮不可用），
+    `ExportModal` 经 `exportColumns()` 列出当前可导出列（按 `cols` 串 + meta 门控：前缀/origin/AS名/国家/位置/plen/路径数/RPKI/IRR/MOAS/最优路径/覆盖网段），
+    勾选后 `exportCsv(keys)` 去 offset、`LIMIT EXPORT_CAP`(10万) 取**全量**当前搜索结果，带 BOM 下载 UTF-8 CSV。值从结果行/廉价派生(AS名、placeLabel)。
   - **本地 worktree 预览数据**：`dist/data` 与 `dist/parquet` 等只在主 checkout（`ipc build` 仅拷前端壳、不动数据）。在 worktree 里
     `ipc serve` 会因缺 `/data/meta.json` 报「Unexpected token '<' … not valid JSON」。修复：`ln -s 主checkout/dist/data` 与 `…/dist/duckdb-ext`
     进 worktree 的 `dist/`（静态服务即时生效，刷新浏览器即可）。

@@ -108,6 +108,44 @@ else
   ./ipc sync-web --out dist
 fi
 
+# ── 2.5) 部署前数据完整性闸（防把空/残缺数据推上线覆盖好数据）─────────────────
+# 背景: 2026-06-05 主站炸库 —— ingest/export 在断网下失败, 但 ipc 退出码曾被吞(已修),
+#   set -e 没拦住 -> 拿空库 export -> meta.json 仍是旧版(未重写)而 parquet 全空 ->
+#   rsync --delete + wrangler 把好数据抹掉。此闸: meta.json 声明的每个 parquet 分片必须
+#   真实存在于 dist/data/parquet/, 否则中止(绝不部署), 让线上保持上一版好数据。
+gate_data(){
+  local meta="$PROJ/dist/data/meta.json"
+  [ -f "$meta" ] || { log "✗ 数据闸: dist/data/meta.json 缺失 —— 中止部署"; exit 1; }
+  local res; res="$("$PROJ/.venv/bin/python" - "$PROJ/dist" <<'PY'
+import json, os, sys
+dist = sys.argv[1]
+pq = os.path.join(dist, "data", "parquet")
+try:
+    m = json.load(open(os.path.join(dist, "data", "meta.json")))
+except Exception as e:
+    print(f"ERR meta-unreadable {e}"); raise SystemExit(0)
+checked = miss = 0
+for v in (m.get("files") or {}).values():
+    if isinstance(v, list):
+        for f in v:
+            if isinstance(f, str) and f.endswith(".parquet"):
+                checked += 1
+                if not os.path.exists(os.path.join(pq, f)):
+                    miss += 1
+print(f"OK {checked} {miss}")
+PY
+)" || { log "✗ 数据闸: 校验脚本异常 —— 中止部署"; exit 1; }
+  case "$res" in
+    "OK "*)
+      read -r _ checked miss <<<"$res"
+      if [ "${checked:-0}" = 0 ]; then log "✗ 数据闸: meta 未声明任何 parquet 分片 —— 中止部署(export 失败?)"; exit 1; fi
+      if [ "${miss:-1}" != 0 ]; then log "✗ 数据闸: meta 声明 $checked 个 parquet, 本地缺失 $miss —— 中止部署(export 残缺?)"; exit 1; fi
+      log "✓ 数据闸: $checked 个 parquet 分片齐备" ;;
+    *) log "✗ 数据闸: $res —— 中止部署"; exit 1 ;;
+  esac
+}
+gate_data
+
 # ── 3) 部署核心（唯一实现）─────────────────────────────────────────────────
 deploy_cn(){
   if [ -z "${CN_DEPLOY_SSH:-}" ]; then log "CN: 未设置 CN_DEPLOY_SSH，跳过"; return 0; fi

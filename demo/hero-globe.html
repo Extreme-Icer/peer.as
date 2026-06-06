@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>PEER.AS — hero doodle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* —— peer.as console 主题变量 (取自 src/app.css) —— */
+  :root {
+    color-scheme: light;
+    --bg: #f6f8fa; --panel: #ffffff; --line: #dce3ea; --line2: #e8edf2;
+    --fg: #10212f; --muted: #5d6b7c;
+    --accent: #0d9488; --accent-h: #0f766e; --accent-rgb: 13,148,136;
+    --signal: #d97706; --signal-rgb: 217,119,6;
+    --glass-rgb: 255,255,255;
+    --w1: #b4c1ce; --w1e: #9aa9b8;   /* PEER. 面/侧(亮主调) */
+    --w2: #dcb289; --w2e: #c79c6f;   /* AS 面/侧(低对比淡橙) */
+    --sans: system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      color-scheme: dark;
+      --bg: #0a0e15; --panel: #0d131c; --line: #1b2738; --line2: #152030;
+      --fg: #dde6f0; --muted: #7c8aa0;
+      --accent: #2dd4bf; --accent-h: #5eead4; --accent-rgb: 45,212,191;
+      --signal: #fbbf24; --signal-rgb: 251,191,36;
+      --glass-rgb: 224,242,238;
+      --w1: #455971; --w1e: #1f2c3b;     /* PEER. 面/侧(暗底上的亮主调) */
+      --w2: #b08a5e; --w2e: #4f3a23;     /* AS 面/侧(低对比淡橙) */
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html,body { margin: 0; height: 100%; }
+
+  /* —— 背景 3D 立体字 PEER.AS: 置于地球正后方, 被不透明地球遮住, 仅露出边缘 —— */
+  .bgword {
+    position: absolute; inset: 0; z-index: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; perspective: 760px;
+    transform: translateY(-38%);          /* 上移: 从地球上方/后方探出 */
+  }
+  .bgword .word {
+    font: 800 clamp(44px, 9.5vw, 118px)/1 var(--sans);
+    letter-spacing: -.04em; white-space: nowrap;
+    transform-style: preserve-3d; transform: none;   /* 字体本身不歪斜, 厚度只靠阴影 */
+    opacity: .5; user-select: none; will-change: transform;   /* 半透明, 不喧宾夺主 */
+  }
+  /* 侧面厚度: 多层等距位移阴影; 末层加一道柔和投影增强立体感 */
+  .bgword span {
+    text-shadow:
+      1px 1px 0 var(--ext), 2px 2px 0 var(--ext), 3px 3px 0 var(--ext),
+      4px 4px 0 var(--ext), 5px 5px 0 var(--ext), 6px 6px 0 var(--ext),
+      7px 7px 0 var(--ext), 8px 8px 0 var(--ext), 9px 9px 0 var(--ext),
+      14px 18px 26px rgba(0,0,0,.30);
+  }
+  .bgword .p { color: var(--w1); --ext: var(--w1e); }   /* PEER. */
+  .bgword .a { color: var(--w2); --ext: var(--w2e); }   /* AS */
+  body {
+    font-family: var(--sans); background: var(--bg); color: var(--fg);
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    /* 顶部留大量空白 —— Google doodle 的克制比例 */
+    display: flex; flex-direction: column; align-items: center;
+    padding: clamp(48px,11vh,140px) 20px 60px;
+    min-height: 100%;
+    background-image:
+      radial-gradient(1200px 520px at 50% -8%, rgba(var(--accent-rgb),.07), transparent 70%);
+  }
+
+  /* —— doodle 容器: 小尺寸, 居中, 搜索框之上 —— */
+  .doodle {
+    position: relative;
+    width: clamp(390px, 63vw, 570px);
+    height: clamp(300px, 48vw, 450px);
+    margin-bottom: 30px;
+    touch-action: none;
+  }
+  .doodle canvas { display: block; width: 100%; height: 100%; cursor: grab; position: relative; z-index: 1; }
+  .doodle canvas.hot { cursor: pointer; }
+  .doodle canvas.grabbing { cursor: grabbing; }
+
+  /* AS 名称 tooltip */
+  .tip {
+    position: absolute; left: 0; top: 0; transform: translate(-50%, -130%);
+    pointer-events: none; opacity: 0; transition: opacity .14s ease;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 5px 9px; white-space: nowrap; z-index: 5;
+    box-shadow: 0 6px 22px -10px rgba(0,0,0,.4), 0 0 0 1px rgba(var(--accent-rgb),.05);
+  }
+  .tip.on { opacity: 1; }
+  .tip .asn { font: 600 11px/1 var(--mono); color: var(--accent); letter-spacing: .02em; }
+  .tip .nm  { font: 500 11px/1.3 var(--sans); color: var(--muted); margin-top: 3px; }
+  .tip::after {
+    content: ""; position: absolute; left: 50%; bottom: -5px; width: 9px; height: 9px;
+    background: var(--panel); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    transform: translateX(-50%) rotate(45deg);
+  }
+
+  /* —— 搜索框 (mock, 仅用于展示比例与上下文) —— */
+  .brand {
+    font: 600 12px/1 var(--mono); letter-spacing: .34em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 12px; padding-left: .34em;
+  }
+  .searchwrap { width: min(560px, 90vw); }
+  .searchbox {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 13px 16px; box-shadow: 0 1px 2px rgba(0,0,0,.03), 0 8px 26px -20px rgba(0,0,0,.3);
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .searchbox:focus-within {
+    border-color: rgba(var(--accent-rgb),.6);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.14), 0 8px 26px -18px rgba(var(--accent-rgb),.5);
+  }
+  .searchbox svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+  .searchbox input {
+    flex: 1; border: 0; outline: 0; background: transparent; color: var(--fg);
+    font: 400 14px/1 var(--sans);
+  }
+  .searchbox input::placeholder { color: var(--muted); }
+  .searchbox kbd {
+    font: 500 10px/1 var(--mono); color: var(--muted);
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 3px 5px;
+  }
+  .hint { margin: 14px 2px 0; font: 400 11px/1.6 var(--mono); color: var(--muted); opacity: .8; text-align: center; }
+  .hint b { color: var(--accent); font-weight: 600; }
+
+  /* 落地 toast (点击节点的可见反馈, 替代真实跳转以便 demo) */
+  .toast {
+    position: fixed; left: 50%; bottom: 34px; transform: translate(-50%, 20px);
+    background: var(--fg); color: var(--bg); font: 500 12px/1 var(--mono); letter-spacing: .02em;
+    padding: 11px 16px; border-radius: 9px; opacity: 0; pointer-events: none;
+    transition: opacity .2s, transform .2s; z-index: 20;
+    box-shadow: 0 12px 40px -12px rgba(0,0,0,.5);
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  .toast b { color: var(--signal); }
+</style>
+</head>
+<body>
+  <div class="doodle" id="doodle">
+    <div class="bgword" aria-hidden="true"><div class="word"><span class="p">PEER.</span><span class="a">AS</span></div></div>
+    <canvas id="globe"></canvas>
+    <div class="tip" id="tip"><div class="asn"></div><div class="nm"></div></div>
+  </div>
+
+  <div class="brand">peer · as</div>
+  <div class="searchwrap">
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input placeholder="查询 ASN / IP / 前缀 / 域名 …  例如 119.121.6.1、AS4809" />
+      <kbd>↵</kbd>
+    </div>
+    <div class="hint">起点 <b>广州 · AS4809</b> 电信 CN2 · 119.121.6.1 — 悬停转动地球到任意上游 · 点击跳转</div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script src="world-land.js"></script>
+<script>
+"use strict";
+(() => {
+  // ——————————————————————————————————————————————————————————————
+  //  数据: 一段由 BGP path 反推的 AS 拓扑。坐标 = 注册地经纬度。
+  //  rel: 'self' 起点 ASN · 'route' 路由经过的 Tier-1 · 'tier1' 其余 Tier-1 底纹
+  // ——————————————————————————————————————————————————————————————
+  //  起点 = 中国地理中心 的 AS4809 (电信 CN2), 源前缀 119.121.6.1。
+  //  另 24 个为各大区 Tier-1 运营商代表性城市 → 共同构成全球 Tier-1 3D 地图。
+  const ORIGIN = { asn: 4809, name: "China Telecom CN2 · 中国地理中心", lat: 35.86, lon: 103.46, prefix: "119.121.6.1" };
+  const TIER1 = [
+    { asn: 2914,  name: "NTT / Verio · Tokyo",             lat: 35.6762, lon: 139.6503 },
+    { asn: 3491,  name: "PCCW Global · Hong Kong",         lat: 22.3193, lon: 114.1694 },
+    { asn: 7473,  name: "Singtel · Singapore",             lat: 1.3521,  lon: 103.8198 },
+    { asn: 6453,  name: "Tata / Teleglobe · Mumbai",       lat: 19.0760, lon: 72.8777  },
+    { asn: 1299,  name: "Arelion (Telia) · Stockholm",     lat: 59.3293, lon: 18.0686  },
+    { asn: 1273,  name: "Vodafone (C&W) · London",         lat: 51.5074, lon: -0.1278  },
+    { asn: 5511,  name: "Orange · Paris",                  lat: 48.8566, lon: 2.3522   },
+    { asn: 3320,  name: "Deutsche Telekom · Frankfurt",    lat: 50.1109, lon: 8.6821   },
+    { asn: 702,   name: "Verizon EU (UUNET) · Amsterdam",  lat: 52.3676, lon: 4.9041   },
+    { asn: 12956, name: "Telefónica · Madrid",             lat: 40.4168, lon: -3.7038  },
+    { asn: 6762,  name: "TI Sparkle · Palermo",            lat: 38.1157, lon: 13.3615  },
+    { asn: 3257,  name: "GTT (Tinet) · Milan",             lat: 45.4642, lon: 9.1900   },
+    { asn: 6830,  name: "Liberty Global · Vienna",         lat: 48.2082, lon: 16.3738  },
+    { asn: 701,   name: "Verizon (UUNET) · Ashburn",       lat: 39.0438, lon: -77.4874 },
+    { asn: 174,   name: "Cogent · Washington D.C.",        lat: 38.9072, lon: -77.0369 },
+    { asn: 3551,  name: "Verizon (MFS) · Boston",          lat: 42.3601, lon: -71.0589 },
+    { asn: 3549,  name: "Lumen (Global Crossing) · Miami", lat: 25.7617, lon: -80.1918 },
+    { asn: 6461,  name: "Zayo (AboveNet) · Chicago",       lat: 41.8781, lon: -87.6298 },
+    { asn: 1239,  name: "Sprint · Kansas City",            lat: 39.0997, lon: -94.5786 },
+    { asn: 7018,  name: "AT&T · Dallas",                   lat: 32.7767, lon: -96.7970 },
+    { asn: 3356,  name: "Lumen (Level 3) · Denver",        lat: 39.7392, lon: -104.9903},
+    { asn: 209,   name: "Lumen (Qwest) · Los Angeles",     lat: 34.0522, lon: -118.2437},
+    { asn: 6939,  name: "Hurricane Electric · Fremont",    lat: 37.5485, lon: -121.9886},
+    { asn: 2828,  name: "Verizon (XO) · Seattle",          lat: 47.6062, lon: -122.3321},
+  ];
+
+  // mermaid 路由图: 起点 AS4809 → 5 个一级上游(Tier-1); 一级 → 二级
+  const ROUTE = [
+    [4809,1299],[4809,2914],[4809,3320],[4809,3356],[4809,3491], // CN2 → Arelion/NTT/DTAG/Lumen/PCCW
+    [1299,6461],[1299,6830],                                       // Arelion → Zayo/Liberty Global
+    [3356,3257],                                                   // Lumen → GTT
+  ];
+  const routeSet = new Set(ROUTE.flat());
+
+  const AS = [
+    { ...ORIGIN, rel: "self" },
+    ...TIER1.map(t => ({ ...t, rel: routeSet.has(t.asn) ? "route" : "tier1" })),
+  ];
+
+  // 跳转模板: 真实站点会跳到 WHOIS 详情。demo 用 toast 反馈。
+  const NAV = (asn) => "https://peer.as/?q=AS" + asn;
+
+  // ——————————————————————————————————————————————————————————————
+  const wrap   = document.getElementById("doodle");
+  const cv     = document.getElementById("globe");
+  const ctx    = cv.getContext("2d");
+  const tipEl  = document.getElementById("tip");
+  const toastEl= document.getElementById("toast");
+  const wordEl = document.querySelector(".bgword .word");
+  const word   = { lon:0, lat:0, tlon:0, tlat:0 };   // 背景立体字"按下"视差(目标/当前)
+  window.addEventListener("mousemove", (e) => {
+    const r = wrap.getBoundingClientRect();          // 相对地球中心: 光标在哪侧, 哪侧下沉
+    word.tlon = clamp((e.clientX-(r.left+r.width/2)) / (r.width*1.5),  -0.6, 0.6);
+    word.tlat = clamp((e.clientY-(r.top +r.height/2))/ (r.height*1.5), -0.6, 0.6);
+  });
+  const css    = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const clamp  = (v,a,b) => v<a?a:v>b?b:v;
+
+  let W=0, H=0, DPR=1, R=0, cx=0, cy=0;
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = r.width; H = r.height;
+    cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    R  = Math.min(W, H) * 0.34;     // 地球半径 (留白)
+    cx = W/2; cy = H*0.5;
+  }
+  window.addEventListener("resize", resize); resize();
+
+  const D2R = Math.PI/180;
+  const LIFT = 1.02;                 // 网络层几乎贴着球面(略抬 2% 防穿模)
+  // 互联网重心在北半球中纬带 → 相机俯视北半球上空, 节点云落在画面中部, 下方少留白
+  const BASE_LAT = 44*D2R;                      // 静息俯仰: 偏北半球上空俯视
+  const SUN = { lat: 16*D2R, lon: -28*D2R };    // 固定光源(柔和日夜明暗用)
+
+  // 相机姿态: viewLon=经度(自转/拖拽), viewLat=纬度(俯仰); 初始横向对准起点经度
+  let viewLon = ORIGIN.lon*D2R, viewLat = BASE_LAT;
+
+  // 每个节点的弹簧位移状态 (屏幕像素)
+  const N = AS.map(a => ({
+    ...a, ox:0, oy:0, vx:0, vy:0,          // 风弹簧位移/速度(gust 触发)
+    sox:0, soy:0,                          // 去重 / hover 绽开位移
+    bx:0, by:0,                            // 真实基准屏幕位
+    sx:0, sy:0, depth:0, vis:1, scl:1, pres:0,  // pres: 临边渐入渐出(0=边缘,1=正面)
+  }));
+  const byAsn = {}; N.forEach(n => byAsn[n.asn] = n);
+
+  // 背景骨干网: 每个 Tier-1 连到最近的 2 个 Tier-1(大圆距离), 去重并排除路由边 → 全球网底纹
+  function gcDist(a, b) {
+    const r = Math.PI/180;
+    const dLa=(b.lat-a.lat)*r, dLo=(b.lon-a.lon)*r;
+    const h=Math.sin(dLa/2)**2 + Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLo/2)**2;
+    return Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  const MESH = (() => {
+    const out=[], seen=new Set();
+    const rk=new Set(ROUTE.map(([a,b])=>a<b?a+'_'+b:b+'_'+a));
+    for (const t of TIER1) {
+      const nn=[...TIER1].filter(o=>o.asn!==t.asn).sort((x,y)=>gcDist(t,x)-gcDist(t,y)).slice(0,2);
+      for (const o of nn) {
+        const k=t.asn<o.asn?t.asn+'_'+o.asn:o.asn+'_'+t.asn;
+        if (seen.has(k)||rk.has(k)) continue;
+        seen.add(k); out.push([t.asn, o.asn]);
+      }
+    }
+    return out;
+  })();
+
+  // —— 启动动画时间线: 从 origin 一个点, 按 BFS 次序逐跳"画出"route 连线 ——
+  const intro = { active:true, endT:0, fade:0.35, edgeMap:{} };
+  let introT = 0;
+  (function buildIntro(){
+    const START=0, GAP=0.30, DUR=0.60, STAGGER=0.16;
+    const reveal = { [ORIGIN.asn]: START };       // 各节点出现时刻
+    const remaining = ROUTE.slice();
+    let guard=0;
+    while (remaining.length && guard++<30) {
+      const ready = remaining.filter(e => reveal[e[0]]!==undefined);  // 源已出现的边
+      if (!ready.length) break;
+      const bySrc={};
+      for (const e of ready) (bySrc[e[0]]=bySrc[e[0]]||[]).push(e);
+      for (const s in bySrc) bySrc[s].forEach((e,i)=>{               // 同源的边错峰生长
+        const st = reveal[e[0]] + GAP + i*STAGGER, en = st + DUR;
+        intro.edgeMap[e[0]+'_'+e[1]] = { st, en };
+        if (reveal[e[1]]===undefined || reveal[e[1]]>en) reveal[e[1]] = en; // 目标点随边到达而出现
+      });
+      for (const e of ready) remaining.splice(remaining.indexOf(e),1);
+    }
+    const ends = Object.values(intro.edgeMap).map(e=>e.en);
+    intro.endT = (ends.length?Math.max(...ends):START) + 0.4;
+    for (const n of N) n.revealT = (reveal[n.asn]!==undefined) ? reveal[n.asn] : intro.endT;
+  })();
+
+  // —— 正交球面投影, 相机看向 (viewLat, viewLon); z>0 = 可见正面, 居中点 z=1 ——
+  function projectLL(lat, lon) {
+    const dl = lon - viewLon;
+    const cl=Math.cos(lat), sl=Math.sin(lat);
+    const cv=Math.cos(viewLat), sv=Math.sin(viewLat);
+    const cd=Math.cos(dl);
+    return {
+      x: cl*Math.sin(dl),
+      y: cv*sl - sv*cl*cd,
+      z: sv*sl + cv*cl*cd,
+    };
+  }
+  function project(a) { return projectLL(a.lat*D2R, a.lon*D2R); }
+
+  let last = performance.now();
+  let pointer = { x:-1, y:-1, inside:false };
+  let hoverIdx = -1;
+  const drag = { active:false, lx:0, ly:0, moved:0 };   // 拖拽旋转状态
+  const packets = []; let pktAcc = 0, pktAccM = 0;      // 数据包动画(route / mesh 各一个节流器)
+
+  // —— 鼠标/触摸 ——
+  function setPointer(e) {
+    const r = cv.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    if (!t) return;
+    pointer.x = t.clientX - r.left;
+    pointer.y = t.clientY - r.top;
+    pointer.inside = true;
+  }
+  cv.addEventListener("mousemove", setPointer);
+  cv.addEventListener("mouseleave", () => { pointer.inside=false; pointer.x=pointer.y=-1; });
+
+  // —— 按下拖动 → 旋转地球(地球跟手); 在 window 上监听 move/up 以便拖出画布也连续 ——
+  function dragBy(cx2, cy2) {
+    const dx = cx2 - drag.lx, dy = cy2 - drag.ly;
+    drag.lx = cx2; drag.ly = cy2;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    viewLon -= dx / R;                                   // 横向拖 → 绕经度转
+    viewLat = clamp(viewLat + dy / R, -32*D2R, 86*D2R);  // 纵向拖 → 俯仰
+  }
+  cv.addEventListener("mousedown", (e) => {
+    drag.active=true; drag.moved=0; drag.lx=e.clientX; drag.ly=e.clientY;
+    cv.classList.add("grabbing"); e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => { if (drag.active) dragBy(e.clientX, e.clientY); });
+  window.addEventListener("mouseup",   () => { if (drag.active){ drag.active=false; cv.classList.remove("grabbing"); } });
+
+  cv.addEventListener("touchstart", (e)=>{ const t=e.touches[0]; if(!t)return;
+    drag.active=true; drag.moved=0; drag.lx=t.clientX; drag.ly=t.clientY; setPointer(e); }, {passive:true});
+  cv.addEventListener("touchmove", (e)=>{ const t=e.touches[0]; if(!t)return;
+    if (drag.active) dragBy(t.clientX, t.clientY); setPointer(e); }, {passive:true});
+  cv.addEventListener("touchend", ()=>{ drag.active=false; pointer.inside=false; });
+
+  function showToast(asn) {
+    toastEl.innerHTML = "跳转 → <b>AS" + asn + "</b>  ·  " + NAV(asn).replace(/^https?:\/\//,"");
+    toastEl.classList.add("on");
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(()=>toastEl.classList.remove("on"), 1900);
+  }
+  cv.addEventListener("click", () => {
+    if (drag.moved > 6) return;            // 这是一次拖拽, 不当作点击
+    if (hoverIdx >= 0) {
+      showToast(N[hoverIdx].asn);
+      // 真实站点: location.href = NAV(N[hoverIdx].asn)
+      gust(N[hoverIdx].sx, N[hoverIdx].sy, 1.6);
+    }
+  });
+
+  // —— 阵风: 对所有节点施加一个随距离衰减的冲量, 像被风吹过 ——
+  function gust(px, py, power) {
+    for (const n of N) {
+      const dx = n.sx - px, dy = n.sy - py;
+      const d  = Math.hypot(dx, dy) + 1;
+      const f  = Math.exp(-d / (R*0.9)) * power;
+      const dir = Math.atan2(dy, dx);
+      // 主要沿径向推开 + 少量切向, 制造扰动涟漪
+      n.vx += (Math.cos(dir)*0.6 + Math.cos(dir+1.57)*0.25) * f * 90;
+      n.vy += (Math.sin(dir)*0.6 + Math.sin(dir+1.57)*0.25) * f * 90;
+    }
+  }
+
+  // —— 颜色 ——
+  function palette() {
+    return {
+      accent: css("--accent"),
+      accentRgb: css("--accent-rgb"),
+      signal: css("--signal"),
+      signalRgb: css("--signal-rgb"),
+      glassRgb: css("--glass-rgb"),
+      line: css("--line"),
+      muted: css("--muted"),
+      panel: css("--panel"),
+      isDark: matchMedia("(prefers-color-scheme: dark)").matches,
+    };
+  }
+
+  function drawGlobe(P) {
+    // 大气辉光
+    const glow = ctx.createRadialGradient(cx, cy, R*0.6, cx, cy, R*1.7);
+    glow.addColorStop(0, `rgba(${P.accentRgb},${P.isDark?.16:.10})`);
+    glow.addColorStop(1, `rgba(${P.accentRgb},0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy, R*1.7, 0, Math.PI*2); ctx.fill();
+
+    // 玻璃球体罩面: 偏左上柔和高光 → 边缘转暗(轻, 找回体积感, 不抢眼)
+    const hx = cx - R*0.34, hy = cy - R*0.42;
+    const body = ctx.createRadialGradient(hx, hy, R*0.1, cx, cy, R*1.05);
+    if (P.isDark) {
+      body.addColorStop(0,   `rgba(${P.glassRgb},.11)`);
+      body.addColorStop(0.45,`rgba(${P.glassRgb},.045)`);
+      body.addColorStop(0.85,`rgba(${P.accentRgb},.05)`);
+      body.addColorStop(1,   `rgba(${P.accentRgb},.02)`);
+    } else {
+      body.addColorStop(0,   `rgba(${P.glassRgb},.55)`);
+      body.addColorStop(0.5, `rgba(${P.glassRgb},.40)`);
+      body.addColorStop(0.86,`rgba(${P.accentRgb},.08)`);
+      body.addColorStop(1,   `rgba(${P.accentRgb},.04)`);
+    }
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.clip();
+    // 球体底色 0.9 不透明: 稍微透出背后的立体字
+    ctx.fillStyle = P.isDark ? "rgba(15,26,40,.9)" : "rgba(238,243,247,.9)";
+    ctx.fillRect(cx-R, cy-R, R*2, R*2);
+    ctx.fillStyle = body;
+    ctx.fillRect(cx-R, cy-R, R*2, R*2);
+
+    // —— 经纬线(底) + 大陆架海岸线(无国境线) ——
+    drawGraticule(P);
+    drawLand(P);
+
+    // —— 柔和日夜明暗(轻): 固定光源, 夜面略压暗, 受光侧微薄荷 ——
+    const sd = projectLL(SUN.lat, SUN.lon);
+    const slen = Math.hypot(sd.x, sd.y) || 1e-3;
+    const ux = sd.x/slen, uy = sd.y/slen;
+    const edge = 1 - Math.max(0, sd.z);
+    const bx = cx + ux*R, by = cy + uy*R;
+    const dx = cx - ux*R, dy = cy - uy*R;
+    const night = (P.isDark ? '4,14,20' : '15,42,55');
+    const nA = (P.isDark ? 0.26 : 0.14) * (0.45 + 0.55*edge);
+    const term = ctx.createLinearGradient(dx, dy, bx, by);
+    term.addColorStop(0.00, `rgba(${night},${nA})`);
+    term.addColorStop(0.45, `rgba(${night},${nA*0.40})`);
+    term.addColorStop(0.62, `rgba(0,0,0,0)`);
+    term.addColorStop(1.00, `rgba(${P.accentRgb},${P.isDark?0.06:0.05})`);
+    ctx.fillStyle = term;
+    ctx.fillRect(cx-R, cy-R, R*2, R*2);
+    ctx.restore();
+
+    // 边缘 rim light (薄荷高光弧)
+    ctx.save();
+    ctx.lineWidth = 1.4;
+    const rim = ctx.createLinearGradient(cx-R, cy-R, cx+R, cy+R);
+    rim.addColorStop(0, `rgba(${P.glassRgb},${P.isDark?.5:.9})`);
+    rim.addColorStop(0.5, `rgba(${P.accentRgb},.0)`);
+    rim.addColorStop(1, `rgba(${P.accentRgb},${P.isDark?.4:.3})`);
+    ctx.strokeStyle = rim;
+    ctx.beginPath(); ctx.arc(cx, cy, R-0.5, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+
+    // 顶部柔和高光斑(轻, 玻璃反光)
+    const spec = ctx.createRadialGradient(hx, hy, 0, hx, hy, R*0.5);
+    spec.addColorStop(0, `rgba(${P.glassRgb},${P.isDark?.10:.30})`);
+    spec.addColorStop(1, `rgba(${P.glassRgb},0)`);
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.clip();
+    ctx.fillStyle = spec; ctx.fillRect(cx-R, cy-R, R*2, R*2);
+    ctx.restore();
+  }
+
+  // 经线/纬线: 沿参数采样投影成折线, 按 z 正负分前/后面着色
+  function drawGraticule(P) {
+    const aF = (P.isDark?.15:.12), aB = (P.isDark?.05:.045);
+    for (let m=0; m<12; m++) {
+      const lon = (m/12)*Math.PI*2;
+      strokeArc(P, (lat)=>projectLL(lat, lon), -80*D2R, 80*D2R, 30, aF, aB);
+    }
+    for (let p=1; p<6; p++) {
+      const lat = (p/6)*Math.PI - Math.PI/2;
+      strokeArc(P, (lon)=>projectLL(lat, lon), -Math.PI, Math.PI, 46, aF*0.85, aB*0.85);
+    }
+  }
+  function strokeArc(P, fn, t0, t1, steps, aFront, aBack) {
+    ctx.lineWidth = 1;
+    let prev = null;
+    for (let i=0;i<=steps;i++){
+      const q = fn(t0 + (t1-t0)*i/steps);
+      const sx = cx + q.x*R, sy = cy - q.y*R, vis = q.z > 0;
+      if (prev && (prev.vis || vis)) {
+        ctx.strokeStyle = `rgba(${P.accentRgb},${(prev.vis&&vis)?aFront:aBack})`;
+        ctx.beginPath(); ctx.moveTo(prev.sx, prev.sy); ctx.lineTo(sx, sy); ctx.stroke();
+      }
+      prev = { sx, sy, vis };
+    }
+  }
+
+  // 大陆架海岸线: 仅描线(无填充/无国境线), 单 path 批量绘制, 只画正面段(z>0)
+  function drawLand(P) {
+    const L = window.WORLD_LAND;
+    if (!L) return;
+    ctx.lineWidth = 1; ctx.lineJoin = "round"; ctx.lineCap = "round";
+    ctx.strokeStyle = `rgba(${P.accentRgb},${P.isDark ? 0.40 : 0.34})`;
+    ctx.beginPath();
+    for (const ring of L) {
+      let pen = false;
+      for (let i=0;i<ring.length;i++){
+        const q = projectLL(ring[i][1]*D2R, ring[i][0]*D2R);   // ring=[lon,lat]
+        if (q.z > 0) {
+          const sx = cx + q.x*R, sy = cy - q.y*R;
+          if (pen) ctx.lineTo(sx, sy); else { ctx.moveTo(sx, sy); pen = true; }
+        } else pen = false;
+      }
+    }
+    ctx.stroke();
+  }
+
+  function nodeColor(P, rel) {
+    if (rel === "self")                                                   // 起点: 绿色(醒目但不刺眼)
+      return P.isDark ? ["52,211,153", "#34d399"] : ["5,150,105", "#059669"];
+    // 其余(route / tier1): 淡绿色; 层级再靠尺寸/透明度区分
+    return P.isDark ? ["134,231,196", "#86e7c4"] : ["95,178,140", "#5fb28c"];
+  }
+
+  // 大圆弧上参数 t(0=a,1=b)处的屏幕点(与 drawEdge 同一几何), 供数据包定位
+  function edgePointAt(a, b, t) {
+    const pa = project(a), pb = project(b);
+    const oaX=a.sx-(cx+pa.x*R*LIFT), oaY=a.sy-(cy-pa.y*R*LIFT);
+    const obX=b.sx-(cx+pb.x*R*LIFT), obY=b.sy-(cy-pb.y*R*LIFT);
+    let dot=pa.x*pb.x+pa.y*pb.y+pa.z*pb.z; dot=dot<-1?-1:dot>1?1:dot;
+    const om=Math.acos(dot), so=Math.sin(om)||1e-6;
+    const s0=Math.sin((1-t)*om)/so, s1=Math.sin(t*om)/so;
+    const vx=pa.x*s0+pb.x*s1, vy=pa.y*s0+pb.y*s1, vz=pa.z*s0+pb.z*s1;
+    return { sx:cx+vx*R*LIFT + oaX+(obX-oaX)*t, sy:cy-vy*R*LIFT + oaY+(obY-oaY)*t, vz };
+  }
+
+  // 一条边: 沿球面大圆弧采样(slerp 两端相机系单位向量) → 贴合地球曲率; 端点对齐位移后的圆点
+  // grow(0..1): 启动动画时只画到弧线的 grow 处, 形成"从源端生长"的效果
+  function drawEdge(a, b, P, kind, grow=1) {
+    if (!a || !b || (!a.vis && !b.vis)) return;
+    const pa = project(a), pb = project(b);          // 两端真实方向(相机系单位向量)
+    // 端点真实屏幕位 → 与"去重/风"位移后圆点的偏移, 沿弧线线性插值使两头精确相接
+    const taX=cx+pa.x*R*LIFT, taY=cy-pa.y*R*LIFT;
+    const tbX=cx+pb.x*R*LIFT, tbY=cy-pb.y*R*LIFT;
+    const oaX=a.sx-taX, oaY=a.sy-taY, obX=b.sx-tbX, obY=b.sy-tbY;
+
+    let dot = pa.x*pb.x + pa.y*pb.y + pa.z*pb.z;
+    dot = dot<-1?-1:dot>1?1:dot;
+    const om = Math.acos(dot), so = Math.sin(om) || 1e-6;
+    const steps = Math.max(2, Math.min(28, Math.round(om/0.12)));
+
+    const z = ((a.depth*0.5+0.5) + (b.depth*0.5+0.5)) / 2;
+    const lit = hoverIdx>=0 && (N[hoverIdx].asn===a.asn || N[hoverIdx].asn===b.asn);
+    let col, w, alpha;
+    col = P.accentRgb;                          // 连线统一用默认色, hover 只加粗不变色
+    if (kind === "mesh") {
+      alpha=(0.05 + z*0.10) * (a.vis&&b.vis?1:0.30); if(lit)alpha+=0.18;
+      w = lit ? 1.6 : (0.5 + z*0.5);
+    } else {                                   // route: AS 路径
+      alpha=(0.30 + z*0.42) * (a.vis&&b.vis?1:0.40); if(lit)alpha=Math.min(1,alpha+0.22);
+      w = lit ? 3.2 : (1.2 + z*0.7);           // 被 hover 到 → 加粗
+    }
+    alpha *= 0.25 + 0.75*Math.min(a.pres, b.pres);   // 端点临边时随 presence 淡入淡出
+    ctx.strokeStyle=`rgba(${col},${alpha})`;
+    ctx.lineWidth=w; ctx.lineJoin="round"; ctx.lineCap="round";
+    ctx.beginPath();
+    let pen=false, tx=0, ty=0, hasTip=false;
+    for (let i=0;i<=steps;i++){
+      const t=(i/steps)*grow;                                    // 只画到 grow 处
+      const s0=Math.sin((1-t)*om)/so, s1=Math.sin(t*om)/so;     // 球面线性插值 → 落在大圆上
+      const vx=pa.x*s0+pb.x*s1, vy=pa.y*s0+pb.y*s1, vz=pa.z*s0+pb.z*s1;
+      if (vz <= -0.02) { pen=false; continue; }                 // 转到背面 → 断开
+      const ox=oaX+(obX-oaX)*t, oy=oaY+(obY-oaY)*t;
+      const sx=cx+vx*R*LIFT+ox, sy=cy-vy*R*LIFT+oy;
+      if (pen) ctx.lineTo(sx,sy); else { ctx.moveTo(sx,sy); pen=true; }
+      tx=sx; ty=sy; hasTip=true;
+    }
+    ctx.stroke();
+    if (grow < 0.999 && hasTip) {                                // 生长中的笔尖亮点
+      ctx.fillStyle = `rgba(255,255,255,.9)`;
+      ctx.beginPath(); ctx.arc(tx, ty, 2.0, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last)/1000); last = now;
+    const P = palette();
+
+    if (intro.active) { introT += dt; if (introT > intro.endT + 1.2) intro.active = false; }
+
+    // —— 相机: 拖拽中(事件直改 view*)/ 悬停 → 冻结便于瞄准;
+    //    完全空闲 → 从当前(被拖拽改变后的)视角继续绕自转轴旋转, 不复位俯仰 ——
+    if (!drag.active && !pointer.inside && !intro.active) {
+      viewLon += dt*0.12;
+    }
+
+    // 背景立体字: 默认正视不变形; 光标所在一侧"按下/下沉"(光标侧后退)
+    if (wordEl) {
+      word.lon += (word.tlon - word.lon)*0.07;
+      word.lat += (word.tlat - word.lat)*0.07;
+      const ry =  word.lon * 16;     // 光标偏右 → 右侧后退(下沉)
+      const rx = -word.lat * 16;     // 光标偏上 → 顶部后退(下沉)
+      wordEl.style.transform = `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg)`;
+    }
+
+    ctx.clearRect(0,0,W,H);
+    drawGlobe(P);
+
+    // —— 1) 投影 + 风弹簧 + 呼吸 → 真实基准位 (bx,by) ——
+    const K = 26, DAMP = 5.2;   // 弹簧刚度 / 阻尼 → 回弹手感
+    for (const n of N) {
+      const p = project(n);
+      n.depth = p.z;
+      n.vis   = p.z > -0.005 ? 1 : 0;     // 背面隐藏(贴面后收紧, 防背面节点透到正面)
+      n.scl   = 0.55 + (p.z*0.5 + 0.5)*0.6;
+      let pr = clamp((p.z - 0.02)/0.26, 0, 1);     // 临边 presence: 渐入渐出, 消除显隐突跳
+      n.pres = pr*pr*(3 - 2*pr);                   // smoothstep
+      n.bx = cx + p.x*R*LIFT;
+      n.by = cy - p.y*R*LIFT;
+      const ax = -K*n.ox - DAMP*n.vx, ay = -K*n.oy - DAMP*n.vy;
+      n.vx += ax*dt; n.vy += ay*dt;
+      n.ox += n.vx*dt; n.oy += n.vy*dt;
+    }
+
+    // —— 2) 去重斥力: 拥挤节点(如欧洲)平时在屏幕上互相推开, 随旋转持续松弛。
+    //    hover 时被选中点冻结为稳定靶, 并对周围其它点额外"绽开"推力 → 便于切换导航。 ——
+    const SEP = 26, PUSH = 11, PULL = 0.42, CAP = 30, BLOOM_R = 50, BLOOM_K = 2.0;
+    const relax = 1 - Math.exp(-dt*9);
+    const h = (hoverIdx>=0 && N[hoverIdx].vis) ? N[hoverIdx] : null;   // 上帧选中点
+    const hx = h ? h.bx+h.sox : 0, hy = h ? h.by+h.soy : 0;
+    for (const n of N) {
+      if (!n.vis) { n.sox -= n.sox*relax; n.soy -= n.soy*relax; continue; }
+      if (n === h) continue;                          // 冻结被 hover 的节点(不动 → 稳定靶)
+      let fx=0, fy=0;
+      const xi=n.bx+n.sox, yi=n.by+n.soy;
+      for (const m of N) {                            // 基础去重斥力(来源按 presence 渐入渐出)
+        if (m===n || !m.vis) continue;
+        const dx=xi-(m.bx+m.sox), dy=yi-(m.by+m.soy), d2=dx*dx+dy*dy;
+        if (d2 < SEP*SEP && d2 > 0.01) {
+          const d=Math.sqrt(d2), f=(SEP-d)/SEP*m.pres;
+          fx += dx/d*f; fy += dy/d*f;
+        }
+      }
+      if (h) {                                        // hover 绽开: 把周围点更用力推离被选中点
+        const dx=xi-hx, dy=yi-hy, d2=dx*dx+dy*dy;
+        if (d2 < BLOOM_R*BLOOM_R && d2 > 0.01) {
+          const d=Math.sqrt(d2), f=(BLOOM_R-d)/BLOOM_R*h.pres;
+          fx += dx/d*f*BLOOM_K; fy += dy/d*f*BLOOM_K;
+        }
+      }
+      // 自身按 presence 渐入位移; presence 低时(临边/将隐)位移平滑回零 → 显隐不抖
+      n.sox += (fx*PUSH*n.pres - n.sox*(PULL + (1-n.pres)*2.2)) * relax;
+      n.soy += (fy*PUSH*n.pres - n.soy*(PULL + (1-n.pres)*2.2)) * relax;
+      const mag=Math.hypot(n.sox,n.soy);
+      if (mag>CAP){ n.sox=n.sox/mag*CAP; n.soy=n.soy/mag*CAP; }
+    }
+
+    // —— 3) 合成最终屏幕位: 真实位 + 风弹簧(gust) + 去重/绽开位移 ——
+    for (const n of N) {
+      n.sx = n.bx + n.ox + n.sox;
+      n.sy = n.by + n.oy + n.soy;
+    }
+
+    // —— hover 命中: 取最前面、半径内的可见节点; 粘滞维持上次命中(其已收回真实位) ——
+    let hit = -1;
+    if (pointer.inside && !drag.active && !intro.active) {   // 拖拽/启动动画时不做 hover
+      for (let i=0;i<N.length;i++){
+        const n=N[i]; if(!n.vis || n.rel==="self") continue;   // origin 有常驻卡, 不参与 hover
+        const dx=n.sx-pointer.x, dy=n.sy-pointer.y, rad=7*n.scl+9;
+        if (dx*dx+dy*dy < rad*rad && (hit<0 || n.depth>N[hit].depth)) hit=i;
+      }
+      if (hit<0 && hoverIdx>=0 && N[hoverIdx].vis) {   // 粘滞: 光标仍在其当前位附近就维持
+        const n=N[hoverIdx], dx=n.sx-pointer.x, dy=n.sy-pointer.y;
+        if (dx*dx+dy*dy < 26*26) hit=hoverIdx;
+      }
+    }
+    hoverIdx = hit;
+    cv.classList.toggle("hot", hit>=0);
+
+    // —— 边: 背景骨干网(mesh, 启动末尾淡入) ——
+    const meshFade = intro.active ? clamp((introT-(intro.endT-0.4))/0.7, 0, 1) : 1;
+    if (meshFade > 0.001) {
+      ctx.globalAlpha = meshFade;
+      for (const [x,y] of MESH) drawEdge(byAsn[x], byAsn[y], P, "mesh");
+      ctx.globalAlpha = 1;
+    }
+    // —— AS 路由(route): 启动时按时间线逐跳"生长" ——
+    for (const [x,y] of ROUTE) {
+      let grow = 1;
+      if (intro.active) {
+        const tm = intro.edgeMap[x+'_'+y];
+        grow = tm ? clamp((introT - tm.st)/(tm.en - tm.st), 0, 1) : 0;
+        if (grow <= 0.001) continue;        // 还没轮到这条边
+      }
+      drawEdge(byAsn[x], byAsn[y], P, "route", grow);
+    }
+
+    // —— 数据包: origin→peer(route) 慢而少; PoP 间(mesh) 更稀疏; 只是白色小点示意 ——
+    if (!intro.active) {
+    pktAcc += dt;
+    while (pktAcc > 0.55) {                  // route: 慢、少
+      pktAcc -= 0.55;
+      const e = ROUTE[Math.floor(Math.random()*ROUTE.length)];
+      packets.push({ a:e[0], b:e[1], t:0, spd: 0.22 + Math.random()*0.16 });
+    }
+    pktAccM += dt;
+    while (pktAccM > 1.7) {                  // mesh(PoP 之间): 更低频
+      pktAccM -= 1.7;
+      const e = MESH[Math.floor(Math.random()*MESH.length)];
+      packets.push({ a:e[0], b:e[1], t:0, spd: 0.18 + Math.random()*0.14 });
+    }
+    }   // end if(!intro.active): 启动动画结束后才发包
+    for (let i=packets.length-1;i>=0;i--){
+      const pk=packets[i];
+      pk.t += pk.spd*dt;
+      if (pk.t>=1){ packets.splice(i,1); continue; }
+      const a=byAsn[pk.a], b=byAsn[pk.b];
+      if (!a||!b||(!a.vis&&!b.vis)) continue;
+      const p=edgePointAt(a,b,pk.t);
+      if (p.vz<=-0.02) continue;                       // 背面不画
+      const fade=Math.min(1, Math.min(pk.t,1-pk.t)*7); // 头尾渐隐
+      ctx.fillStyle=`rgba(255,255,255,${0.95*fade})`;  // 仅一个白点
+      ctx.beginPath(); ctx.arc(p.sx,p.sy,1.7,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle=`rgba(8,20,28,${0.20*fade})`;    // 极细描边(非光晕), 浅底也可见
+      ctx.lineWidth=0.7; ctx.stroke();
+    }
+
+    // —— 节点: 同样按深度排序 ——
+    const ni = N.map((n,i)=>({n,i})).sort((a,b)=>a.n.depth-b.n.depth);
+    for (const {n,i} of ni) {
+      if (!n.vis) continue;
+      // 启动动画: 节点在自己的 revealT 才淡入(随 grow 到达), 之前不画
+      let introA = 1;
+      if (intro.active) { introA = clamp((introT - n.revealT)/intro.fade, 0, 1); if (introA <= 0.001) continue; }
+      const [rgb, solid] = nodeColor(P, n.rel);
+      const r = (n.rel==="self"?5.6 : n.rel==="route"?4.2 : 2.9) * n.scl * (0.5 + 0.5*introA);
+      const isHot = i===hoverIdx;
+      let a = 0.45 + (n.depth*0.5+0.5)*0.55;
+      if (n.rel==="tier1") a *= 0.78;          // 底纹 Tier-1 略压暗
+      a *= n.pres * introA;                    // 临边 presence + 启动淡入
+
+      // 外环: 仅 hover 指示(无光晕; origin 不参与 hover, 已有常驻卡)
+      const isSelf = n.rel==="self";
+      if (isHot) {
+        ctx.strokeStyle=`rgba(${rgb},${0.65})`;
+        ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.arc(n.sx,n.sy,r+3.5,0,Math.PI*2); ctx.stroke();
+      }
+      // 圆点
+      ctx.fillStyle = solid;
+      ctx.globalAlpha = a;
+      ctx.beginPath(); ctx.arc(n.sx,n.sy,r,0,Math.PI*2); ctx.fill();
+      // 高光点
+      ctx.globalAlpha = a*0.9;
+      ctx.fillStyle=`rgba(${P.glassRgb},.8)`;
+      ctx.beginPath(); ctx.arc(n.sx-r*0.3,n.sy-r*0.3,r*0.32,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha = 1;
+
+      // self 节点常驻标签: POP 点正上方的两行卡片(IP / ASN+运营商)
+      if (isSelf) {
+        ctx.globalAlpha = introA;                  // 启动时随 origin 一起淡入
+        const l1 = "119.121.16.1", l2 = "AS4809 中国电信";
+        const F1 = `600 12px "IBM Plex Mono", ui-monospace, monospace`;
+        const F2 = `500 11px "IBM Plex Mono", ui-monospace, monospace`;
+        ctx.font = F1; const w1 = ctx.measureText(l1).width;
+        ctx.font = F2; const w2 = ctx.measureText(l2).width;
+        const padX=9, padY=6, gap=3, lh1=14, lh2=13;
+        const boxW = Math.max(w1,w2) + padX*2;
+        const boxH = padY*2 + lh1 + gap + lh2;
+        const tick = r + 11;                       // 点到卡片的连接竖线长度
+        const bx0 = n.sx - boxW/2, by0 = n.sy - tick - boxH;
+        // 连接竖线
+        ctx.strokeStyle=`rgba(${rgb},.55)`; ctx.lineWidth=1.2;
+        ctx.beginPath(); ctx.moveTo(n.sx, n.sy - r); ctx.lineTo(n.sx, by0+boxH); ctx.stroke();
+        // 卡片底
+        roundRect(bx0, by0, boxW, boxH, 7);
+        ctx.fillStyle = P.panel; ctx.fill();
+        ctx.strokeStyle=`rgba(${rgb},.5)`; ctx.lineWidth=1; ctx.stroke();
+        // 文本
+        ctx.textAlign="center"; ctx.textBaseline="middle";
+        ctx.font = F1; ctx.fillStyle = solid;
+        ctx.fillText(l1, n.sx, by0 + padY + lh1/2);
+        ctx.font = F2; ctx.fillStyle = P.muted;
+        ctx.fillText(l2, n.sx, by0 + padY + lh1 + gap + lh2/2);
+        ctx.textAlign="start"; ctx.textBaseline="alphabetic";
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // —— tooltip ——
+    if (hoverIdx>=0) {
+      const n=N[hoverIdx];
+      tipEl.querySelector(".asn").textContent = "AS"+n.asn;
+      tipEl.querySelector(".nm").textContent  = n.name.split(" · ")[0];  // 仅名字, 去掉城市/位置
+      tipEl.style.left = n.sx+"px";
+      tipEl.style.top  = (n.sy-6)+"px";
+      tipEl.classList.add("on");
+    } else {
+      tipEl.classList.remove("on");
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

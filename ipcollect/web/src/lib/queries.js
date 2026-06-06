@@ -219,6 +219,35 @@ async function enrichIp(ip, v6) {
   return { ip }
 }
 
+// 只读: 给定 IP/前缀, 算出其去重路径经过的 Tier-1 路由图(供首页地球 doodle "画路由图")。
+//   asns    = 路径里出现过的全部 Tier-1
+//   entries = 各路径最上游(收集器侧)的第一个 Tier-1 —— 用户起点连向它们
+//   adj     = 相邻 Tier-1 对(上游→朝前缀方向), 构成 Tier-1 间的链路结构
+// 不改 S、不切视图; 引擎未就绪 / 无覆盖则全空。失败静默退化。
+export async function routeTier1s(input) {
+  const empty = { asns: [], entries: [], adj: [], origin_asn: null, prefix: null }
+  const s = (input || '').trim()
+  if (!s) return empty
+  try { await ensureEngine() } catch (e) { return empty }   // WHOIS 首页引擎多半还没载, 先确保就绪
+  if (!S.ready) return empty
+  const v6 = s.includes(':')
+  const r = v6 ? ip6Range(s) : ip2range(s)
+  if (!r) return empty
+  let m
+  try { m = await enrichIp(s, v6) } catch (e) { return empty }
+  if (!m || m.pid == null) return { ...empty, origin_asn: m?.asn ?? null, prefix: m?.prefix ?? null }
+  let paths = []
+  try { paths = await q(`SELECT path_arr FROM ${rpList(pathsFileFor(m.pid))} WHERE pid=${m.pid}`) } catch (e) { /* ignore */ }
+  const set = new Set(), entries = new Set(), adj = new Set()
+  for (const p of paths) {
+    const t1 = Array.from(p.path_arr || []).map(Number).filter(a => isTier1(a))
+    for (const a of t1) set.add(a)
+    if (t1.length) entries.add(t1[0])
+    for (let i = 0; i < t1.length - 1; i++) if (t1[i] !== t1[i + 1]) adj.add(t1[i] + '_' + t1[i + 1])
+  }
+  return { asns: [...set], entries: [...entries], adj: [...adj].map(x => x.split('_').map(Number)), origin_asn: m.asn, prefix: m.prefix }
+}
+
 // 域名 -> DNS 解析视图。左侧主内容区(DnsView)显示记录, 右侧(桌面)自动展开域名详情面板(DomainDetail)。
 export async function runDns(domain) {
   domain = String(domain || '').toLowerCase().replace(/\.$/, '')

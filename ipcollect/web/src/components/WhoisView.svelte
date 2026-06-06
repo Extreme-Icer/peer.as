@@ -4,13 +4,38 @@
   // 数据正文复用现有 Whois.svelte(kind 'autnum'|'ip'|'domain')。解析/路由逻辑在 queries.runWhois。
   // 空状态时整列垂直居中; 一旦有结果(或错误)则顶部对齐(类 class:center)。
   import Fa from 'svelte-fa'
+  import { onMount } from 'svelte'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { runWhois, openInRouting } from '../lib/queries.js'
+  import { runWhois, openInRouting, routeTier1s, goHome } from '../lib/queries.js'
   import { features } from '../lib/site.js'
-  import { iSearch, iArrowR } from '../lib/icons.js'
+  import { regionName, asnName } from '../lib/bgp.js'
+  import { fetchTrace, ccLatLon } from '../lib/geo.js'
+  import { iSearch, iArrowR, iClose } from '../lib/icons.js'
   import MobileBar from './MobileBar.svelte'
   import Whois from './Whois.svelte'
+  import Doodle from './Doodle.svelte'
+
+  // ── 首页 3D 地球 doodle(纯装饰)──────────────────────────────────
+  // 起点 = 用户连接 IP + 国家(cloudflare trace); 只画"你自己"这条连接的路由, 加载一次。
+  // 之后切页面路径都不再改它(不重渲染); 出结果时整块淡出。点节点/卡片 = 快速查询。
+  let dgOrigin = $state(null)
+  let dgRoute = $state(null)
+  let dgRouteLoading = $state(false)
+  onMount(async () => {
+    const tr = await fetchTrace()
+    if (!tr) return
+    const c = ccLatLon(tr.cc)
+    dgOrigin = { ip: tr.ip, lat: c.lat, lon: c.lon, line1: tr.ip, line2: tr.cc ? regionName(tr.cc) : '' }
+    dgRouteLoading = true
+    try {
+      const res = await routeTier1s(tr.ip)     // 你自己 IP 的路由(引擎就绪后算一次)
+      if (res.origin_asn) { const nm = asnName(res.origin_asn) || ''; dgOrigin = { ...dgOrigin, asn: res.origin_asn, line2: 'AS' + res.origin_asn + (nm ? ' ' + nm : '') } }
+      dgRoute = res
+    } catch (e) { /* ignore */ }
+    dgRouteLoading = false
+  })
+  let dgLoading = $derived(dgRouteLoading)
 
   // 命令行输入: 本地态, 与 S.whois.input 单向同步(外部经路由/示例改 input 时回灌, 用户键入不被打断)。
   let box = $state(S.whois.input || '')
@@ -54,6 +79,8 @@
   function run(x) { S.advWhois ? openInRouting(x) : runWhois(x) }
   function submit(e) { e?.preventDefault(); run(box) }
   function pick(x) { box = x; run(x) }
+  // 清除: 清空输入并回到 WHOIS 首页(结果收起 + 地球淡入丝滑返回)
+  function clearBox() { box = ''; goHome(); inputEl?.focus() }
   function persistAdv() { try { localStorage.setItem('ipc-adv-whois', S.advWhois ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ } }
 </script>
 
@@ -61,6 +88,10 @@
   <MobileBar />
   <div class="scroll" class:center={!S.whois.kind}>
     <div class="col">
+      <div class="hero" class:gone={S.whois.kind}>
+        <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} />
+      </div>
+
       <form class="console" onsubmit={submit}>
         <span class="prompt" aria-hidden="true">▸</span>
         <input
@@ -71,6 +102,9 @@
           spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
           aria-label="WHOIS"
         />
+        {#if box}
+          <button type="button" class="clear" onclick={clearBox} aria-label="清除" title="清除"><Fa icon={iClose} /></button>
+        {/if}
         <button type="submit" class="run"><Fa icon={iSearch} /> <span>{t('wv_go')}</span></button>
       </form>
 
@@ -126,6 +160,16 @@
   .scroll.center { display: flex; flex-direction: column; justify-content: center; padding-bottom: 12vh; }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
 
+  /* 3D 地球 doodle hero: 搜索框上方, 留白克制(google doodle 比例) */
+  /* 地球只是装饰: 一旦出结果就淡出并收起(内容自然上移/向下滚动看结果) */
+  .hero {
+    width: 100%; height: clamp(240px, 36vw, 340px); max-height: 360px; margin: 0 auto 10px;
+    overflow: hidden; opacity: 1;
+    transition: opacity .45s ease, max-height .55s ease, margin-bottom .55s ease;
+  }
+  .hero.gone { opacity: 0; max-height: 0; margin-bottom: 0; pointer-events: none; }
+  @media (max-width: 820px) { .hero { height: clamp(200px, 56vw, 280px); } }
+
   /* ── 命令行输入 ── */
   .console {
     display: flex; align-items: center; gap: 10px; margin-top: 6px;
@@ -152,6 +196,16 @@
   .run:hover { filter: brightness(1.08); }
   .run:active { transform: translateY(1px); }
   .run :global(svg) { width: 13px; }
+
+  /* 清除按钮(输入框有文字时显示, 在查询按钮左侧) */
+  .clear {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; padding: 0; border-radius: 9px; cursor: pointer;
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    transition: color .12s, background .12s, border-color .12s;
+  }
+  .clear:hover { color: var(--fg); background: var(--alt); border-color: var(--line); }
+  .clear :global(svg) { width: 13px; }
 
   /* ── 类型徽标(按 data-t 着色) ── 用 sans: 中文(前缀/域名)在 mono 下难看 ── */
   .tbadge {
@@ -250,6 +304,7 @@
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
+    .clear { order: 2; }                                                              /* 与 ▸/输入同行, 在其右 */
     .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }          /* 整行换到下一行 */
     /* 卷宗: 色脊转为顶部横条 */
     .dossier { flex-direction: column; }

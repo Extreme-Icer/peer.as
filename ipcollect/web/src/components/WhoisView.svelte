@@ -255,7 +255,7 @@
 
   /* 「你的接入」探测卡片包裹层: 出结果时与 hero 同步收起(高度折叠 + 下沉淡出, 不直接消失) */
   .spwrap {
-    overflow: hidden; max-height: 360px; opacity: 1;
+    overflow: hidden; max-height: 480px; opacity: 1;     /* 折叠用上界: 桌面两栏内容远小于此 */
     transition: max-height .5s ease, opacity .4s ease, transform .5s ease, margin .5s ease;
   }
   .spwrap.gone { max-height: 0; opacity: 0; transform: translateY(16px); margin: 0; pointer-events: none; }
@@ -392,6 +392,8 @@
 
   @media (max-width: 820px) {
     .scroll { padding: 22px 12px 48px; }
+    /* 移动端「你的接入」转单栏堆叠后更高, 放宽折叠上界免得底部被裁(收起靠 .gone 的 opacity/位移淡出, 不靠精确高度) */
+    .spwrap { max-height: 1200px; }
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */

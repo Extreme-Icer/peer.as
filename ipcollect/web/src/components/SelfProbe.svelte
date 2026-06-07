@@ -32,7 +32,7 @@
     { fam: 'ip4', label: 'IPv4', accent: '#2563eb', ip: null, enriching: false, info: null, front: 0 },   // 蓝
     { fam: 'ip6', label: 'IPv6', accent: '#9333ea', ip: null, enriching: false, info: null, front: 0 },   // 紫
   ])
-  let hotCard = $state([-1, -1])            // 当前被 hover 的后方卡片 index(露出更多, 提示可切到此张)
+  let hotCard = $state([-1, -1])            // 当前被 hover 的那张背卡(露出更多, 提示可切到此张)
 
   onMount(async () => {
     const r = await probeSelfIps()
@@ -63,17 +63,14 @@
   }
   const depthOf = (i, front, n) => (i - front + n) % n      // 0=最前
 
-  // 静止层叠(后卡缩小 + 右下偏移 + 微旋转 + 渐隐)。整叠不随鼠标上浮;
-  // 只有 hover 到某张后卡露出的右下角时, 那张才"稍微"探出 + 提亮 + 抬到次高层, 示意可点切到它。
+  // 背面只显示最靠前的 1 张(depth 1); 更深的卡片藏在它正后方(透明), 轮换/切换时再淡入。
+  // hover 到这张背卡时它"稍微"探出 + 提亮, 示意可点切到它。
   function cardCss(depth, hot) {
     if (depth === 0) return `transform: none; opacity:1; z-index:30;`
-    let tx = 7 * depth, ty = 11 * depth, rot = 2.4 * depth
-    let sc = 1 - 0.06 * depth, op = depth === 1 ? 0.82 : 0.55, z = 30 - depth
-    if (hot) {
-      tx *= 1.4; ty *= 1.22; rot *= 0.7
-      sc = Math.min(0.98, sc + 0.035); op = Math.min(0.96, op + 0.22); z = 29
-    }
-    return `transform: translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg); opacity:${op}; z-index:${z};`
+    const back = depth === 1
+    let tx = 7, ty = 11, rot = 2.4, sc = 0.94, op = back ? 0.82 : 0
+    if (hot && back) { tx = 9.8; ty = 13.4; rot = 1.7; sc = 0.975; op = 0.98 }
+    return `transform: translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg); opacity:${op}; z-index:${30 - depth};`
   }
 
   function setFront(fi, ci) { fams[fi].front = ci; hotCard[fi] = -1 }
@@ -94,16 +91,16 @@
               <span class="none">{f.fam === 'ip4' ? t('sp_v4none') : t('sp_v6none')}</span></div></div></div>
         {:else}
           {@const cards = cardsOf(f)}
-          <div class="deck">
+          <div class="deck" onmouseleave={() => { hotCard[fi] = -1 }}>
             {#each cards as c, ci}
               {@const d = depthOf(ci, f.front, cards.length)}
-              <div class="card" class:front={d === 0} class:peek={d > 0} style="{cardCss(d, hotCard[fi] === ci)}"
-                   role={d > 0 ? 'button' : undefined} tabindex={d > 0 ? 0 : undefined}
-                   title={d > 0 ? t('sp_next') : undefined}
-                   onclick={() => { if (d > 0) setFront(fi, ci) }}
-                   onmouseenter={() => { if (d > 0) hotCard[fi] = ci }}
+              <div class="card" class:front={d === 0} class:peek={d === 1} style="{cardCss(d, hotCard[fi] === ci)}"
+                   role={d === 1 ? 'button' : undefined} tabindex={d === 1 ? 0 : undefined}
+                   title={d === 1 ? t('sp_next') : undefined}
+                   onclick={() => { if (d === 1) setFront(fi, ci) }}
+                   onmouseenter={() => { if (d === 1) hotCard[fi] = ci }}
                    onmouseleave={() => { if (hotCard[fi] === ci) hotCard[fi] = -1 }}
-                   onkeydown={(e) => { if (d > 0 && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setFront(fi, ci) } }}>
+                   onkeydown={(e) => { if (d === 1 && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setFront(fi, ci) } }}>
                 <div class="cbody">
                   {#if c.kind === 'id'}
                     <button class="fold" class:folded={hide[fi]} onclick={(e) => { stop(e); toggleHide(fi) }}

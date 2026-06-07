@@ -140,8 +140,9 @@
     `SelfProbe.svelte`：用 **`geo.js probeSelfIps()`**（`jsonp()` 注入 `<script>` 调 test-ipv6.com 的 `ipv4.`/`ipv6.`/`ds.` 三端点，
     无 CORS 故走 JSONP；`ds` 返回 v6 时兜底当作探到 v6 出口，覆盖本地 fakeip/代理场景）拿到 v4/v6 出口地址，
     再用 **`queries.probeIp(ip)`**（`ensureEngine` → 覆盖前缀 + 地理 `loc`(placeLabel) + origin ASN + 观测上游(各去重路径 origin 前一跳聚合) + 该前缀全部去重 `paths`）富集。
-    形态 = **左 v4 / 右 v6 两叠 card-stack**：每叠 3 张卡（① 出口=IP+前缀+geo+origin ② 上游 ③ 去重路径，按数据可用性增减），后卡缩小/旋转/右下偏移/渐隐层叠，
-    点后卡露角(`hotCard` hover 探出更多)翻到下一张(`front` 取模轮转，带回弹过渡)。去重路径卡复用 `<AsPath nav arrow onnav>`（AS 名+`›`箭头+可点；`onnav` 让首页点击走 onpick 切视图而非默认 showAsn）。
+    形态 = **左 v4 / 右 v6 两叠 card-stack**：每叠至多 3 张卡（① 出口=IP+前缀+geo+origin ② 上游 ③ 去重路径，按数据可用性增减）。
+    背面**只露最靠前 1 张**(`cardCss` 里 depth≥2 同位置但 opacity:0 藏其后)，`hotCard` hover 那张时它探出更多, 点它 `setFront` 翻到下一张(`front` 取模轮转, 带回弹过渡; 无自动轮换)。
+    去重路径卡复用 `<AsPath nav arrow onnav>`（AS 名+`›`箭头+可点；`onnav` 让首页点击走 onpick 切视图而非默认 showAsn）。
     默认栈(`ds` 命中)带 `.live` 呼吸点；每张出口卡右上角折角钮**独立隐藏 IP**（`hide=[v4,v6]`，localStorage `ipc-hide-self-ip`="v4,v6"，模糊遮挡）。
     探测/富集失败静默退化，不阻塞首页。`enrichIp` 已扩列回传 `cc/city/province`（DNS 视图无害忽略）；`AsPath` 的 `arrow` 用 `›`（RelGroup/InsightDrawer 同步）。
   - **WHOIS 兜底文本解析 = `web/src/lib/whois-labels.js`**（独立文件）：无 RDAP 的 ccTLD 经 whois-worker 取回 port-43 原文后，

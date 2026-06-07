@@ -226,7 +226,7 @@
     box-shadow: 0 16px 34px -22px rgba(0,0,0,.5);
     transition: transform .45s cubic-bezier(.16,1,.3,1), opacity .4s ease, box-shadow .3s ease;
   }
-  .card.front { cursor: default; box-shadow: 0 28px 52px -26px rgba(0,0,0,.6), 0 3px 9px rgba(0,0,0,.2); }
+  .card.front { cursor: default; box-shadow: none; }
   .card.peek { cursor: pointer; border-color: color-mix(in srgb, var(--ac) 32%, var(--line)); }
   .card.peek .cbody { pointer-events: none; }             /* 后卡整张是"翻到此张"的点击区, 内部按钮不抢点击 */
   /* 露出的右下角放一个淡淡的 › , 提示这张可点开 */

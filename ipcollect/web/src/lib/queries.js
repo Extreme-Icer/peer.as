@@ -210,11 +210,11 @@ async function enrichIp(ip, v6) {
   const lit = v6 ? (x => `'${x}'::UHUGEINT`) : (x => `${x}`)
   try {
     // 覆盖该地址的前缀里取最具体(范围最小)那一条。
-    const rows = await q(`SELECT pid, prefix, origin_asn, n_paths FROM ${src}
+    const rows = await q(`SELECT pid, prefix, origin_asn, n_paths, cc, city, province FROM ${src}
       WHERE ip_start <= ${lit(r.start)} AND ip_end >= ${lit(r.end)}
       ORDER BY (ip_end - ip_start) ASC LIMIT 1`)
     const m = rows[0]
-    if (m) return { ip, pid: m.pid, prefix: m.prefix, asn: m.origin_asn, n_paths: m.n_paths }
+    if (m) return { ip, pid: m.pid, prefix: m.prefix, asn: m.origin_asn, n_paths: m.n_paths, cc: m.cc, city: m.city, province: m.province }
   } catch (e) { /* 富集失败不影响记录展示 */ }
   return { ip }
 }
@@ -259,20 +259,29 @@ export async function probeIp(ip) {
   if (!S.ready) return { ip: s, v6 }
   let m
   try { m = await enrichIp(s, v6) } catch (e) { return { ip: s, v6 } }
+  // 地理: geo 库给到的城市级位置(国内到城市); cc='ZZ'/缺失视为无。
+  const cc = m?.cc && m.cc !== 'ZZ' ? m.cc : ''
   const out = {
     ip: s, v6,
     prefix: m?.prefix ?? null,
     origin_asn: m?.asn ?? null,
     origin_name: m?.asn != null ? asnName(m.asn) : '',
     n_paths: m?.n_paths ?? 0,
+    cc,
+    loc: cc ? placeLabel(m.province, m.city, cc) : '',
     upstreams: [],
+    paths: [],            // 该前缀的全部去重 AS_PATH(≤PATH_CAP), 供卡片堆展开看
   }
   if (m?.pid == null) return out
-  let paths = []
-  try { paths = await q(`SELECT path_arr FROM ${rpList(pathsFileFor(m.pid))} WHERE pid=${m.pid}`) } catch (e) { /* ignore */ }
+  let rows = []
+  try {
+    rows = await q(`SELECT path_arr, path_len, n_peers, is_best FROM ${rpList(pathsFileFor(m.pid))}
+      WHERE pid=${m.pid} ORDER BY is_best DESC, path_len ASC, n_peers DESC`)
+  } catch (e) { /* ignore */ }
   const up = new Map()
-  for (const p of paths) {
+  for (const p of rows) {
     const a = Array.from(p.path_arr || []).map(Number)
+    out.paths.push({ asns: a, len: Number(p.path_len) || a.length, peers: Number(p.n_peers) || 0, best: !!p.is_best })
     if (a.length < 2) continue
     const origin = a[a.length - 1]
     let i = a.length - 2

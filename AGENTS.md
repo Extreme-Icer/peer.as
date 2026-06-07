@@ -139,8 +139,11 @@
     背景全屏 3D 立体字 `PEER.AS` 在 `WhoisView` 内（鼠标视差 + 入场淡入 + 出结果淡出）。
     `SelfProbe.svelte`：用 **`geo.js probeSelfIps()`**（`jsonp()` 注入 `<script>` 调 test-ipv6.com 的 `ipv4.`/`ipv6.`/`ds.` 三端点，
     无 CORS 故走 JSONP；`ds` 返回 v6 时兜底当作探到 v6 出口，覆盖本地 fakeip/代理场景）拿到 v4/v6 出口地址，
-    再用 **`queries.probeIp(ip)`**（`ensureEngine` → 覆盖前缀 + origin ASN + 各去重路径 origin 前一跳聚合的观测上游）富集；
-    双栏（v4 窄 / v6 宽，让完整 IPv6 一行放下）+ 右上角隐藏 IP 开关（localStorage `ipc-hide-self-ip`，模糊遮挡保宽度）。探测/富集失败静默退化，不阻塞首页。
+    再用 **`queries.probeIp(ip)`**（`ensureEngine` → 覆盖前缀 + 地理 `loc`(placeLabel) + origin ASN + 观测上游(各去重路径 origin 前一跳聚合) + 该前缀全部去重 `paths`）富集。
+    形态 = **左 v4 / 右 v6 两叠 card-stack**：每叠 3 张卡（① 出口=IP+前缀+geo+origin ② 上游 ③ 去重路径，按数据可用性增减），后卡缩小/旋转/右下偏移/渐隐层叠，
+    点后卡露角(`hotCard` hover 探出更多)翻到下一张(`front` 取模轮转，带回弹过渡)。去重路径卡复用 `<AsPath nav arrow onnav>`（AS 名+`›`箭头+可点；`onnav` 让首页点击走 onpick 切视图而非默认 showAsn）。
+    默认栈(`ds` 命中)带 `.live` 呼吸点；每张出口卡右上角折角钮**独立隐藏 IP**（`hide=[v4,v6]`，localStorage `ipc-hide-self-ip`="v4,v6"，模糊遮挡）。
+    探测/富集失败静默退化，不阻塞首页。`enrichIp` 已扩列回传 `cc/city/province`（DNS 视图无害忽略）；`AsPath` 的 `arrow` 用 `›`（RelGroup/InsightDrawer 同步）。
   - **WHOIS 兜底文本解析 = `web/src/lib/whois-labels.js`**（独立文件）：无 RDAP 的 ccTLD 经 whois-worker 取回 port-43 原文后，
     把各注册局列名映射到统一规范 key。含**标签字典**（实测 + richardpenman/whois、mboot-github/WhoisDomain 两解析器的逐 TLD 字面量）
     与**多格式解析器**（inline `Label: value` · JPRS 括号 `[Label] value` · RPSL `key:` · Nominet/.it/.dk/.eu 缩进段 indented-block），

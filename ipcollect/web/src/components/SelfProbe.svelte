@@ -1,43 +1,46 @@
 <script>
-  // 首页「你的接入」自助探测卡片。
-  // 用 test-ipv6.com 的三个 JSONP 端点(ipv4./ipv6./ds.)强制 v4/v6/双栈连接, 拿到本机两个栈的出口地址,
-  // 再用库内引擎(probeIp)富集每个地址: 覆盖前缀 / origin ASN / 直接观测上游。
-  // 纯展示 + 可点击下钻(onpick → 把对象塞进首页查询框跑一次)。探测/富集失败都静默退化, 不阻塞首页。
+  // 首页「你的接入」自助探测 —— 卡片堆(card-stack)形态。
+  // 左 v4 / 右 v6 各一叠 3D 层叠卡片(后方卡片缩小/旋转/偏移/渐隐), 点卡片或翻页钮逐张翻看:
+  //   ① 接入出口(IP + 覆盖前缀 + origin) ② 观测上游 ③ 该前缀全部去重路径。
+  // 数据: geo.probeSelfIps(test-ipv6.com 三端点 JSONP 双栈探测) + queries.probeIp(库内富集, 含 paths)。
+  // 纯展示 + 可点击下钻(onpick)。探测/富集失败静默退化, 不阻塞首页。
   import { onMount } from 'svelte'
   import Fa from 'svelte-fa'
   import { t } from '../lib/i18n.js'
   import { probeSelfIps } from '../lib/geo.js'
   import { probeIp } from '../lib/queries.js'
-  import { iVisible, iLowvis } from '../lib/icons.js'
+  import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
   import AsnTag from './AsnTag.svelte'
+  import AsPath from './AsPath.svelte'
 
   let { onpick = () => {} } = $props()
 
-  // 隐藏 IP 开关(截图/隐私用): 仅遮挡出口地址本身, 富集信息照常显示。状态记忆于 localStorage。
+  // 隐藏 IP(截图/隐私): 仅遮挡出口地址, 富集照常。v4/v6 各自独立, 记忆于 localStorage("v4,v6" 两位)。
   const HIDE_KEY = 'ipc-hide-self-ip'
-  let hideIp = $state((() => { try { return localStorage.getItem(HIDE_KEY) === '1' } catch (e) { return false } })())
-  function toggleHide() {
-    hideIp = !hideIp
-    try { localStorage.setItem(HIDE_KEY, hideIp ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ }
+  let hide = $state((() => {
+    try { const s = (localStorage.getItem(HIDE_KEY) || '').split(','); return [s[0] === '1', s[1] === '1'] }
+    catch (e) { return [false, false] }
+  })())
+  function toggleHide(fi) {
+    hide[fi] = !hide[fi]
+    try { localStorage.setItem(HIDE_KEY, (hide[0] ? '1' : '0') + ',' + (hide[1] ? '1' : '0')) } catch (e) { /* 隐私模式忽略 */ }
   }
 
-  let probing = $state(true)        // JSONP 探测出口地址阶段
-  let ds = $state(null)             // 双栈端点返回的地址 = 浏览器默认优先栈
-  // 每个 family 一格: { ip, enriching, info }(info=probeIp 结果)
+  let probing = $state(true)
+  let ds = $state(null)
   let fams = $state([
-    { fam: 'ip4', label: 'IPv4', ip: null, enriching: false, info: null },
-    { fam: 'ip6', label: 'IPv6', ip: null, enriching: false, info: null },
+    { fam: 'ip4', label: 'IPv4', accent: '#2563eb', ip: null, enriching: false, info: null, front: 0 },   // 蓝
+    { fam: 'ip6', label: 'IPv6', accent: '#9333ea', ip: null, enriching: false, info: null, front: 0 },   // 紫
   ])
+  let hotCard = $state([-1, -1])            // 当前被 hover 的后方卡片 index(露出更多, 提示可切到此张)
 
   onMount(async () => {
     const r = await probeSelfIps()
     ds = r.ds
     probing = false
-    // 双栈端点返回 v6 但强制 v6 端点没回(如本地 fakeip / 代理场景), 也算探测到了 v6 出口。
-    const v6 = r.v6 || ((r.ds && r.ds.includes(':')) ? r.ds : null)
+    const v6 = r.v6 || ((r.ds && r.ds.includes(':')) ? r.ds : null)   // ds 兜底覆盖 fakeip/代理
     fams[0].ip = r.v4
     fams[1].ip = v6
-    // 对探测到的每个出口地址做库内富集(并行); 引擎首次会在内部 ensureEngine, 故可能稍慢。
     fams.forEach((f, i) => {
       if (!f.ip) return
       f.enriching = true
@@ -47,68 +50,128 @@
   })
 
   const isDefault = (ip) => ip && ds && ip === ds
+
+  // 该 family 当前可堆的卡片(按数据可用性增减)
+  function cardsOf(f) {
+    const cs = [{ kind: 'id' }]
+    const info = f.info
+    if (info && info.prefix != null) {
+      cs.push({ kind: 'up' })
+      if (info.paths && info.paths.length) cs.push({ kind: 'paths' })
+    }
+    return cs
+  }
+  const depthOf = (i, front, n) => (i - front + n) % n      // 0=最前
+
+  // 静止层叠(后卡缩小 + 右下偏移 + 微旋转 + 渐隐)。整叠不随鼠标上浮;
+  // 只有 hover 到某张后卡露出的右下角时, 那张才"稍微"探出 + 提亮 + 抬到次高层, 示意可点切到它。
+  function cardCss(depth, hot) {
+    if (depth === 0) return `transform: none; opacity:1; z-index:30;`
+    let tx = 7 * depth, ty = 11 * depth, rot = 2.4 * depth
+    let sc = 1 - 0.06 * depth, op = depth === 1 ? 0.82 : 0.55, z = 30 - depth
+    if (hot) {
+      tx *= 1.4; ty *= 1.22; rot *= 0.7
+      sc = Math.min(0.98, sc + 0.035); op = Math.min(0.96, op + 0.22); z = 29
+    }
+    return `transform: translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg); opacity:${op}; z-index:${z};`
+  }
+
+  function setFront(fi, ci) { fams[fi].front = ci; hotCard[fi] = -1 }
+  const stop = (e) => e.stopPropagation()
 </script>
 
 <section class="sp">
-  <div class="sp-head">
-    <span class="sp-title">{t('sp_title')}</span>
-    <button class="eye" class:on={hideIp} onclick={toggleHide}
-            title={hideIp ? t('sp_show') : t('sp_hide')} aria-pressed={hideIp}>
-      <Fa icon={hideIp ? iLowvis : iVisible} />
-    </button>
-  </div>
-
-  <div class="sp-rows">
-    {#each fams as f (f.fam)}
-      <div class="row" data-t={f.fam}>
-        <div class="top">
-          <span class="fam">{f.label}</span>
-
-          {#if probing}
-            <span class="ip skel">·····</span>
-          {:else if !f.ip}
-            <span class="none">{f.fam === 'ip4' ? t('sp_v4none') : t('sp_v6none')}</span>
-          {:else if hideIp}
-            <span class="ip masked">{f.ip}</span>
-            {#if isDefault(f.ip)}<span class="dtag">{t('sp_default')}</span>{/if}
-          {:else}
-            <button class="ip" onclick={() => onpick(f.ip)} title={f.ip}>{f.ip}</button>
-            {#if isDefault(f.ip)}<span class="dtag">{t('sp_default')}</span>{/if}
-          {/if}
-        </div>
-
-        {#if !probing && f.ip}
-          <div class="meta">
-            {#if f.enriching}
-              <span class="muted">{t('sp_analyzing')}</span>
-            {:else if !f.info || f.info.prefix == null}
-              <span class="muted">{f.info && f.info.origin_asn != null ? '' : t('sp_nocover')}</span>
-              {#if f.info && f.info.origin_asn != null}
-                <span class="kv"><span class="k">{t('sp_origin')}</span>
-                  <button class="lk" onclick={() => onpick('AS' + f.info.origin_asn)}><AsnTag asn={f.info.origin_asn} /></button>
-                </span>
-              {/if}
-            {:else}
-              <span class="kv"><span class="k">{t('sp_prefix')}</span>
-                <button class="lk mono" onclick={() => onpick(f.info.prefix)}>{f.info.prefix}</button>
-              </span>
-              {#if f.info.origin_asn != null}
-                <span class="kv"><span class="k">{t('sp_origin')}</span>
-                  <button class="lk" onclick={() => onpick('AS' + f.info.origin_asn)}><AsnTag asn={f.info.origin_asn} /></button>
-                </span>
-              {/if}
-              {#if f.info.upstreams?.length}
-                <span class="kv up" title={t('sp_upstream_hint')}>
-                  <span class="k">{t('sp_upstream')}</span>
-                  {#each f.info.upstreams as u}
-                    <button class="uchip" onclick={() => onpick('AS' + u.asn)}>
-                      <span class="unum">AS{u.asn}</span>{#if u.name}<span class="uname">{u.name}</span>{/if}
+  <div class="decks">
+    {#each fams as f, fi (f.fam)}
+      <div class="deckwrap" data-t={f.fam} class:off={!probing && !f.ip}
+           style="--ac:{(!probing && !f.ip) ? 'var(--muted)' : f.accent}">
+        {#if probing}
+          <div class="deck"><div class="card front" style="{cardCss(0)}">
+            <div class="cbody"><span class="eyebrow">{f.label}</span><span class="ip skel">····· ·····</span></div></div></div>
+        {:else if !f.ip}
+          <div class="deck"><div class="card front" style="{cardCss(0)}">
+            <div class="cbody"><span class="eyebrow">{f.label}</span>
+              <span class="none">{f.fam === 'ip4' ? t('sp_v4none') : t('sp_v6none')}</span></div></div></div>
+        {:else}
+          {@const cards = cardsOf(f)}
+          <div class="deck">
+            {#each cards as c, ci}
+              {@const d = depthOf(ci, f.front, cards.length)}
+              <div class="card" class:front={d === 0} class:peek={d > 0} style="{cardCss(d, hotCard[fi] === ci)}"
+                   role={d > 0 ? 'button' : undefined} tabindex={d > 0 ? 0 : undefined}
+                   title={d > 0 ? t('sp_next') : undefined}
+                   onclick={() => { if (d > 0) setFront(fi, ci) }}
+                   onmouseenter={() => { if (d > 0) hotCard[fi] = ci }}
+                   onmouseleave={() => { if (hotCard[fi] === ci) hotCard[fi] = -1 }}
+                   onkeydown={(e) => { if (d > 0 && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setFront(fi, ci) } }}>
+                <div class="cbody">
+                  {#if c.kind === 'id'}
+                    <button class="fold" class:folded={hide[fi]} onclick={(e) => { stop(e); toggleHide(fi) }}
+                            title={hide[fi] ? t('sp_show') : t('sp_hide')} aria-pressed={hide[fi]}>
+                      <Fa icon={hide[fi] ? iLowvis : iVisible} />
                     </button>
-                  {/each}
-                </span>
-              {/if}
-            {/if}
+                    <div class="idhead">
+                      <span class="eyebrow">{f.label}</span>
+                      {#if isDefault(f.ip)}<span class="live" title={t('sp_default')}></span>{/if}
+                    </div>
+                    <div class="iprow">
+                      {#if hide[fi]}
+                        <span class="ip masked">{f.ip}</span>
+                      {:else}
+                        <button class="ip" onclick={(e) => { stop(e); onpick(f.ip) }} title={f.ip}>{f.ip}</button>
+                      {/if}
+                    </div>
+                    {#if f.enriching}
+                      <span class="sub muted">{t('sp_analyzing')}</span>
+                    {:else if !f.info || f.info.prefix == null}
+                      {#if f.info && f.info.origin_asn != null}
+                        <div class="kv"><span class="k">{t('sp_origin')}</span>
+                          <button class="lk" onclick={(e) => { stop(e); onpick('AS' + f.info.origin_asn) }}><AsnTag asn={f.info.origin_asn} /></button></div>
+                      {:else}
+                        <span class="sub muted">{t('sp_nocover')}</span>
+                      {/if}
+                    {:else}
+                      <div class="kv"><span class="k">{t('sp_prefix')}</span>
+                        <button class="lk mono" onclick={(e) => { stop(e); onpick(f.info.prefix) }}>{f.info.prefix}</button></div>
+                      {#if f.info.origin_asn != null}
+                        <div class="kv"><span class="k">{t('sp_origin')}</span>
+                          <button class="lk" onclick={(e) => { stop(e); onpick('AS' + f.info.origin_asn) }}><AsnTag asn={f.info.origin_asn} /></button></div>
+                      {/if}
+                      {#if f.info.loc}
+                        <div class="loc"><Fa icon={iLoc} /><span>{f.info.loc}</span></div>
+                      {/if}
+                    {/if}
+
+                  {:else if c.kind === 'up'}
+                    <span class="eyebrow">{t('sp_upstream')}</span>
+                    {#if f.info.upstreams?.length}
+                      <div class="ups">
+                        {#each f.info.upstreams as u}
+                          <button class="uchip" onclick={(e) => { stop(e); onpick('AS' + u.asn) }}>
+                            <span class="unum">AS{u.asn}</span>{#if u.name}<span class="uname">{u.name}</span>{/if}
+                          </button>
+                        {/each}
+                      </div>
+                    {:else}
+                      <span class="sub muted">{t('sp_noup')}</span>
+                    {/if}
+
+                  {:else if c.kind === 'paths'}
+                    <span class="eyebrow">{t('sp_paths_title')} · {f.info.paths.length}{f.info.n_paths > f.info.paths.length ? '+' : ''} {t('sp_paths')}</span>
+                    <div class="plist">
+                      {#each f.info.paths as p}
+                        <div class="prow" class:isbest={p.best}>
+                          <span class="bdot" class:on={p.best} title={p.best ? t('sp_best') : ''}></span>
+                          <AsPath asns={p.asns} nav arrow onnav={(asn) => onpick('AS' + asn)} />
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
           </div>
+
         {/if}
       </div>
     {/each}
@@ -116,92 +179,125 @@
 </section>
 
 <style>
-  .sp {
-    margin: 18px 2px 0; padding: 14px 16px 15px;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-    box-shadow: 0 18px 50px -34px rgba(0,0,0,.55);
-  }
-  .sp-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-  .sp-title { font: 700 13px var(--sans); letter-spacing: .04em; color: var(--fg); }
+  /* 内边距把卡片往里收, 让卡片阴影(尤其下方/侧边)落在容器内 —— 外层 .spwrap 为折叠动画设了
+     overflow:hidden, 不留余量阴影会被硬生生切掉。这里预留四周余量。 */
+  .sp { margin: 14px 0 0; padding: 6px 26px 52px; }
 
-  /* 隐藏 IP 开关(右上角眼睛) */
-  .eye {
-    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-    width: 28px; height: 28px; padding: 0; border-radius: 8px; cursor: pointer;
-    background: transparent; color: var(--muted); border: 1px solid transparent;
-    transition: color .12s, background .12s, border-color .12s;
+  /* 出口卡头部一行: 族名 + (默认栈的)live 小点; 等高居中 → 两卡对齐 */
+  .idhead { display: flex; align-items: center; gap: 7px; padding-right: 30px; }
+  /* 默认(浏览器优先)那一栈: 一个 live 小点, 同去重路径卡的 bdot.on; 加轻微呼吸更"live" */
+  .live {
+    flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--signal);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 30%, transparent);
+    animation: livePulse 1.8s ease-in-out infinite;
   }
-  .eye:hover { color: var(--fg); background: var(--alt); border-color: var(--line); }
-  .eye.on { color: var(--accent); background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
-  .eye :global(svg) { width: 14px; }
-
-  /* 双栏: 左 v4(窄)右 v6(宽)。v4 地址短、v6 长 → 给 v6 更多宽度, 让完整 IPv6 一行放得下。
-     stretch → 两格等高; .top 预留高度 → 万一窄屏换行也不致两边错位。 */
-  .sp-rows { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 5fr); gap: 12px; align-items: stretch; }
-  .row {
-    display: flex; flex-direction: column;
-    padding: 11px 13px; border-radius: 10px;
-    background: var(--inbg); border: 1px solid var(--line);
-    border-left: 3px solid var(--tc, var(--muted));
-  }
-  /* 地址行: 预留 ~2 行高度并居中 → IPv6 换行 / IPv4 单行时两栏顶部仍对齐 */
-  .top {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
-  }
-  [data-t='ip4'] { --tc: #3b82f6; }
-  [data-t='ip6'] { --tc: #8b5cf6; }
-
-  .fam {
-    flex: 0 0 auto; font: 700 10.5px var(--sans); letter-spacing: .07em; text-transform: uppercase;
-    color: var(--tc); padding: 3px 8px; border-radius: 6px;
-    background: color-mix(in srgb, var(--tc) 13%, transparent);
-    border: 1px solid color-mix(in srgb, var(--tc) 30%, transparent);
+  @keyframes livePulse {
+    0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 30%, transparent); }
+    50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal) 7%, transparent); }
   }
 
+  /* 隐藏/显示 = 卡片右上角贴边小钮: 上/右两边直接用卡片自身的边框(本钮无边), 只有左、下两边是虚线。
+     显示态 → 平齐; 隐藏态 → 被按进去(只在左+下内侧一抹浅浅的 inset 阴影, 贴边的上/右无阴影)。
+     按下/弹回都走带回弹的过渡, 两个方向都有动画。 */
+  .fold {
+    position: absolute; top: 0; right: 0; z-index: 7;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; padding: 0; cursor: pointer; border: 0;
+    border-radius: 0 0 0 9px;            /* 只圆里侧(左下)那个角 */
+    background: transparent; color: var(--muted);
+    transition: box-shadow .32s cubic-bezier(.34, 1.56, .64, 1),
+                color .15s, border-color .15s, background .2s;
+  }
+  .fold:hover { color: var(--fg); border-color: color-mix(in srgb, var(--muted) 85%, transparent); }
+  .fold :global(svg) { width: 12px; height: 12px; }
+  /* 隐藏态: 内凹 —— 浅阴影只落在左+下内侧(inset 正 X = 左、负 Y = 下), 贴边的上/右不投 */
+  .fold.folded {
+    background: color-mix(in srgb, var(--ac) 9%, transparent);
+    box-shadow: inset 2px -2px 4px -1px rgba(0,0,0,.2);
+  }
+
+  /* 左右两叠卡片 */
+  .decks { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+  /* 一叠: deck 是层叠舞台(右/下各留出空间给后方卡片探头, 不被裁); ctl 在其下 */
+  .deck { position: relative; height: 224px; }
+  .card {
+    position: absolute; top: 0; left: 0; right: 26px; height: 150px;       /* 右留 26px 给后卡探头 */
+    display: flex; flex-direction: column; overflow: hidden; border-radius: 16px;
+    background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--bg)));
+    border: 1px solid var(--line); transform-origin: 50% 60%; will-change: transform, opacity;
+    box-shadow: 0 16px 34px -22px rgba(0,0,0,.5);
+    transition: transform .45s cubic-bezier(.16,1,.3,1), opacity .4s ease, box-shadow .3s ease;
+  }
+  .card.front { cursor: default; box-shadow: 0 28px 52px -26px rgba(0,0,0,.6), 0 3px 9px rgba(0,0,0,.2); }
+  .card.peek { cursor: pointer; border-color: color-mix(in srgb, var(--ac) 32%, var(--line)); }
+  .card.peek .cbody { pointer-events: none; }             /* 后卡整张是"翻到此张"的点击区, 内部按钮不抢点击 */
+  /* 露出的右下角放一个淡淡的 › , 提示这张可点开 */
+  .card.peek::after {
+    content: '›'; position: absolute; right: 9px; bottom: 5px; z-index: 4;
+    font: 800 15px var(--sans); line-height: 1; color: var(--ac); opacity: .55;
+    transition: opacity .2s ease, transform .2s ease;
+  }
+  .card.peek:hover::after { opacity: .95; transform: translateX(2px); }
+
+  .deckwrap.off .card { box-shadow: 0 14px 30px -24px rgba(0,0,0,.45); }
+  .cbody { flex: 1; min-height: 0; padding: 15px 17px 16px; display: flex; flex-direction: column; gap: 9px; }
+
+  .eyebrow { flex: 0 0 auto; font: 800 9px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--ac); line-height: 1; }
+
+  .iprow { word-break: break-all; line-height: 1.3; text-align: left; }
   .ip {
-    font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; word-break: break-all;
-    background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+    display: inline; font: 600 15px var(--mono); text-align: left; color: var(--fg); letter-spacing: -.01em;
+    background: none; border: 0; padding: 0; cursor: pointer;
   }
-  button.ip:hover { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-  .ip.skel { color: var(--muted); opacity: .5; letter-spacing: .2em; cursor: default; }
-  /* 隐藏态: 模糊遮挡(保持原宽度/换行 → 不影响两栏对齐), 不可选中/点击 */
+  button.ip:hover { color: var(--ac); }
+  .ip.skel { color: var(--muted); opacity: .45; letter-spacing: .22em; cursor: default; }
   .ip.masked { filter: blur(7px); user-select: none; cursor: default; opacity: .85; }
-  .none { font: 500 12.5px var(--sans); color: var(--muted); }
+  .none { font: 500 13px var(--sans); color: var(--muted); }
+  .sub { font-size: 12.5px; }
+  .muted { color: var(--muted); font-family: var(--sans); }
 
-  .dtag {
-    flex: 0 0 auto; font: 700 9.5px var(--sans); letter-spacing: .06em; text-transform: uppercase;
-    color: var(--signal); padding: 2px 7px; border-radius: 999px;
-    background: color-mix(in srgb, var(--signal) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--signal) 30%, transparent);
-  }
-
-  /* 富集明细: 前缀 / origin / 上游, 在地址行下方 */
-  .meta {
-    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px;
-    margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--line);
-  }
-  .muted { font: 500 12px var(--sans); color: var(--muted); }
-  .kv { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-  .k { font: 600 10px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-
-  .lk { background: none; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 13px var(--sans); }
+  .kv { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .k { font: 700 9px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .lk { background: none; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 13.5px var(--sans); text-align: left; }
   .lk.mono { font-family: var(--mono); font-size: 13.5px; word-break: break-all; }
   .lk:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-  /* 上游 chip: AS号 + 名称 */
-  .up { gap: 6px 8px; }
+  /* 位置(国家/地区, 国内到城市): 钉在出口卡底部 */
+  .loc { display: inline-flex; align-items: center; gap: 6px; margin-top: auto; font: 500 12px var(--sans); color: var(--muted); }
+  .loc :global(svg) { width: 11px; opacity: .85; }
+  .loc span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 上游卡 */
+  .ups { display: flex; flex-wrap: wrap; gap: 7px; align-content: flex-start; }
   .uchip {
     display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-    padding: 3px 9px; border-radius: 7px; background: var(--alt);
-    border: 1px solid var(--line); transition: border-color .12s, background .12s;
+    padding: 4px 10px; border-radius: 8px; background: var(--alt);
+    border: 1px solid var(--line); transition: border-color .12s, background .12s, transform .08s;
   }
-  .uchip:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .uchip:hover { border-color: var(--ac); background: color-mix(in srgb, var(--ac) 10%, transparent); }
+  .uchip:active { transform: translateY(1px); }
   .unum { font: 600 12px var(--mono); color: var(--fg); }
-  .uname { font: 500 11.5px var(--sans); color: var(--muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uname { font: 500 11.5px var(--sans); color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 去重路径卡: 滚动列表, 每行一条 AS_PATH */
+  .plist { flex: 1; min-height: 0; overflow-y: auto; margin: 2px -6px 0; padding: 0 6px; }
+  .plist::-webkit-scrollbar { width: 7px; }
+  .plist::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 40%, transparent); border-radius: 4px; }
+  .plist { scrollbar-width: thin; }
+  .prow {
+    display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 6px; padding: 4px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  }
+  .prow:last-child { border-bottom: 0; }
+  .prow :global(.aspath) { flex: 1; min-width: 0; line-height: 1.7; font-size: 11.5px; }
+  .bdot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; margin-top: 6px; background: transparent; }
+  .bdot.on { background: var(--signal); box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 30%, transparent); }
 
   @media (max-width: 820px) {
-    .sp-rows { grid-template-columns: 1fr; }
-    .ip { font-size: 14px; }
-    .uname { max-width: 110px; }
+    .sp { padding: 6px 16px 44px; }
+    .decks { grid-template-columns: 1fr; gap: 22px; }
+    .card { right: 22px; }
+    .ip { font-size: 16px; }
   }
 </style>

@@ -2,11 +2,12 @@
   import { pathTokens } from '../lib/bgp.js'
   import { showAsn } from '../lib/queries.js'
   // nav=true 时每个 ASN 可点击跳转到该 ASN 详情(stopPropagation 防触发外层行点击)。
-  // arrow=true 时各跳之间用 → 连接(显式表示 AS_PATH 方向: 采集点 → … → origin)。
-  let { asns, dim = false, hi = [], nav = false, arrow = false } = $props()
+  // arrow=true 时各跳之间用 › 连接(显式表示 AS_PATH 方向: 采集点 › … › origin)。
+  // onnav: 可选自定义点击处理(收 asn)。给了就用它取代默认 showAsn —— 供首页等需要先切视图的场景。
+  let { asns, dim = false, hi = [], nav = false, arrow = false, onnav = null } = $props()
   let toks = $derived(pathTokens(asns))
   let hiSet = $derived(new Set((hi || []).map(Number)))
-  const go = (e, asn) => { e.stopPropagation(); showAsn(asn) }
+  const go = (e, asn) => { e.stopPropagation(); if (onnav) onnav(asn); else showAsn(asn) }
 </script>
 
 {#snippet body(tk)}<b>{tk.asn}</b>{#if tk.name}<span class="an">({tk.nameShort})</span>{/if}{#if tk.tier1}<span class="t1" title="Tier-1">★</span>{/if}{/snippet}
@@ -17,7 +18,7 @@
       title={tk.op ? tk.op + ' · ' + tk.name : tk.name}
       onclick={(e) => go(e, tk.asn)}>{@render body(tk)}</button>{:else}<span
       class="asn {tk.cls}" class:hi={hiSet.has(tk.asn)}
-      title={tk.op ? tk.op + ' · ' + tk.name : tk.name}>{@render body(tk)}</span>{/if}{#if arrow && i < toks.length - 1}<span class="arr">→</span>{:else}{' '}{/if}{/each}
+      title={tk.op ? tk.op + ' · ' + tk.name : tk.name}>{@render body(tk)}</span>{/if}{#if arrow && i < toks.length - 1}<span class="arr">›</span>{:else}{' '}{/if}{/each}
 </code>
 
 <style>
@@ -30,5 +31,5 @@
   .asn.hi { background: var(--accent-dim); border-radius: 4px; padding: 0 3px; outline: 1px solid var(--accent); }
   .asn .an { opacity: 0.72; font-size: 0.92em; font-family: var(--sans); }
   .asn .t1 { color: var(--signal); margin-left: 1px; font-size: 0.85em; }
-  .arr { color: var(--muted); margin: 0 3px; user-select: none; }
+  .arr { color: var(--muted); opacity: .5; margin: 0 2px; font-weight: 700; user-select: none; }
 </style>

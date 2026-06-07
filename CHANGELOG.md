@@ -13,11 +13,13 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
   **Added: a 3D globe routing visualization on the home page.** The peer.as home page gains an interactive 3D globe that
   detects your connection's origin and animates the back-haul routes from you to each **Tier-1 backbone**; Tier-1 nodes on
   the globe are clickable to look them up. It fades out when a query result appears and rises back when you return home.
-- **新增：「你的接入」自助探测卡片。** 首页新增一张卡片，通过**双栈探测**显示本机的 **IPv4 / IPv6 出口地址**，
-  并自动分析每个地址的**覆盖前缀、origin AS 与观测到的上游 AS**（均可点击下钻查询）。右上角提供**隐藏 IP 开关**（记忆状态），方便截图。
-  **Added: a «Your connection» self-probe card.** The home page gains a card that **dual-stack probes** your machine's
-  **IPv4 / IPv6 egress addresses** and analyzes each one's **covering prefix, origin AS and observed upstream AS**
-  (all clickable to drill down). A **hide-IP toggle** (state remembered) in the top-right corner makes it screenshot-friendly.
+- **新增：「你的接入」自助探测卡片堆。** 首页新增左 IPv4 / 右 IPv6 两叠可翻看的 3D 卡片，通过**双栈探测**显示本机出口地址，
+  并按地址逐张展开**覆盖前缀、地理位置、origin AS、观测上游、以及该前缀的全部去重路径**（均可点击下钻查询）。
+  点后方卡片露出的小角即可翻到下一张；浏览器默认优先的那一栈带一个 live 标记；每张出口卡右上角的折角钮可**独立隐藏 IP**（记忆状态），方便截图。
+  **Added: a «Your connection» self-probe card stack.** The home page gains two flip-through 3D card decks (IPv4 left, IPv6 right)
+  that **dual-stack probe** your egress addresses and reveal, per address, the **covering prefix, location, origin AS, observed
+  upstreams, and every distinct AS_PATH of that prefix** (all clickable to drill down). Click a back card's peeking corner to flip;
+  the browser's preferred stack gets a live marker; each card's corner toggle **hides the IP independently** (remembered) for screenshots.
 
 ## 2026-06-04
 

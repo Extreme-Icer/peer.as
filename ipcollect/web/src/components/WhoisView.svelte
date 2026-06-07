@@ -392,8 +392,8 @@
 
   @media (max-width: 820px) {
     .scroll { padding: 22px 12px 48px; }
-    /* 移动端「你的接入」转单栏堆叠后更高, 放宽折叠上界免得底部被裁(收起靠 .gone 的 opacity/位移淡出, 不靠精确高度) */
-    .spwrap { max-height: 1200px; }
+    /* 移动端暂时隐藏「你的接入」卡片堆(还没想好合适的窄屏样式) */
+    .spwrap { display: none; }
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */

@@ -248,6 +248,47 @@ export async function routeTier1s(input) {
   return { asns: [...set], entries: [...entries], adj: [...adj].map(x => x.split('_').map(Number)), origin_asn: m.asn, prefix: m.prefix }
 }
 
+// 首页自助探测: 给定用户来源 IP, 算出库内覆盖前缀 / origin ASN / 直接观测上游。
+// 上游 = 各去重路径里 origin 前一跳的 AS(跳过 origin 自身的 prepend), 按经过的去重路径条数排序。
+// 引擎未就绪会先 ensureEngine; 库内无覆盖则 prefix/origin 为 null(前端按"无覆盖"展示)。失败静默退化。
+export async function probeIp(ip) {
+  const s = (ip || '').trim()
+  if (!s) return null
+  const v6 = s.includes(':')
+  try { await ensureEngine() } catch (e) { return { ip: s, v6 } }
+  if (!S.ready) return { ip: s, v6 }
+  let m
+  try { m = await enrichIp(s, v6) } catch (e) { return { ip: s, v6 } }
+  const out = {
+    ip: s, v6,
+    prefix: m?.prefix ?? null,
+    origin_asn: m?.asn ?? null,
+    origin_name: m?.asn != null ? asnName(m.asn) : '',
+    n_paths: m?.n_paths ?? 0,
+    upstreams: [],
+  }
+  if (m?.pid == null) return out
+  let paths = []
+  try { paths = await q(`SELECT path_arr FROM ${rpList(pathsFileFor(m.pid))} WHERE pid=${m.pid}`) } catch (e) { /* ignore */ }
+  const up = new Map()
+  for (const p of paths) {
+    const a = Array.from(p.path_arr || []).map(Number)
+    if (a.length < 2) continue
+    const origin = a[a.length - 1]
+    let i = a.length - 2
+    while (i >= 0 && a[i] === origin) i--      // 跳过 origin 自身 prepend
+    if (i < 0) continue
+    const u = a[i]
+    if (u === origin || Number.isNaN(u)) continue
+    up.set(u, (up.get(u) || 0) + 1)
+  }
+  out.upstreams = [...up.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, 6)
+    .map(([asn, n]) => ({ asn, name: asnName(asn), n }))
+  return out
+}
+
 // 域名 -> DNS 解析视图。左侧主内容区(DnsView)显示记录, 右侧(桌面)自动展开域名详情面板(DomainDetail)。
 export async function runDns(domain) {
   domain = String(domain || '').toLowerCase().replace(/\.$/, '')

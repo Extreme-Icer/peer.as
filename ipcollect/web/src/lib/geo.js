@@ -61,3 +61,47 @@ export function ccLatLon(cc) {
   const c = CC_CENTROID[(cc || '').toUpperCase()]
   return c ? { lat: c[0], lon: c[1] } : { lat: 20, lon: 0 }
 }
+
+// ── 用户来源 IP 双栈探测(test-ipv6.com)──────────────────────────────
+// 这些站点只提供 JSONP(?callback=)接口、无 CORS, 故用 <script> 注入回调取数。
+// 三个子域名分别强制 IPv4 / IPv6 / 双栈连接, 据此看出本机 v4/v6 各自的出口地址与默认栈偏好。
+const SELF_IP = {
+  v4: 'https://ipv4.singapore.test-ipv6.com/ip/',  // 强制走 IPv4 → 你的 v4 出口
+  v6: 'https://ipv6.singapore.test-ipv6.com/ip/',  // 强制走 IPv6 → 你的 v6 出口(无 v6 则超时失败)
+  ds: 'https://ds.singapore.test-ipv6.com/ip/',    // 双栈 → 浏览器实际优先选用的那个栈
+}
+
+// JSONP 取数: 注入 <script src=...&callback=cb>, 服务端回 cb({...})。超时/失败 resolve(null)。
+let _jsonpN = 0
+export function jsonp(url, timeout = 8000) {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') { resolve(null); return }
+    const cb = '__ipc_jsonp_' + (++_jsonpN)
+    const s = document.createElement('script')
+    let done = false
+    let tm
+    const cleanup = () => {
+      try { delete window[cb] } catch (e) { window[cb] = undefined }
+      if (s.parentNode) s.parentNode.removeChild(s)
+      clearTimeout(tm)
+    }
+    const finish = (v) => { if (done) return; done = true; cleanup(); resolve(v) }
+    window[cb] = (data) => finish(data)
+    s.onerror = () => finish(null)
+    tm = setTimeout(() => finish(null), timeout)
+    s.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb
+    document.head.appendChild(s)
+  })
+}
+
+// 并行探测 v4 / v6 / 双栈, 返回 { v4, v6, ds } —— 各为 IP 字符串(探测不到则 null)。
+// v6 探测会在无 IPv6 连通时超时(故 timeout 较短), 这是预期的(说明本机纯 v4)。
+export async function probeSelfIps() {
+  const pick = (d) => (d && typeof d.ip === 'string' && d.ip) ? d.ip : null
+  const [v4, v6, ds] = await Promise.all([
+    jsonp(SELF_IP.v4, 8000),
+    jsonp(SELF_IP.v6, 6000),
+    jsonp(SELF_IP.ds, 8000),
+  ])
+  return { v4: pick(v4), v6: pick(v6), ds: pick(ds) }
+}

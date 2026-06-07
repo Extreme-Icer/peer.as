@@ -69,7 +69,7 @@ export const STRINGS = {
     whois_open: '查看该 ASN 的 WHOIS 详情', whois_title: 'WHOIS / 注册信息（RDAP）', whois_src: '来源', whois_more: '展开', whois_none: '无注册信息',
     // ── 视图导航 + WHOIS·RDAP 独立视图 ──
     home: '回到首页', nav_views: '视图', nav_routing: '路由分析', nav_whois: '首页',
-    wv_adv: '高级搜索', wv_adv_hint: '勾选后直接进入路由分析（AS_PATH / 地区 / 子网 等高级查询），不再显示简洁 WHOIS',
+    wv_adv: '专业版', wv_adv_hint: '勾选后直接进入路由分析（AS_PATH / 地区 / 子网 等高级查询），不再显示简洁 WHOIS',
     wv_ph: '输入 ASN / IP / 前缀 / 域名…',
     wv_go: '查询', wv_examples: '试试',
     wv_root_note: '子域名 · 实际查询可注册根域名',
@@ -78,6 +78,12 @@ export const STRINGS = {
     wv_more_prefix: '查看此前缀的完整详情（路由 · RPKI · IRR）',
     wv_more_ip: '查看覆盖此 IP 的前缀',
     wv_t_asn: 'ASN', wv_t_ipv4: 'IPv4', wv_t_ipv6: 'IPv6', wv_t_cidr: '前缀', wv_t_domain: '域名', wv_t_none: '—',
+    // ── 首页「你的接入」自助探测卡片 ──
+    sp_title: '你的接入',
+    sp_probing: '正在探测…', sp_v4none: '未探测到 IPv4 出口', sp_v6none: '未探测到 IPv6 出口',
+    sp_default: '默认', sp_analyzing: '分析路由中…', sp_nocover: '库内无前缀覆盖',
+    sp_prefix: '前缀', sp_origin: 'Origin AS', sp_upstream: '观测上游', sp_upstream_hint: '路径中 origin 的前一跳（按经过路径数排序）',
+    sp_paths: '条路径', sp_hide: '隐藏 IP', sp_show: '显示 IP',
     w_handle: '标识', w_name: '名称', w_asrange: 'AS 区间', w_iprange: 'IP 区间', w_cidr: 'CIDR',
     w_iptype: '分配类型', w_parent: '母段', w_country: '国家/地区', w_status: '状态',
     w_registration: '注册时间', w_lastchanged: '最近变更', w_expiration: '到期',
@@ -159,7 +165,7 @@ export const STRINGS = {
     whois_open: 'Open WHOIS detail for this ASN', whois_title: 'WHOIS / registration (RDAP)', whois_src: 'source', whois_more: 'expand', whois_none: 'no registration data',
     // ── view nav + WHOIS·RDAP standalone view ──
     home: 'Home', nav_views: 'Views', nav_routing: 'Routing', nav_whois: 'Home',
-    wv_adv: 'Advanced', wv_adv_hint: 'Send every query straight to routing analysis (AS_PATH / region / subnet …) instead of the simple WHOIS view',
+    wv_adv: 'Pro', wv_adv_hint: 'Send every query straight to routing analysis (AS_PATH / region / subnet …) instead of the simple WHOIS view',
     wv_ph: 'Enter an ASN / IP / prefix / domain…',
     wv_go: 'Lookup', wv_examples: 'Try',
     wv_root_note: 'Subdomain · querying the registrable root',
@@ -168,6 +174,12 @@ export const STRINGS = {
     wv_more_prefix: 'View full details for this prefix (routing · RPKI · IRR)',
     wv_more_ip: 'View prefixes covering this IP',
     wv_t_asn: 'ASN', wv_t_ipv4: 'IPv4', wv_t_ipv6: 'IPv6', wv_t_cidr: 'Prefix', wv_t_domain: 'Domain', wv_t_none: '—',
+    // ── Home "Your connection" self-probe card ──
+    sp_title: 'Your connection',
+    sp_probing: 'Probing…', sp_v4none: 'No IPv4 egress detected', sp_v6none: 'No IPv6 egress detected',
+    sp_default: 'default', sp_analyzing: 'Analyzing route…', sp_nocover: 'No covering prefix in dataset',
+    sp_prefix: 'Prefix', sp_origin: 'Origin AS', sp_upstream: 'Observed upstream', sp_upstream_hint: 'Hop before origin in AS_PATH (ranked by path count)',
+    sp_paths: 'paths', sp_hide: 'Hide IP', sp_show: 'Show IP',
     w_handle: 'Handle', w_name: 'Name', w_asrange: 'AS range', w_iprange: 'IP range', w_cidr: 'CIDR',
     w_iptype: 'Type', w_parent: 'Parent', w_country: 'Country', w_status: 'Status',
     w_registration: 'Registered', w_lastchanged: 'Last changed', w_expiration: 'Expires',

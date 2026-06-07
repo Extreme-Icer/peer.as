@@ -61,9 +61,11 @@
 - (已删) `db.py`/`report.py`/`build.py` —— SQLite schema / CLI 查询渲染 / 旧 JSON 导出, 随 SQLite 退役删除。
 - **`web/`** — 前端 = **Vite + Svelte 5 项目**(不再是裸 JS)。`src/App.svelte` + `src/components/*`(Sidebar/
   Topbar/Results/InsightDrawer/PathGraph/AboutModal/AsnTag/AsPath/Field + **AsnDetail/Whois/WhoisEntity/WhoisRow**
-  + **DnsView/DomainDetail**(DNS 解析视图 + 域名详情面板))
-  + `src/lib/*`(store.svelte.js 全局 runes 状态、db.js DuckDB-WASM、queries.js 搜索/insight/**asn 视图+dns 视图+面板导航**、
-  bgp.js(含 `classifyQuery` 的 **domain** 分支 + `isDomain`)、i18n.js、icons.js Font Awesome、ui.js + **rdap.js**(RDAP 直连,
+  + **DnsView/DomainDetail**(DNS 解析视图 + 域名详情面板) + **Doodle**(首页 3D 地球 hero) + **SelfProbe**(首页「你的接入」自助探测卡片))
+  + `src/lib/*`(store.svelte.js 全局 runes 状态、db.js DuckDB-WASM、queries.js 搜索/insight/**asn 视图+dns 视图+面板导航**+
+  **probeIp**(给定 IP → 覆盖前缀/origin/观测上游, 供 SelfProbe)、
+  bgp.js(含 `classifyQuery` 的 **domain** 分支 + `isDomain`)、**geo.js**(Tier-1 城市坐标 + cloudflare trace + **jsonp/probeSelfIps** 用 test-ipv6.com 三端点双栈探测出口 IP)、
+  i18n.js、icons.js Font Awesome、ui.js + **rdap.js**(RDAP 直连,
   含 **domain** 域名查询)、**rdap-bootstrap.json**(内置 IANA asn/ipv4/ipv6/**dns** 表)、**dns.js**(DoH 解析)、
   **whois-fields.js**(字段→图标))。`web/mock/rdap/`=离线开发用真实 RDAP 样本(不进 bundle)。
   Console 暗色设计 + **系统默认字体**(勿强制自定义 web 字体, 中文会糊) + FA 图标 + teal/amber。**改完要 `npm run build`**(产出 `web/dist/`),
@@ -131,6 +133,14 @@
     `openInRouting`、不出简洁 WHOIS（开关判定只在 UI 提交层，不在 `runWhois`，免得 `/whois/x` 深链/popstate 被劫持）。**dn42 `whoisView:false`** →
     侧栏不出导航项、`/` 仍是路由空落地页、`App` 不渲染 `WhoisView`（组件仍打包，纯 no-op）；域名/ASN 注册信息照旧由详情面板 registry whois 提供。
     左上 LOGO（侧栏 + MobileBar）= `goHome()`：peeras 回 WHOIS 首页 `/`、dn42 回路由 `/`，均清详情/筛选/结果。
+  - **首页 hero：3D 地球 doodle + 「你的接入」自助探测卡片**（均仅 WHOIS 首页空状态显示，出结果随 hero 收起淡出）。
+    `Doodle.svelte`：纯装饰 3D 地球，起点 = cloudflare trace 的连接 IP+国家（`geo.js fetchTrace`/`ccLatLon`/`TIER1_GEO`），
+    用 `queries.routeTier1s` 算「你自己」这条 IP 的 Tier-1 路由图，加载一次、之后不重渲染；点节点/卡片 = 快速查询。
+    背景全屏 3D 立体字 `PEER.AS` 在 `WhoisView` 内（鼠标视差 + 入场淡入 + 出结果淡出）。
+    `SelfProbe.svelte`：用 **`geo.js probeSelfIps()`**（`jsonp()` 注入 `<script>` 调 test-ipv6.com 的 `ipv4.`/`ipv6.`/`ds.` 三端点，
+    无 CORS 故走 JSONP；`ds` 返回 v6 时兜底当作探到 v6 出口，覆盖本地 fakeip/代理场景）拿到 v4/v6 出口地址，
+    再用 **`queries.probeIp(ip)`**（`ensureEngine` → 覆盖前缀 + origin ASN + 各去重路径 origin 前一跳聚合的观测上游）富集；
+    双栏（v4 窄 / v6 宽，让完整 IPv6 一行放下）+ 右上角隐藏 IP 开关（localStorage `ipc-hide-self-ip`，模糊遮挡保宽度）。探测/富集失败静默退化，不阻塞首页。
   - **WHOIS 兜底文本解析 = `web/src/lib/whois-labels.js`**（独立文件）：无 RDAP 的 ccTLD 经 whois-worker 取回 port-43 原文后，
     把各注册局列名映射到统一规范 key。含**标签字典**（实测 + richardpenman/whois、mboot-github/WhoisDomain 两解析器的逐 TLD 字面量）
     与**多格式解析器**（inline `Label: value` · JPRS 括号 `[Label] value` · RPSL `key:` · Nominet/.it/.dk/.eu 缩进段 indented-block），

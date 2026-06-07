@@ -15,6 +15,7 @@
   import MobileBar from './MobileBar.svelte'
   import Whois from './Whois.svelte'
   import Doodle from './Doodle.svelte'
+  import SelfProbe from './SelfProbe.svelte'
 
   // ── 首页 3D 地球 doodle(纯装饰)──────────────────────────────────
   // 起点 = 用户连接 IP + 国家(cloudflare trace); 只画"你自己"这条连接的路由, 加载一次。
@@ -38,8 +39,8 @@
   let dgLoading = $derived(dgRouteLoading)
 
   // 背景全屏立体字 PEER.AS: 鼠标"按下"视差 + 入场淡入(bgShown) + 出结果淡出
-  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 100px; 移动端上移 190px
-  const wordUpFor = () => (window.innerWidth <= 820 ? -190 : -100)
+  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 150px; 移动端上移 190px
+  const wordUpFor = () => (window.innerWidth <= 820 ? -190 : -150)
   let wordUp = $state(wordUpFor())
   let wordTransform = $state(`translateY(${wordUp}px)`)
   let bgShown = $state(false)
@@ -153,6 +154,11 @@
         </div>
       {/if}
 
+      <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起) -->
+      <div class="spwrap" class:gone={S.whois.kind} class:booting>
+        <SelfProbe onpick={(qq) => pick(qq)} />
+      </div>
+
       {#if S.whois.kind}
         <section class="dossier" data-t={rec.cls}>
           <div class="spine"><span class="spine-lbl">{rec.label}</span></div>
@@ -192,7 +198,7 @@
     position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
     transition: padding-top .5s ease, padding-bottom .5s ease;
   }
-  .scroll.center { padding-top: 10vh; padding-bottom: 12vh; }
+  .scroll.center { padding-top: 4vh; padding-bottom: 12vh; }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
 
   /* ── 全屏背景 3D 立体字 PEER.AS ── 整个 view 大小, 不被裁剪; 入场淡入 / 出结果淡出 / 鼠标视差 ── */
@@ -246,6 +252,14 @@
     .hero { height: clamp(200px, 56vw, 280px); }
     .heroinner { height: clamp(200px, 56vw, 280px); }
   }
+
+  /* 「你的接入」探测卡片包裹层: 出结果时与 hero 同步收起(高度折叠 + 下沉淡出, 不直接消失) */
+  .spwrap {
+    overflow: hidden; max-height: 360px; opacity: 1;
+    transition: max-height .5s ease, opacity .4s ease, transform .5s ease, margin .5s ease;
+  }
+  .spwrap.gone { max-height: 0; opacity: 0; transform: translateY(16px); margin: 0; pointer-events: none; }
+  .spwrap.booting { transition: none; }
 
   /* ── 命令行输入 ── */
   .console {

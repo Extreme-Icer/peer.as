@@ -38,8 +38,8 @@
   let dgLoading = $derived(dgRouteLoading)
 
   // 背景全屏立体字 PEER.AS: 鼠标"按下"视差 + 入场淡入(bgShown) + 出结果淡出
-  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 100px; 移动端下移 190px(避开更靠上的搜索框)
-  const wordUpFor = () => (window.innerWidth <= 820 ? 190 : -100)
+  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 100px; 移动端上移 190px
+  const wordUpFor = () => (window.innerWidth <= 820 ? -190 : -100)
   let wordUp = $state(wordUpFor())
   let wordTransform = $state(`translateY(${wordUp}px)`)
   let bgShown = $state(false)

@@ -32,6 +32,7 @@ export function createGlobe(canvas, opts = {}) {
   const ctx = canvas.getContext('2d')
   const tipEl = opts.tip || null
   const onpick = opts.onpick || null
+  const onpointer = opts.onpointer || null    // 把 canvas 上的指针位置(client 坐标)转发出去(背景立体字视差)
   const wordEl = opts.word || null            // 背景 3D 立体字 PEER.AS(可选)
   const word = { lon: 0, lat: 0, tlon: 0, tlat: 0 }
   let wordDark = null
@@ -45,7 +46,7 @@ export function createGlobe(canvas, opts = {}) {
     W = r.width; H = r.height
     canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR)
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
-    R = Math.min(W, H) * 0.34
+    R = Math.min(W, H) * 0.30   // 球体大小; 配合更高的 hero, 辉光不被 canvas 边裁掉
     cx = W / 2; cy = H / 2
   }
   const ro = new ResizeObserver(resize); ro.observe(canvas); resize()
@@ -72,7 +73,7 @@ export function createGlobe(canvas, opts = {}) {
   const BASE_LAT = 44 * D2R, SUN = { lat: 16 * D2R, lon: -28 * D2R }, LIFT = 1.02
   let viewLon = 0, viewLat = BASE_LAT
   const cam = { tlon: 0, tlat: BASE_LAT, flying: false, flyT: 0 }   // 相机目标(切到用户位置)
-  let flewTo = null
+  let flewTo = null, rotateStarted = false   // 第一层线连好前不自转
   const angDiff = d => { d = (d + Math.PI) % (2 * Math.PI); if (d < 0) d += 2 * Math.PI; return d - Math.PI }
   const regionOf = lon => lon < -30 ? 'NA' : lon < 60 ? 'EU' : 'AP'   // 美洲 / 欧洲 / 亚太
 
@@ -154,6 +155,9 @@ export function createGlobe(canvas, opts = {}) {
     }
     const routeEnds = Object.values(intro.edgeMap).map(e => e.en)
     const routeEnd = routeEnds.length ? Math.max(...routeEnds) : 0
+    // 第一层(origin→入口 Tier-1)连完的时刻 → 之后才开始自转
+    const oEnds = ROUTE.filter(e => e[0] === 'ORIGIN').map(e => (intro.edgeMap[e[0] + '_' + e[1]] || {}).en || 0)
+    intro.firstLayerEnd = oEnds.length ? Math.max(...oEnds) : 0
     // 阶段2: 区域 mesh 在路由完成后接上
     const MGAP = 0.22, MDUR = 0.5, MSTAG = 0.07
     MESH.forEach((e, i) => { const st = routeEnd + MGAP + i * MSTAG; intro.edgeMap[e[0] + '_' + e[1]] = { st, en: st + MDUR } })
@@ -203,6 +207,8 @@ export function createGlobe(canvas, opts = {}) {
     const r = canvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e
     if (!t) return
     pointer.x = t.clientX - r.left; pointer.y = t.clientY - r.top; pointer.inside = true
+    // 指针在 canvas 上时 window 的 mousemove 仍会冒泡, 但这里再转发一次, 确保背景立体字视差不丢
+    onpointer && onpointer(t.clientX, t.clientY)
   }
   function dragBy(px, py) {
     const dx = px - drag.lx, dy = py - drag.ly; drag.lx = px; drag.ly = py
@@ -287,9 +293,9 @@ export function createGlobe(canvas, opts = {}) {
     ctx.stroke()
   }
   function drawGlobe(P) {
-    const glow = ctx.createRadialGradient(cx, cy, R * .6, cx, cy, R * 1.7)
+    const glow = ctx.createRadialGradient(cx, cy, R * .6, cx, cy, R * 1.55)
     glow.addColorStop(0, `rgba(${P.accentRgb},${P.isDark ? .16 : .10})`); glow.addColorStop(1, `rgba(${P.accentRgb},0)`)
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 1.7, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 1.55, 0, Math.PI * 2); ctx.fill()
 
     const hx = cx - R * .34, hy = cy - R * .42
     const body = ctx.createRadialGradient(hx, hy, R * .1, cx, cy, R * 1.05)
@@ -370,6 +376,8 @@ export function createGlobe(canvas, opts = {}) {
     const P = palette()
     const reveal = intro.active
     if (reveal) { introT += dt; if (introT > intro.endT + 1.2) intro.active = false }
+    // 第一层线连完后才允许自转
+    if (!rotateStarted && ROUTE.length && introT > (intro.firstLayerEnd || 0)) rotateStarted = true
 
     // 相机: 飞向用户位置 → 到位后缓慢自转(并保持在用户纬度)
     if (cam.flying) {
@@ -379,7 +387,7 @@ export function createGlobe(canvas, opts = {}) {
       cam.flyT += dt
       if (cam.flyT > 1.6) cam.flying = false
     } else if (!drag.active && !pointer.inside) {
-      viewLon += dt * .12
+      if (rotateStarted) viewLon += dt * .12        // 第一层连好前: 停转, 只保持俯仰
       viewLat += (cam.tlat - viewLat) * (1 - Math.exp(-dt * 2))
     }
 

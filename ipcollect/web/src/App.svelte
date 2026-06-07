@@ -49,13 +49,15 @@
     applyTheme(localStorage.getItem('ipc-theme') || 'auto')
     S.advWhois = localStorage.getItem('ipc-adv-whois') === '1'   // 「高级搜索」记忆态
     const qp = new URLSearchParams(location.search)
-    // peeras 首页(/, 无 ?q)与 /whois 深链 = WHOIS 视图: 尽早切过去, 首屏直接渲染查询壳(纯 RDAP, 不等引擎/数据), 不闪路由分析的加载转圈。
-    if (features.whoisView && (/^\/whois(\/|$)/.test(location.pathname) || (location.pathname === '/' && !qp.has('q')))) {
-      S.view = 'whois'; S.loading = false
-    }
     setLang(qp.get('lang') || localStorage.getItem('ipc-lang')
       || ((navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'))
     const dw = parseFloat(localStorage.getItem('ipc-detail-w')); if (dw) S.detailW = Math.min(72, Math.max(38, dw))
+
+    // peeras 首页(/, 无 ?q)与 /whois 深链 = WHOIS 视图: 不依赖引擎/meta, 立刻**同步**解析并渲染终态。
+    // 关键: 不能只切 view 而把目标留到下面 await 之后再解析 —— 否则首帧落在 WHOIS 首页(地球/立体字可见),
+    // 等 meta 拉完才 applyRoute 出详情, 会从首页"动画收起"到详情。这里同步 applyRoute, 让首帧直接就是详情/首页终态。
+    const whoisLanding = features.whoisView && (/^\/whois(\/|$)/.test(location.pathname) || (location.pathname === '/' && !qp.has('q')))
+    if (whoisLanding) { S.view = 'whois'; S.loading = false; applyRoute({ initial: true }) }
 
     // 选定数据宿主: CN 用户(/cdn-cgi/trace loc=CN)且 VPS 健康 -> cn.peer.as, 否则同源 CF。
     // wasm 同源打包(CN 完整自托管); CF 节点超 25MiB 的 wasm 回退外部 CDN(见 db.js wasmSrcs)。
@@ -75,9 +77,9 @@
     const cc0 = qp.get('cc'); if (cc0) S.filters.cc = ccLabel(cc0.toUpperCase())
     const city0 = qp.get('city'); if (city0) S.filters.city = city0
 
-    // 解析当前 URL 渲染。WHOIS 分支(setView 起始亦然)不碰引擎并置 loading=false; 路由分析分支先 await ensureEngine()
-    // (34MB DuckDB + 全量 ASN 名按需懒加载, 期间保持 loading 转圈)。前进/后退经 popstate 重渲染(PJAX)。
-    applyRoute({ initial: true })
+    // 解析当前 URL 渲染。WHOIS 落地页上面已同步解析完, 这里只处理路由分析分支(先 await ensureEngine():
+    // 34MB DuckDB + 全量 ASN 名按需懒加载, 期间保持 loading 转圈)。前进/后退经 popstate 重渲染(PJAX)。
+    if (!whoisLanding) applyRoute({ initial: true })
 
     // 落地在 WHOIS 首页时, 引擎本不会加载。空闲时**静默后台预载**(ensureEngine 幂等), 这样之后切到「路由分析」无感秒开;
     // 不阻塞首屏/RDAP, 也不影响 WHOIS 视图(其忽略 S.loading)。meta 缺失则跳过(路由本就不可用)。

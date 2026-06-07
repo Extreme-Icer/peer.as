@@ -4,11 +4,12 @@
   import { createGlobe } from '../lib/globe.js'
 
   // origin: {asn?,ip,lat,lon,line1,line2}|null ; route: {asns,entries,adj}|null ; loading: bool
-  let { origin = null, route = null, loading = false, onpick = null } = $props()
+  // onpointer: (clientX, clientY) => void —— 指针在 canvas 上时转发位置(供背景立体字视差用)
+  let { origin = null, route = null, loading = false, onpick = null, onpointer = null } = $props()
 
-  let canvasEl, tipEl, wordEl, ctrl
+  let canvasEl, tipEl, ctrl
   onMount(() => {
-    ctrl = createGlobe(canvasEl, { tip: tipEl, word: wordEl, onpick })
+    ctrl = createGlobe(canvasEl, { tip: tipEl, onpick, onpointer })
     return () => ctrl?.destroy()
   })
   // 推送 props 变化(起点 / 路由图 / 加载态)到引擎
@@ -16,7 +17,6 @@
 </script>
 
 <div class="doodle">
-  <div class="bgword" aria-hidden="true"><div class="word" bind:this={wordEl}><span class="p">PEER.</span><span class="a">AS</span></div></div>
   <canvas bind:this={canvasEl}></canvas>
   <div class="dg-tip" bind:this={tipEl}><div class="dg-asn"></div><div class="dg-nm"></div></div>
 </div>
@@ -26,27 +26,6 @@
   .doodle canvas { display: block; width: 100%; height: 100%; cursor: grab; position: relative; z-index: 1; }
   .doodle :global(canvas.hot) { cursor: pointer; }
   .doodle :global(canvas.grabbing) { cursor: grabbing; }
-
-  /* 背景 3D 立体字 PEER.AS: 地球正后方, 半透明; 颜色变量由 globe.js 按主题注入到 .word */
-  .bgword {
-    position: absolute; inset: 0; z-index: 0;
-    display: flex; align-items: center; justify-content: center;
-    pointer-events: none; perspective: 760px; transform: translateY(-30%);
-  }
-  .bgword .word {
-    font: 800 clamp(44px, 9.5vw, 118px)/1 var(--sans);
-    letter-spacing: -.04em; white-space: nowrap;
-    transform-style: preserve-3d; transform: none;
-    opacity: .62; user-select: none; will-change: transform;   /* 对比度更高 */
-  }
-  .bgword span {
-    /* 稍微平一点: 4 层浅浮雕 + 一道柔影 */
-    text-shadow:
-      1px 1px 0 var(--ext), 2px 2px 0 var(--ext), 3px 3px 0 var(--ext), 4px 4px 0 var(--ext),
-      8px 10px 18px rgba(0,0,0,.25);
-  }
-  .bgword .p { color: var(--w1); --ext: var(--w1e); }
-  .bgword .a { color: var(--w2); --ext: var(--w2e); }
 
   .dg-tip {
     position: absolute; left: 0; top: 0; transform: translate(-50%, -130%);

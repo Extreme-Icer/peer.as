@@ -37,6 +37,33 @@
   })
   let dgLoading = $derived(dgRouteLoading)
 
+  // 背景全屏立体字 PEER.AS: 鼠标"按下"视差 + 入场淡入(bgShown) + 出结果淡出
+  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 100px; 移动端下移 190px(避开更靠上的搜索框)
+  const wordUpFor = () => (window.innerWidth <= 820 ? 190 : -100)
+  let wordUp = $state(wordUpFor())
+  let wordTransform = $state(`translateY(${wordUp}px)`)
+  let bgShown = $state(false)
+  let booting = $state(true)   // 首帧禁用过渡/动画: 直接从 URL 带查询进来时 logo/地球直接隐藏, 不放动画
+  // 最近一次指针位置(client 坐标): 用于 resize 重算 wordUp 后保持视差不跳
+  let lastPx = 0, lastPy = 0
+  // 统一的立体字视差更新: 同时被 window mousemove 与 canvas 转发(onpointer)调用,
+  // 这样指针移到 canvas 上也不会丢失跟随效果。
+  function updateWord(clientX, clientY) {
+    lastPx = clientX; lastPy = clientY
+    const ox = Math.max(-0.5, Math.min(0.5, clientX / window.innerWidth - 0.5))
+    const oy = Math.max(-0.5, Math.min(0.5, clientY / window.innerHeight - 0.5))
+    wordTransform = `translateY(${wordUp}px) rotateX(${(-oy * 12).toFixed(2)}deg) rotateY(${(ox * 12).toFixed(2)}deg)`
+  }
+  onMount(() => {
+    // 两帧后再开过渡 + 触发入场(此时若带查询, 仍是 gone 态, 不会有动画)
+    requestAnimationFrame(() => requestAnimationFrame(() => { booting = false; bgShown = true }))
+    const onMove = (e) => updateWord(e.clientX, e.clientY)
+    const onResize = () => { wordUp = wordUpFor(); updateWord(lastPx, lastPy) }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('resize', onResize)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('resize', onResize) }
+  })
+
   // 命令行输入: 本地态, 与 S.whois.input 单向同步(外部经路由/示例改 input 时回灌, 用户键入不被打断)。
   let box = $state(S.whois.input || '')
   $effect(() => { box = S.whois.input || '' })
@@ -85,11 +112,15 @@
 </script>
 
 <main class="wv">
+  <!-- 全屏背景 3D 立体字: 整个 view 大小, 在内容(.scroll)之后; 入场淡入, 出结果淡出 -->
+  <div class="bgword" class:in={bgShown} class:gone={S.whois.kind} class:booting aria-hidden="true"><div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div></div>
   <MobileBar />
   <div class="scroll" class:center={!S.whois.kind}>
     <div class="col">
-      <div class="hero" class:gone={S.whois.kind}>
-        <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} />
+      <div class="hero" class:gone={S.whois.kind} class:booting>
+        <div class="heroinner">
+          <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
+        </div>
       </div>
 
       <form class="console" onsubmit={submit}>
@@ -150,25 +181,71 @@
   /* 视图配色: 暗色为运营商终端, 亮色为干净变体(沿用全局 token)。背景= 点阵网格 + 顶部 accent 辉光。 */
   .wv {
     flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh;
+    position: relative; overflow: hidden;            /* bgword 定位上下文 + 裁到 view 内 */
     background:
       radial-gradient(1100px 460px at 50% -180px, var(--accent-dim), transparent 70%),
       radial-gradient(rgba(125,200,190,.05) 1px, transparent 1px) 0 0 / 22px 22px,
       var(--bg);
   }
-  .scroll { flex: 1; overflow: auto; padding: 48px 22px 60px; }
-  /* 空状态: 整列垂直居中(视觉重心居中); 有结果后回到顶部对齐(.scroll 无 .center)。 */
-  .scroll.center { display: flex; flex-direction: column; justify-content: center; padding-bottom: 12vh; }
+  /* 用 padding-top 近似居中(可过渡), 不用 justify-content(切换不可动画 → 搜索框瞬移) */
+  .scroll {
+    position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
+    transition: padding-top .5s ease, padding-bottom .5s ease;
+  }
+  .scroll.center { padding-top: 10vh; padding-bottom: 12vh; }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
 
-  /* 3D 地球 doodle hero: 搜索框上方, 留白克制(google doodle 比例) */
-  /* 地球只是装饰: 一旦出结果就淡出并收起(内容自然上移/向下滚动看结果) */
-  .hero {
-    width: 100%; height: clamp(240px, 36vw, 340px); max-height: 360px; margin: 0 auto 10px;
-    overflow: hidden; opacity: 1;
-    transition: opacity .45s ease, max-height .55s ease, margin-bottom .55s ease;
+  /* ── 全屏背景 3D 立体字 PEER.AS ── 整个 view 大小, 不被裁剪; 入场淡入 / 出结果淡出 / 鼠标视差 ── */
+  .bgword {
+    /* 固定 100vh 高(不随内容/折叠改变 → 字不跳); 整个 view 宽 */
+    position: absolute; top: 0; left: 0; right: 0; height: 100vh; z-index: 0; pointer-events: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; perspective: 900px;
+    opacity: 0; transition: opacity .8s ease;
+    /* 浅色默认; 暗色在下方覆盖 */
+    --w1: #97a8b9; --w1e: #7e90a2; --w2: #cf9f63; --w2e: #b58a55;
   }
-  .hero.gone { opacity: 0; max-height: 0; margin-bottom: 0; pointer-events: none; }
-  @media (max-width: 820px) { .hero { height: clamp(200px, 56vw, 280px); } }
+  .bgword.in { opacity: 1; }                /* 入场淡入 */
+  .bgword.gone { opacity: 0; transition: opacity .45s ease; }   /* 出结果淡出(覆盖 .in) */
+  .bgword.booting { transition: none; }     /* 首帧不放动画(URL 直达带查询时直接隐藏) */
+  .bgword .word {
+    font: 800 clamp(72px, 15vw, 300px)/1 var(--sans);
+    letter-spacing: -.045em; white-space: nowrap;
+    transform-style: preserve-3d; opacity: .6; user-select: none; will-change: transform;
+    transition: transform .3s ease;                  /* 视差平滑(位移在 transform 内) */
+  }
+  .bgword span {
+    text-shadow:
+      1px 1px 0 var(--ext), 2px 2px 0 var(--ext), 3px 3px 0 var(--ext), 4px 4px 0 var(--ext),
+      8px 12px 22px rgba(0,0,0,.22);
+  }
+  .bgword .p { color: var(--w1); --ext: var(--w1e); }
+  .bgword .a { color: var(--w2); --ext: var(--w2e); }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme])) .bgword { --w1: #6a85a3; --w1e: #26333f; --w2: #d0a464; --w2e: #4d3a23; }
+  }
+  :global(:root[data-theme='dark']) .bgword { --w1: #6a85a3; --w1e: #26333f; --w2: #d0a464; --w2e: #4d3a23; }
+
+  /* 3D 地球 doodle hero: 装饰; 出结果淡出再收起(进入则先展开再淡入), 不卡顿/不直接消失 */
+  /* 收起靠 .hero 的 height 折叠(把搜索框上移); overflow:hidden 把内层裁掉 ——
+     这样下沉/位移都不会撑出 .scroll 的滚动区(否则滚动条忽隐忽现, 整列横向抖 ~2px)。
+     .heroinner 固定高度(canvas 不缩放→不卡), 出结果时向下沉 + 淡出, 被收起的"地板"裁掉,
+     形成"没入"效果; 回首页则从下方升起 + 淡入。 */
+  .hero {
+    width: 100%; height: clamp(320px, 44vw, 420px); margin: 0 auto 0px; overflow: hidden;
+    transition: height .55s ease, margin-bottom .55s ease;
+  }
+  .hero.gone { height: 0; margin-bottom: 0; pointer-events: none; }
+  .hero.booting { transition: none; }       /* 首帧不放动画 */
+  .heroinner {
+    height: clamp(320px, 44vw, 420px); width: 100%; opacity: 1;
+    transition: transform .55s ease, opacity .55s ease;
+  }
+  .hero.gone .heroinner { transform: translateY(70px); opacity: 0; }   /* 向下沉没入 + 淡出 */
+  .hero.booting .heroinner { transition: none; }
+  @media (max-width: 820px) {
+    .hero { height: clamp(200px, 56vw, 280px); }
+    .heroinner { height: clamp(200px, 56vw, 280px); }
+  }
 
   /* ── 命令行输入 ── */
   .console {

@@ -13,13 +13,13 @@ Feature-level changelog for PEER.AS. Only **user-facing functional changes** are
   **Added: a 3D globe routing visualization on the home page.** The peer.as home page gains an interactive 3D globe that
   detects your connection's origin and animates the back-haul routes from you to each **Tier-1 backbone**; Tier-1 nodes on
   the globe are clickable to look them up. It fades out when a query result appears and rises back when you return home.
-- **新增：「你的接入」自助探测卡片堆。** 首页新增左 IPv4 / 右 IPv6 两叠可翻看的 3D 卡片，通过**双栈探测**显示本机出口地址，
-  并按地址逐张展开**覆盖前缀、地理位置、origin AS、观测上游、以及该前缀的全部去重路径**（均可点击下钻查询）。
-  点后方卡片露出的小角即可翻到下一张；浏览器默认优先的那一栈带一个 live 标记；每张出口卡右上角的折角钮可**独立隐藏 IP**（记忆状态），方便截图。
-  **Added: a «Your connection» self-probe card stack.** The home page gains two flip-through 3D card decks (IPv4 left, IPv6 right)
-  that **dual-stack probe** your egress addresses and reveal, per address, the **covering prefix, location, origin AS, observed
-  upstreams, and every distinct AS_PATH of that prefix** (all clickable to drill down). Click a back card's peeking corner to flip;
-  the browser's preferred stack gets a live marker; each card's corner toggle **hides the IP independently** (remembered) for screenshots.
+- **新增：「你的接入」自助探测。** 首页向数十个边缘端点（各大 CDN 的 `cdn-cgi/trace` 等）发起请求，探测出你**全部的出口 IP**
+  （多线 / 多出口 / 双栈下会各不相同），按 IPv4 / IPv6 分两叠卡片，显示每个出口的**覆盖前缀、地理位置、origin AS（含 AS 名称）**（均可点击下钻）。
+  右下角色标注明协议栈，浏览器主用的那一栈以淡橙高亮；点卡堆下方箭头，所有出口会像**发牌**一样摊成网格一览，再点收回；每叠右上角折角钮可**隐藏 IP**（记忆状态）方便截图。
+  **Added: a «Your connection» self-probe.** The home page queries dozens of edge endpoints (CDN `cdn-cgi/trace` and friends) to
+  discover **all of your egress IPs** (which differ across multi-WAN / multi-egress / dual-stack), grouped into IPv4 / IPv6 card stacks
+  showing each egress's **covering prefix, location and origin AS (with AS name)** (all clickable to drill down). A corner tag marks the
+  protocol stack — amber for the browser's active one; a chevron **deals** every egress out into a grid (click again to fold), and a corner toggle **hides the IP** (remembered) for screenshots.
 
 ## 2026-06-04
 

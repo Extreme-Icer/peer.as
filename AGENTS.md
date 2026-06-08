@@ -64,7 +64,7 @@
   + **DnsView/DomainDetail**(DNS 解析视图 + 域名详情面板) + **Doodle**(首页 3D 地球 hero) + **SelfProbe**(首页「你的接入」自助探测卡片))
   + `src/lib/*`(store.svelte.js 全局 runes 状态、db.js DuckDB-WASM、queries.js 搜索/insight/**asn 视图+dns 视图+面板导航**+
   **probeIp**(给定 IP → 覆盖前缀/origin/观测上游, 供 SelfProbe)、
-  bgp.js(含 `classifyQuery` 的 **domain** 分支 + `isDomain`)、**geo.js**(Tier-1 城市坐标 + cloudflare trace + **jsonp/probeSelfIps** 用 test-ipv6.com 三端点双栈探测出口 IP)、
+  bgp.js(含 `classifyQuery` 的 **domain** 分支 + `isDomain`)、**geo.js**(Tier-1 城市坐标 + cloudflare trace + **probeEgressIps** fetch 二十多个开放-CORS 边缘端点 cdn-cgi/trace+upyun 摸全部出口 IP；旧 jsonp/probeSelfIps 保留未用)、
   i18n.js、icons.js Font Awesome、ui.js + **rdap.js**(RDAP 直连,
   含 **domain** 域名查询)、**rdap-bootstrap.json**(内置 IANA asn/ipv4/ipv6/**dns** 表)、**dns.js**(DoH 解析)、
   **whois-fields.js**(字段→图标))。`web/mock/rdap/`=离线开发用真实 RDAP 样本(不进 bundle)。
@@ -137,14 +137,19 @@
     `Doodle.svelte`：纯装饰 3D 地球，起点 = cloudflare trace 的连接 IP+国家（`geo.js fetchTrace`/`ccLatLon`/`TIER1_GEO`），
     用 `queries.routeTier1s` 算「你自己」这条 IP 的 Tier-1 路由图，加载一次、之后不重渲染；点节点/卡片 = 快速查询。
     背景全屏 3D 立体字 `PEER.AS` 在 `WhoisView` 内（鼠标视差 + 入场淡入 + 出结果淡出）。
-    `SelfProbe.svelte`：用 **`geo.js probeSelfIps()`**（`jsonp()` 注入 `<script>` 调 test-ipv6.com 的 `ipv4.`/`ipv6.`/`ds.` 三端点，
-    无 CORS 故走 JSONP；`ds` 返回 v6 时兜底当作探到 v6 出口，覆盖本地 fakeip/代理场景）拿到 v4/v6 出口地址，
-    再用 **`queries.probeIp(ip)`**（`ensureEngine` → 覆盖前缀 + 地理 `loc`(placeLabel) + origin ASN + 观测上游(各去重路径 origin 前一跳聚合) + 该前缀全部去重 `paths`）富集。
-    形态 = **左 v4 / 右 v6 两叠 card-stack**：每叠至多 3 张卡（① 出口=IP+前缀+geo+origin ② 上游 ③ 去重路径，按数据可用性增减）。
-    背面**只露最靠前 1 张**(`cardCss` 里 depth≥2 同位置但 opacity:0 藏其后)，`hotCard` hover 那张时它探出更多, 点它 `setFront` 翻到下一张(`front` 取模轮转, 带回弹过渡; 无自动轮换)。
-    去重路径卡复用 `<AsPath nav arrow onnav>`（AS 名+`›`箭头+可点；`onnav` 让首页点击走 onpick 切视图而非默认 showAsn）。
-    默认栈(`ds` 命中)带 `.live` 呼吸点；每张出口卡右上角折角钮**独立隐藏 IP**（`hide=[v4,v6]`，localStorage `ipc-hide-self-ip`="v4,v6"，模糊遮挡）。
-    探测/富集失败静默退化，不阻塞首页。`enrichIp` 已扩列回传 `cc/city/province`（DNS 视图无害忽略）；`AsPath` 的 `arrow` 用 `›`（RelGroup/InsightDrawer 同步）。
+    `SelfProbe.svelte`：用 **`geo.js probeEgressIps()`**（`fetch` 一批**开放 CORS** 的边缘端点 = 二十多个站点的
+    `cdn-cgi/trace`(取 `ip=`) + upyun `pubstatic.b0.upaiyun.com/?_upnode`(取 `remote_addr`)，各带 7s AbortController 超时、失败静默）
+    取各端点看到的客户端 IP，**去重并按 family 分组、按出现频次排序**（多 WAN/多出口/happy-eyeballs/CDN 不同 PoP 会让不同站看到不同出口
+    → 借此摸出你**全部接入出口**；返回 `{v4,v6,defaultIp}`，defaultIp=被最多端点看到者=浏览器主用栈）。每族至多取 4 个 IP，
+    再用 **`queries.probeIp(ip)`** 富集（覆盖前缀 + 地理 `loc` + origin ASN+名）。**`probeSelfIps`(test-ipv6.com JSONP) 仍在但 SelfProbe 已不用。**
+    形态 = **单一舞台、持久 DOM**：所有卡片是同一批元素、从不重新生成；两态（叠 collapsed / 摊 expanded）都由 `styleFor()` 算出每张卡的
+    `transform`（绝对定位 + `left:50%` 居中，故列宽变化不跳），靠 CSS transition 平滑过渡。叠态 = 左 v4 / 右 v6 两堆真层叠（depth≥2 透明藏底），
+    点堆 `cycle()` 切下一张（`front` 取模）；第一张带 `[+N IP]` 角标。摊态（`S.probeExpanded`，箭头 `toggleExpand` 切）= 同一批卡按
+    `transition-delay` 错峰飞向**网格（一行≤4、定宽 300px 居中、用满 col 宽）**，v4/v6 同时开发；收回即逆过程。出口卡右下角 `.famtag`
+    色标注明 IPv4/IPv6（非活跃栈=灰、`defaultIp` 所属活跃栈=淡橙 `#cf9f63`，仅第一张显示）；折角钮**独立隐藏 IP**（`hide=[v4,v6]`，
+    localStorage `ipc-hide-self-ip`，仅叠态可见）。`S.probeExpanded` 在 `runWhois`/`goHome` 复位；摊开时 `WhoisView` 让 `.col` 放宽
+    （`.col.wide`，但搜索框/示例/`.hero` 仍锁 820 居中——`.hero` 不锁宽则地球 canvas 的 ResizeObserver 会重置 WebGL 闪一下）。
+    探测/富集失败静默退化，不阻塞首页。`enrichIp` 回传 `cc/city/province`（DNS 视图无害忽略）。
   - **WHOIS 兜底文本解析 = `web/src/lib/whois-labels.js`**（独立文件）：无 RDAP 的 ccTLD 经 whois-worker 取回 port-43 原文后，
     把各注册局列名映射到统一规范 key。含**标签字典**（实测 + richardpenman/whois、mboot-github/WhoisDomain 两解析器的逐 TLD 字面量）
     与**多格式解析器**（inline `Label: value` · JPRS 括号 `[Label] value` · RPSL `key:` · Nominet/.it/.dk/.eu 缩进段 indented-block），

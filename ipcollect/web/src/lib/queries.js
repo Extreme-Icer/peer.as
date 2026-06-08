@@ -673,6 +673,7 @@ export function openWhoisFromBox() {
 export function runWhois(input) {
   const raw = String(input || '').trim()
   S.view = 'whois'
+  S.probeExpanded = false   // 进入查询时收起「你的接入」摊开网格
   if (!raw) { S.whois = { input: '', kind: null, key: null, err: '' }; go('/'); return }   // 首页 = /
   const p = classifyQuery(raw)
   if (p.kind === 'asn') S.whois = { input: raw, kind: 'autnum', key: String(p.asn), err: '' }
@@ -700,6 +701,7 @@ export async function openInRouting(input) {
 // 点 LOGO 回首页。peeras: WHOIS 首页(/); dn42(无 whoisView): 路由分析干净落地页(/)。均清详情/筛选/结果。
 export function goHome() {
   closeDetailState()
+  S.probeExpanded = false   // 回首页复位「你的接入」摊开网格
   Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
   S.dns = null; S.asset = null; S.rows = []; S.msg = ''
   if (features.whoisView) { S.view = 'whois'; S.whois = { input: '', kind: null, key: null, err: '' }; go('/') }

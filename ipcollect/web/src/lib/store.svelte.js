@@ -20,6 +20,8 @@ export const S = $state({
   whois: { input: '', kind: null, key: null, err: '' },
   // 「高级搜索」开关(localStorage 记忆, App.onMount 初始化): 勾上后首页搜索框任何查询都直接进路由分析(/advanced), 不出简洁 WHOIS。
   advWhois: false,
+  // 首页「你的接入」卡片堆是否已"发牌"摊开成网格(SelfProbe 内的箭头切换; 出结果/回首页时复位)。
+  probeExpanded: false,
   mode: 'prompt',          // prompt | country | global | subnet | dns
   // DNS 解析视图载荷(mode==='dns' 时主内容区改渲染 DnsView): { domain, loading, error, status, a:[], aaaa:[], others:[] }
   // a/aaaa 行已富集前缀+origin asn(由 queries.runDns 查 prefixes 得到); others = 其它记录类型分组。

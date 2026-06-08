@@ -105,3 +105,81 @@ export async function probeSelfIps() {
   ])
   return { v4: pick(v4), v6: pick(v6), ds: pick(ds) }
 }
+
+// ── 多端点出口 IP 探测 ────────────────────────────────────────────────
+// 请求一批开放 CORS 的边缘端点(Cloudflare cdn-cgi/trace + upyun 节点探测), 取各端点看到的
+// 客户端 IP。多 WAN / 多线 / happy-eyeballs / CDN 不同 PoP 会让不同站点看到不同出口地址,
+// 借此把"你实际拥有的全部接入出口"摸出来; 去重后按 family(v4/v6)分组、按出现频次排序。
+// 任一端点失败/超时静默忽略, 不阻塞首页。
+const EGRESS_TRACE = [
+  'https://cdnjs.cloudflare.com/cdn-cgi/trace',
+  'https://coinbase.com/cdn-cgi/trace',
+  'https://www.okx.com/cdn-cgi/trace',
+  'https://testingcf.jsdelivr.net/cdn-cgi/trace',
+  'https://cloudflaremirrors.com/cdn-cgi/trace',
+  'https://registry.npmjs.org/cdn-cgi/trace',
+  'https://kali.download/cdn-cgi/trace',
+  'https://app.unpkg.com/cdn-cgi/trace',
+  'https://crunchyroll.com/cdn-cgi/trace',
+  'https://nodejs.org/cdn-cgi/trace',
+  'https://gitlab.com/cdn-cgi/trace',
+  'https://openai.com/cdn-cgi/trace',
+  'https://claude.ai/cdn-cgi/trace',
+  'https://grok.com/cdn-cgi/trace',
+  'https://anthropic.com/cdn-cgi/trace',
+  'https://www.perplexity.ai/cdn-cgi/trace',
+  'https://chatgpt.com/cdn-cgi/trace',
+  'https://sora.com/cdn-cgi/trace',
+  'https://gateway.discord.gg/cdn-cgi/trace',
+  'https://x.com/cdn-cgi/trace',
+  'https://medium.com/cdn-cgi/trace',
+  'https://perfops.cloudflareperf.com/cdn-cgi/trace',
+  'https://www.qualcomm.cn/cdn-cgi/trace',
+  'https://www.cf-ns.com/cdn-cgi/trace',
+]
+const EGRESS_UPYUN = 'https://pubstatic.b0.upaiyun.com/?_upnode'
+
+// 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
+async function fetchWithTimeout(url, ms = 7000) {
+  const c = new AbortController()
+  const tm = setTimeout(() => c.abort(), ms)
+  try { return await fetch(url, { cache: 'no-store', signal: c.signal }) }
+  catch (e) { return null }
+  finally { clearTimeout(tm) }
+}
+
+async function traceIp(url) {
+  const r = await fetchWithTimeout(url)
+  if (!r || !r.ok) return null
+  try {
+    const txt = await r.text()
+    for (const line of txt.split('\n')) if (line.startsWith('ip=')) { const v = line.slice(3).trim(); return v || null }
+  } catch (e) { /* ignore */ }
+  return null
+}
+
+async function upyunIp(url) {
+  const r = await fetchWithTimeout(url + '&_=' + Date.now())
+  if (!r || !r.ok) return null
+  try {
+    const j = await r.json()
+    return (typeof j.remote_addr === 'string' && j.remote_addr) ? j.remote_addr : null
+  } catch (e) { return null }
+}
+
+export async function probeEgressIps() {
+  const results = await Promise.all([
+    ...EGRESS_TRACE.map(u => traceIp(u)),
+    upyunIp(EGRESS_UPYUN),
+  ])
+  const count = new Map()
+  for (const ip of results) if (ip) count.set(ip, (count.get(ip) || 0) + 1)
+  const v4 = [], v6 = []
+  for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })
+  const byN = (a, b) => b.n - a.n
+  v4.sort(byN); v6.sort(byN)
+  // 默认出口 = 被最多端点看到的那个地址(浏览器实际主用的接入), 用于卡片上的 live 小点。
+  let defaultIp = null, best = -1
+  for (const [ip, n] of count) if (n > best) { best = n; defaultIp = ip }
+  return { v4: v4.map(x => x.ip), v6: v6.map(x => x.ip), defaultIp }
+}

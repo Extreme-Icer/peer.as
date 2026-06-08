@@ -114,11 +114,11 @@
 
 <main class="wv">
   <!-- 全屏背景 3D 立体字: 整个 view 大小, 在内容(.scroll)之后; 入场淡入, 出结果淡出 -->
-  <div class="bgword" class:in={bgShown} class:gone={S.whois.kind} class:booting aria-hidden="true"><div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div></div>
+  <div class="bgword" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true"><div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div></div>
   <MobileBar />
   <div class="scroll" class:center={!S.whois.kind}>
-    <div class="col">
-      <div class="hero" class:gone={S.whois.kind} class:booting>
+    <div class="col" class:wide={S.probeExpanded}>
+      <div class="hero" class:gone={S.whois.kind || S.probeExpanded} class:booting>
         <div class="heroinner">
           <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
         </div>
@@ -155,7 +155,7 @@
       {/if}
 
       <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起) -->
-      <div class="spwrap" class:gone={S.whois.kind} class:booting>
+      <div class="spwrap" class:gone={S.whois.kind} class:expanded={S.probeExpanded} class:booting>
         <SelfProbe onpick={(qq) => pick(qq)} />
       </div>
 
@@ -200,6 +200,11 @@
   }
   .scroll.center { padding-top: 4vh; }                 /* 底部留白交给 base 的 60px(12vh 只会凭空生出多余滚动) */
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
+  /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
+  .col.wide { max-width: none; }
+  /* 搜索框/示例/hero 仍居中收窄在 820 —— 尤其 hero: 若随列变宽, 地球 canvas 会触发 ResizeObserver
+     重置 WebGL 画布(发牌瞬间"闪一下"); 锁住其宽度即可消除闪烁。 */
+  .col.wide .console, .col.wide .examples, .col.wide .hero { max-width: 820px; margin-left: auto; margin-right: auto; }
 
   /* ── 全屏背景 3D 立体字 PEER.AS ── 整个 view 大小, 不被裁剪; 入场淡入 / 出结果淡出 / 鼠标视差 ── */
   .bgword {
@@ -259,6 +264,8 @@
     transition: max-height .5s ease, opacity .4s ease, transform .5s ease, margin .5s ease;
   }
   .spwrap.gone { max-height: 0; opacity: 0; transform: translateY(16px); margin: 0; pointer-events: none; }
+  /* 摊开成网格: 解除折叠用的高度上界 + 裁切, 让多行卡片完整展开、发牌飞入不被切顶 */
+  .spwrap.expanded { max-height: none; overflow: visible; }
   .spwrap.booting { transition: none; }
 
   /* ── 命令行输入 ── */

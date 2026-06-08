@@ -132,7 +132,7 @@
     transition: transform .2s cubic-bezier(.4, 0, .2, 1); will-change: transform; z-index: 0;
   }
   .famseg .famopt {
-    position: relative; z-index: 1; flex: 1 0 auto; min-width: 44px; padding: 0 12px;
+    position: relative; z-index: 1; flex: 1 0 auto; min-width: 49px; padding: 0 12px;
     background: transparent; border: 0; border-radius: 7px; cursor: pointer;
     font: 600 12px var(--sans); color: var(--muted); transition: color .2s; white-space: nowrap;
   }

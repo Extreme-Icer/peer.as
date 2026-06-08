@@ -334,7 +334,7 @@
   /* 「高级搜索」开关: 推到示例行最右; 迷你 switch + 文字, 勾上时 accent。状态记忆于 localStorage。 */
   .adv {
     margin-left: auto; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
-    padding: 4px 10px 4px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--inbg);
+    padding: 4px 6px 4px 4px; border-radius: 999px; border: 1px solid var(--line); background: var(--inbg);
     transition: border-color .15s, background .15s;
   }
   .adv:hover { border-color: var(--accent); }

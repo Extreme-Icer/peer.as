@@ -180,7 +180,7 @@
         {:else}
           {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
         {/if}
-        {#if d === 0}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
+        {#if expanded || d === 0}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
         {#if c.kind === 'ip' && !expanded && d === 1}<span class="peekhint" aria-hidden="true">›</span>{/if}
       </div>
     {/each}
@@ -262,7 +262,7 @@
   .lk:hover { text-decoration: underline; text-underline-offset: 3px; }
 
   /* origin: ASxxxx + 名称 badge */
-  .asn { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .asn { text-decoration: none!important; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .asnum { font: 600 13.5px var(--mono); color: var(--link); }
   .asname {
     font: 600 10.5px var(--sans); color: var(--muted); line-height: 1;

@@ -67,7 +67,7 @@
   bgp.js(含 `classifyQuery` 的 **domain** 分支 + `isDomain`)、**geo.js**(Tier-1 城市坐标 + cloudflare trace + **probeEgressIps** fetch 二十多个开放-CORS 边缘端点 cdn-cgi/trace+upyun 摸全部出口 IP；旧 jsonp/probeSelfIps 保留未用)、
   i18n.js、icons.js Font Awesome、ui.js + **rdap.js**(RDAP 直连,
   含 **domain** 域名查询)、**rdap-bootstrap.json**(内置 IANA asn/ipv4/ipv6/**dns** 表)、**dns.js**(DoH 解析)、
-  **whois-fields.js**(字段→图标))。`web/mock/rdap/`=离线开发用真实 RDAP 样本(不进 bundle)。
+  **whois-fields.js**(字段→图标) + **clock.svelte.js**(模块级 $state `now` 每 30s 自走; `genAgo(ts)` 出"x小时x分前"、`genUtc(ts)` 出 UTC 串, 供侧栏/移动菜单「生成」时间显示相对时间 + hover UTC))。`web/mock/rdap/`=离线开发用真实 RDAP 样本(不进 bundle)。
   Console 暗色设计 + **系统默认字体**(勿强制自定义 web 字体, 中文会糊) + FA 图标 + teal/amber。**改完要 `npm run build`**(产出 `web/dist/`),
   `export-parquet` 再把 `web/dist/` 拷进 `dist/`。`web/test-e2e.mjs` = puppeteer-core 无头冒烟测试(用系统 Chrome)。
 
@@ -146,7 +146,7 @@
     `transform`（绝对定位 + `left:50%` 居中，故列宽变化不跳），靠 CSS transition 平滑过渡。叠态 = 左 v4 / 右 v6 两堆真层叠（depth≥2 透明藏底），
     点堆 `cycle()` 切下一张（`front` 取模）；第一张带 `[+N IP]` 角标。摊态（`S.probeExpanded`，箭头 `toggleExpand` 切）= 同一批卡按
     `transition-delay` 错峰飞向**网格（一行≤4、定宽 300px 居中、用满 col 宽）**，v4/v6 同时开发；收回即逆过程。出口卡右下角 `.famtag`
-    色标注明 IPv4/IPv6（非活跃栈=灰、`defaultIp` 所属活跃栈=淡橙 `#cf9f63`，仅第一张显示）；折角钮**独立隐藏 IP**（`hide=[v4,v6]`，
+    色标注明 IPv4/IPv6（非活跃栈=灰、`defaultIp` 所属活跃栈=淡橙 `#cf9f63`；**摊开时每张都标, 折叠时仅第一张**）；折角钮**独立隐藏 IP**（`hide=[v4,v6]`，
     localStorage `ipc-hide-self-ip`，仅叠态可见）。`S.probeExpanded` 在 `runWhois`/`goHome` 复位；摊开时 `WhoisView` 让 `.col` 放宽
     （`.col.wide`，但搜索框/示例/`.hero` 仍锁 820 居中——`.hero` 不锁宽则地球 canvas 的 ResizeObserver 会重置 WebGL 闪一下）。
     探测/富集失败静默退化，不阻塞首页。`enrichIp` 回传 `cc/city/province`（DNS 视图无害忽略）。

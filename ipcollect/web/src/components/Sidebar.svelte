@@ -4,6 +4,7 @@
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome } from '../lib/queries.js'
+  import { genAgo, genUtc } from '../lib/clock.svelte.js'
   import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
@@ -40,7 +41,7 @@
       <div><dt><Fa icon={iPrefix} /> {t('t_prefix6')}</dt><dd>{fmt(counts.prefixes_v6)}</dd></div>
       <div><dt><Fa icon={iPath} /> {t('t_paths')}</dt><dd>{fmt((counts.paths || 0) + (counts.paths_v6 || 0))}</dd></div>
       <div><dt><Fa icon={iGlobal} /> {t('t_country')}</dt><dd>{nCountry || '—'}</dd></div>
-      <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen">{S.meta?.generated_str || '—'}</dd></div>
+      <div><dt><Fa icon={iClock} /> {t('t_gen')}</dt><dd class="gen" title={genUtc(S.meta?.generated_ts)}>{genAgo(S.meta?.generated_ts)}</dd></div>
     </dl>
   </section>
 
@@ -127,7 +128,7 @@
   .stats dt { color: #8693a6; display: inline-flex; align-items: center; gap: 7px; }
   .stats dt :global(svg) { color: #4d5a70; width: 11px; }
   .stats dd { margin: 0; color: #e9eef5; font: 600 12.5px/1 var(--mono); }
-  .stats dd.gen { font-size: 11px; color: #aeb9c9; }
+  .stats dd.gen { color: #aeb9c9; }
 
   .foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; }
   .links { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid #141d2c; padding-top: 10px; }

@@ -198,7 +198,7 @@
     position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
     transition: padding-top .5s ease, padding-bottom .5s ease;
   }
-  .scroll.center { padding-top: 4vh; padding-bottom: 12vh; }
+  .scroll.center { padding-top: 4vh; }                 /* 底部留白交给 base 的 60px(12vh 只会凭空生出多余滚动) */
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
 
   /* ── 全屏背景 3D 立体字 PEER.AS ── 整个 view 大小, 不被裁剪; 入场淡入 / 出结果淡出 / 鼠标视差 ── */

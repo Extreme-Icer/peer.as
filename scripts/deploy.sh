@@ -87,12 +87,28 @@ if [ "$WITH_DATA" = 1 ]; then
   log "数据 1/2: 清缓存(mrt/duck_tmp; 保留 geo)"
   rm -f  "$PROJ"/cache/mrt/*.gz "$PROJ"/cache/mrt/*.part "$PROJ"/cache/mrt/dl.log 2>/dev/null || true
   rm -rf "$PROJ"/cache/duck_tmp/* 2>/dev/null || true
-  log "数据 2/2: ipc ingest --reset（全表 v4+v6）→ rpki/irr/asset 导入 → export-parquet"
-  ./ipc ingest --reset
-  # RPKI ROA / IRR route / as-set: 下载校验数据(best-effort, 某源失败不阻断; 开关关或无网时 export 自动降级 has_*=False)
-  ./ipc rpki-import  || log "  ! rpki-import 失败(继续, 本轮无 RPKI 标注)"
-  ./ipc irr-import   || log "  ! irr-import 失败(继续, 本轮无 IRR 标注)"
-  ./ipc asset-import || log "  ! asset-import 失败(继续, 本轮无 as-set 树)"
+  log "数据 2/2: ingest(MRT→DuckDB) ∥ rpki/irr/asset(下载→cache) 并行 → 互锁 → export-parquet"
+  # 资源不重叠故可安全并行: ingest 写 DuckDB; 三个 import 只写 cache/ 文件(不碰 DuckDB)。
+  # import 后台跑(日志落文件、末尾回放), ingest 前台(扫描进度实时可见)。
+  # best-effort: 某源失败不阻断; 开关关或无网时 export 自动降级 has_*=False。
+  imp_log="$PROJ/logs/_imports.$$"
+  {
+    ./ipc rpki-import  || log "  ! rpki-import 失败(继续, 本轮无 RPKI 标注)"
+    ./ipc irr-import   || log "  ! irr-import 失败(继续, 本轮无 IRR 标注)"
+    ./ipc asset-import || log "  ! asset-import 失败(继续, 本轮无 as-set 树)"
+  } >"$imp_log" 2>&1 &
+  IMP_PID=$!
+  ING_RC=0; ./ipc ingest --reset || ING_RC=$?
+  if [ "$ING_RC" != 0 ]; then
+    # ingest 失败=致命(数据撕裂)。先收掉后台 import(避免成孤儿与下次运行抢写 cache), 再中止。
+    kill "$IMP_PID" 2>/dev/null || true; wait "$IMP_PID" 2>/dev/null || true
+    cat "$imp_log" 2>/dev/null || true; rm -f "$imp_log"
+    log "✗ ingest 失败(rc=$ING_RC) —— 中止部署"; exit 1
+  fi
+  # 互锁: 必须等下载阶段也结束(export 要读 cache 里的 rpki/irr/asset), 两 stage 都完成才进 export
+  IMP_RC=0; wait "$IMP_PID" || IMP_RC=$?
+  log "  ↓ 下载阶段(rpki/irr/asset)输出"; cat "$imp_log" 2>/dev/null || true; rm -f "$imp_log"
+  [ "$IMP_RC" = 0 ] || log "  ! 下载阶段退出码=$IMP_RC（各步已各自容错, 不阻断 export）"
   ./ipc export-parquet --out dist
 fi
 
@@ -163,19 +179,27 @@ deploy_cn(){
 }
 deploy_cf(){
   # CF Pages 单文件 ≤25MiB，而 duckdb-eh/mvp.wasm 达 33/39MB（pages deploy 不认 .assetsignore）。
-  # 故部署前临时移出 *.wasm、部署后移回（CF 路径前端 wasmSrcs 走 CDN 取 wasm；worker/数据照常同源）。
-  # 用显式 move-back（非 trap）：即便 wrangler 失败也保证移回、且把退出码透传。
-  local HOLD; HOLD="$(mktemp -d)"; local rc=0
-  mv "$PROJ"/dist/assets/*.wasm "$HOLD"/ 2>/dev/null || true
+  # 用「硬链接暂存株」部署：cp -al 整个 dist 到同盘临时目录（秒级、不复制数据），删副本里的 *.wasm 再 deploy。
+  #   真实 dist/ 全程不动 → 既能与 deploy_cn(rsync dist/ 含 wasm) 安全并行，又比"移出/移回"更稳(wrangler 失败也不伤 dist)。
+  #   (CF 节点前端 wasmSrcs 走 CDN 取 wasm；worker/数据照常同源)
+  local STAGE rc=0
+  STAGE="$(mktemp -d "$PROJ/.cfstage.XXXXXX")" || { log "CF: ✗ 暂存目录创建失败"; return 1; }
+  cp -al "$PROJ/dist/." "$STAGE/" || { rm -rf "$STAGE"; log "CF: ✗ 硬链接暂存失败"; return 1; }
+  rm -f "$STAGE"/assets/*.wasm 2>/dev/null || true
   log "CF: wrangler pages deploy → 项目 $CF_PROJECT（排除超限 wasm；CF 节点 wasm 回退 CDN）"
-  wrangler pages deploy dist --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
+  wrangler pages deploy "$STAGE" --project-name "$CF_PROJECT" --branch main --commit-dirty=true \
     --commit-message="deploy.sh $SITE $([ "$WITH_DATA" = 1 ] && echo 'data+web' || echo web)" || rc=$?
-  mv "$HOLD"/*.wasm "$PROJ"/dist/assets/ 2>/dev/null || true
-  rmdir "$HOLD" 2>/dev/null || true
+  rm -rf "$STAGE"
   return $rc
 }
-{ [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && deploy_cn
-[ "$TARGET" != cn ] && deploy_cf
+# 并行推送: CN(rsync 整站) ∥ CF(wrangler 暂存株)。deploy_cf 不动 dist/ 故与 deploy_cn 无冲突。
+# 互锁: 等两端都结束再继续(verify 要两端都已切版本)。CN best-effort(函数内吞失败), CF 失败=中止。
+CN_PID= ; CF_PID= ; CF_RC=0
+{ [ "$TARGET" != cf ] && [ "$CN_MIRROR" = 1 ]; } && { deploy_cn & CN_PID=$!; }
+[ "$TARGET" != cn ] && { deploy_cf & CF_PID=$!; }
+[ -n "$CN_PID" ] && { wait "$CN_PID" || true; }
+[ -n "$CF_PID" ] && { wait "$CF_PID" || CF_RC=$?; }
+[ "$CF_RC" = 0 ] || { log "✗ CF 部署失败(rc=$CF_RC) —— 中止部署"; exit 1; }
 
 # ── 4) 部署后轻量校验（防回归：两端入口一致 + CN wasm 自托管）─────────────────
 verify(){

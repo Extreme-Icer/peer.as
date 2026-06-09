@@ -143,7 +143,10 @@
       {#if hide[fi]}
         <span class="ip masked">{maskIp(e.ip)}</span>
       {:else}
-        <button class="ip" onclick={(ev) => { stop(ev); onpick(e.ip) }} title={e.ip}>{e.ip}</button>
+        <!-- a(非 button): 行内元素, 让 +N IP 能与 IP 在同一行自然混排 -->
+        <a class="ip" role="button" tabindex="0" title={e.ip}
+           onclick={(ev) => { stop(ev); onpick(e.ip) }}
+           onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { stop(ev); ev.preventDefault(); onpick(e.ip) } }}>{e.ip}</a>
       {/if}
       {#if showBadge}<span class="ipmore">+{fams[fi].entries.length - 1} IP</span>{/if}
     </div>
@@ -224,7 +227,7 @@
   }
   .famtag.act { color: #cf9f63; background: color-mix(in srgb, #cf9f63 15%, transparent); }
 
-  .cbody { flex: 1; min-height: 0; padding: 15px 17px 16px; display: flex; flex-direction: column; gap: 9px; }
+  .cbody { flex: 1; min-height: 0; padding: 12px 17px 16px; display: flex; flex-direction: column; gap: 9px; }
 
   .fold {
     position: absolute; top: 0; right: 0; z-index: 7;
@@ -237,10 +240,11 @@
   .fold :global(svg) { width: 12px; height: 12px; }
   .fold.folded { background: color-mix(in srgb, var(--ac) 9%, transparent); box-shadow: inset 2px -2px 4px -1px rgba(0,0,0,.2); }
 
-  /* IP 行: flex 居中对齐, [+N IP] 角标与 IP 垂直对齐 */
-  .iprow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-right: 30px; line-height: 1.3; }
-  .ip { font: 600 15px var(--mono); text-align: left; color: var(--fg); letter-spacing: -.01em; background: none; border: 0; padding: 0; cursor: pointer; word-break: break-all; }
-  button.ip:hover { color: var(--ac); }
+  /* IP 行: 行内流式(非 flex) —— IP 折行时 [+N IP] 角标紧跟最后一行之后, 而非独立成块靠右。
+     line-height 给徽标留竖向空间; vertical-align:middle 让徽标与 IP 文字竖向居中(等价 align-items:center)。 */
+  .iprow { padding-right: 30px; line-height: 1.65; }
+  .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
+  a.ip:hover { color: var(--ac); text-decoration: none; }
   .ip.skel { color: var(--muted); opacity: .45; letter-spacing: .22em; cursor: default; }
   .ip.masked { user-select: none; cursor: default; color: var(--muted); opacity: .7; letter-spacing: .03em; }
   .none { font: 500 13px var(--sans); color: var(--muted); }
@@ -248,7 +252,8 @@
   .muted { color: var(--muted); font-family: var(--sans); }
 
   .ipmore {
-    flex: 0 0 auto; font: 700 10px var(--sans); letter-spacing: .03em; line-height: 1;
+    display: inline-block; vertical-align: middle; margin-left: 8px;
+    font: 700 10px var(--sans); letter-spacing: .03em; line-height: 1;
     color: var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--ac) 34%, transparent); border-radius: 999px; padding: 3px 7px; white-space: nowrap;
   }

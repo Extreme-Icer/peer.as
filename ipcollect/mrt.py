@@ -223,22 +223,16 @@ def _parse_rib_body(body: bytes, addpath: bool):
     return plen, pfx_bytes, entries
 
 
-def iter_focus_prefixes(
+def iter_prefixes(
     path: str,
-    focus_asns: list[int],
     keep_pred: Optional[Callable[[int, int, int], bool]] = None,
     limit: Optional[int] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
-    global_mode: bool = False,
 ) -> Iterator[dict]:
-    """流式解析 RIB, 产出前缀。
+    """流式解析 RIB, 产出**全部**前缀(全表)。
 
-    global_mode=False: 仅产出 AS_PATH 含 focus_asns 任一的前缀(4 字节预筛加速)。
-    global_mode=True : 产出**全部**前缀(全表), 不做 ASN 预筛/过滤(focus_asns 忽略)。
-    无论哪种模式, keep_pred(start,end,family) 仍可进一步过滤(如只收 v4 / 某国家)。
+    keep_pred(start,end,family) 可进一步过滤(如只收 v4 / 某国家)。
     """
-    focus = set(focus_asns)
-    patterns = [a.to_bytes(4, "big") for a in focus]
     peers: list[tuple] = []
     scanned = 0
     kept = 0
@@ -264,15 +258,6 @@ def iter_focus_prefixes(
             scanned += 1
             if on_progress and scanned % 200000 == 0:
                 on_progress(scanned, kept)
-            # 4 字节焦点模式前置过滤 (C 速度子串查找); global 模式不预筛、全收
-            if not global_mode:
-                hit = False
-                for p in patterns:
-                    if p in body:
-                        hit = True
-                        break
-                if not hit:
-                    continue
             family = 4 if subtype in (ST_RIB_IPV4_UNICAST, ST_RIB_IPV4_UNICAST_ADDPATH) else 6
             addpath = subtype in (ST_RIB_IPV4_UNICAST_ADDPATH, ST_RIB_IPV6_UNICAST_ADDPATH)
             # 先用前缀头字节算出网段, 把(国家/family)过滤提到完整解析之前 — 跳过非目标前缀的昂贵解析
@@ -285,11 +270,6 @@ def iter_focus_prefixes(
             if keep_pred and not keep_pred(start, end, family):
                 continue
             plen, pfx_bytes, entries = _parse_rib_body(body, addpath)
-            asnset: set[int] = set()
-            for _pi, asns in entries:
-                asnset.update(asns)
-            if not global_mode and not (focus & asnset):
-                continue
             paths = []
             origins: set[int] = set()
             for peer_index, asns in entries:
@@ -330,8 +310,8 @@ def _ingest_one(con, mrt_file: str, collector: str, keep_pred,
 
     w = store.ObsWriter(collector)
     n_prefix = n_rows = 0
-    for rec in iter_focus_prefixes(mrt_file, [], keep_pred=keep_pred,
-                                   limit=limit, on_progress=progress, global_mode=True):
+    for rec in iter_prefixes(mrt_file, keep_pred=keep_pred,
+                             limit=limit, on_progress=progress):
         dedup: dict[str, list] = {}   # path_clean -> [len, origin, n_peers]
         for p in rec["paths"]:
             clean = bgp.clean_path(p["asns"])

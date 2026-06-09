@@ -91,18 +91,13 @@
 
 ```bash
 ./ipc config show
-./ipc config set focus_asns 4809,23764,9929,4837,58807,...   # path 含这些即入库
-./ipc config set focus_cities 北京,上海,广州,深圳,...          # 展示时切到这些城市
+./ipc config set mrt_collectors rrc01,rrc06   # set 写字符串值; 列表/对象直接手改 config.json
 ```
 
-- `focus_asns`：入库过滤器（path 含任一即收；改了**需重新 ingest**）。
-- `focus_cities`（~59 个，一线+新一线+二线+省会）**不用于 ingest**，而是**面板展示的城市集**：build 只把
-  前缀切到这些城市(`carve(…, city_set)`)，城市框只列它们。改 `focus_cities` 只需重新 `build`(不必 reingest)。
-- `focus_country_code`：ingest 国家过滤（默认 `CN`，空=不限）；`ingest --all-countries` 临时不限。
-- `path_presets`：面板/CLI 的预制 path 下拉项 `[{alias, path:[asns]}]`。
-- `asn_registry`：ASN→`{name, name_en?, op}`（展示/下拉/着色用）。**权威源 = `ipcollect/data/asn_registry.csv`**
-  （CSV，可直接 PR；`#` 开头行为注释），`config.load()` 读 CSV 灌入 `bgp` 模块。CSV 改了即时生效——
-  `save()` **不**把 `asn_registry` 写回 `config.json`（避免冻结 CSV），仅当 `config.json` 显式给出非空 `asn_registry` 才覆盖 CSV（逃生口）。
+- 入库口径固定为**全球全表**（收全部 v4+v6 前缀，不按 ASN/国家过滤）；无 `focus_*` / `ingest_scope` 之类开关。
+- `asn_registry`：ASN→`{name, name_en?, op}`（展示/下拉/着色用）。**唯一权威源 = `ipcollect/data/asn_registry.csv`**
+  （CSV，可直接 PR；`#` 开头行为注释），`config.load()` 每次读 CSV 灌入 `bgp` 模块、覆盖 `config.json` 里的任何残留表。
+  CSV 改了即时生效——`save()` **不**把 `asn_registry` 写回 `config.json`（避免冻结 CSV）。
   `name`=中文/主展示名、`name_en`=可选英文别名（i18n，缺省时英文界面从 `name` 滤出拉丁部分兜底，如 `电信CN2→CN2`）；
   `op`=运营商/厂商分类：三大运营商有专属配色（电信/联通/移动），其余 `教育/科技/国际/IDC`（IDC=云/主机厂商，无专属配色）；
   新增 op 值会优雅降级（前端 `bgp.js` 的 `OP_CLS` 无该项=无配色、`OP_EN` 无该项=回退中文原值），要配色/英文名再补 `bgp.js` 两表。
@@ -212,7 +207,7 @@ registry（全量 whois）= git 仓 `registry_repo`（`cache/dn42-registry`，cl
   应急手动同步仍可 `git -C /home/aosc/dn42-peer-as fetch && git reset --hard origin/main`。）`.venv` 与 `ipcollect/web/node_modules` 软链到主
   checkout 复用依赖（无需重装）。实例 `config.json`：`site=dn42`、`cf_project=dn42-peer-as`、`mrt_layout=dn42`、
   `mrt_base_url=https://mrt42.strexp.net`、`mrt_collectors=["mrt42"]`、`registry_repo=…`、`site_base=https://dn42.peer.as`、
-  `asn_registry=[]`、`focus_asns=[]`。
+  `asn_registry=[]`。
 - CF 项目 `dn42-peer-as`（已建）+ 自定义域名 **`dn42.peer.as`** 已绑定生效（deploy verify 的入口一致 + parquet 扩展 wasm 均 ✓）。
 - 跑：实例目录 `scripts/deploy.sh --data`（≈3min：ingest ~131s + export + build + wrangler 上传）；cn_mirror=0 ⇒ 只上 CF。**线上正常**。
 - **cron 每 10min（已装，见 `fcrontab -l`）**：`*/10 * * * * REFRESH_KEEP=144 /home/aosc/dn42-peer-as/scripts/daily-refresh.sh`
@@ -642,7 +637,7 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
   `opText(a)`(op 分类按 `OP_EN` 译)、`placeLabel(prov,city,cc)`(英文界面滤掉 CJK 地名段、滤空回退英文国名 —— 修
   geo 里「英文省+中文市」混排，**纯前端、无需重建 geo**)。`opOf`/`opCls` 仍用中文 op key 做配色/排序。改了
   `name_en` 等 config 需重新 `export-parquet` 才进 `meta`(英文别名才生效；运营商/地名 i18n 是纯前端、build 即生效)。
-- 改 `mrt_collectors` 后**必须重新 `ingest`**。`focus_cities` 现仅作前端城市导航集(不再决定 carve 粒度), 改它不需重 ingest/导出。
+- 改 `mrt_collectors` 后**必须重新 `ingest`**。
 - **geo 以合并后 geo 表为准**：export 用 `GeoIndexDuck.carve_cc` 把前缀切成各城市子段(**全球都到城市**,
   CN 用 ipdb / 国际用 GeoLite)，segs 预算成 **CIDR 串列表**进 `geo{,_v6}/<cc>`。超大聚合前缀(覆盖 geo 段 >`SEG_OVERLAP_CAP`)
   退化国家级单段防炸。

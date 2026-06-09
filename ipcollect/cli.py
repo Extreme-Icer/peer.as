@@ -4,11 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import bgp, config, geoip, mrt, serve, store, util
-
-
-def _csv_list(s):
-    return [x.strip() for x in s.split(",") if x.strip()] if s else None
+from . import config, geoip, mrt, serve, store, util
 
 
 # ----------------------------------------------------------------------------
@@ -31,13 +27,7 @@ def cmd_config(args):
         return
     if args.action == "set":
         key, val = args.key, args.value
-        if key in ("focus_asns",):
-            # 纯 ASN 列表 (path 含这些 ASN 即入库, 无质量含义)
-            cfg[key] = bgp.resolve_asns(_csv_list(val) or [])
-        elif key in ("focus_cities", "focus_provinces"):
-            cfg[key] = _csv_list(val) or []
-        else:
-            cfg[key] = val
+        cfg[key] = val
         config.save(cfg)
         print(f"已设置 {key} = {cfg[key]}")
 

@@ -33,55 +33,12 @@ def _load_asn_registry_csv() -> list[dict[str, Any]]:
     return out
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    # ingest 入库口径 = (AS_PATH 含 focus_asns 任一) ∩ (地理落在 focus_cities/provinces)。
-    # focus_asns 纯粹是 "path 上出现过这些 ASN" 的过滤器, 无任何质量含义。
-    "focus_asns": [
-        4809, 23764, 4134,        # 电信 CN2 / CTGNet / 163
-        9929, 10099, 4837,        # 联通 CUII / CUG / 169
-        58807, 58453, 9808,       # 移动 CMIN2 / CMI / CMNET
-        4538, 7497,               # 教育 CERNET / 科技 CSTNET
-    ],
-    # 展示用的关注城市 (按 ipdb 的 city 字段精确匹配)。**不影响入库**(入库是境内全量含焦点ASN);
-    # 仅决定面板把前缀切到哪些城市来展示。覆盖一线+新一线+二线+省会, 基本覆盖全国二线及以上。
-    "focus_cities": [
-        # 一线
-        "北京", "上海", "广州", "深圳",
-        # 新一线
-        "成都", "重庆", "杭州", "武汉", "西安", "郑州", "青岛", "长沙", "天津",
-        "苏州", "南京", "东莞", "沈阳", "合肥", "宁波", "昆明",
-        # 二线
-        "无锡", "佛山", "大连", "福州", "厦门", "哈尔滨", "济南", "温州", "南宁",
-        "长春", "泉州", "石家庄", "贵阳", "南昌", "金华", "常州", "南通", "嘉兴",
-        "太原", "徐州", "惠州", "珠海", "中山", "台州", "烟台", "兰州", "绍兴",
-        "海口", "扬州", "汕头", "洛阳", "潍坊", "保定", "廊坊",
-        # 其余省会/首府 (全国覆盖)
-        "乌鲁木齐", "银川", "呼和浩特", "西宁", "拉萨",
-    ],
-    "focus_provinces": [],            # 备选: 按省匹配, 如 ["上海", "广东"]
-    "focus_country_code": "CN",       # 只保留该国家的前缀 (空=不限)
-
-    # path 搜索预制下拉项 (命名的 path 连续片段; 用户也可在面板/CLI 自行输入)。
-    # alias = 给一段 path 起的别名; path = 要求按此顺序相邻出现的 ASN 序列。
-    "path_presets": [
-        {"alias": "电信CN2", "path": [4809]},
-        {"alias": "电信CTGNet", "path": [23764, 4809]},
-        {"alias": "联通CUII", "path": [9929]},
-        {"alias": "移动CMIN2", "path": [58807]},
-        {"alias": "移动CMI", "path": [58453]},
-        {"alias": "教育网CERNET", "path": [4538]},
-        {"alias": "科技网CSTNET", "path": [7497]},
-        {"alias": "教育网→科技网", "path": [4538, 7497]},
-    ],
+    # 入库口径固定为全球全表(收全部 v4+v6 前缀, 不按 ASN/国家过滤)。
 
     # ASN 注册表: ASN -> 名称(展示/下拉用) + op(运营商/厂商分类) [+ name_en 可选]。
-    # 数据集中维护在 data/asn_registry.csv (可直接 PR), 不在代码里 hard code。
-    # config.json 里若有 asn_registry 会整体覆盖此默认表。
+    # 唯一权威源 = data/asn_registry.csv (可直接 PR, 不在代码里 hard code、也不写进 config.json);
+    # config.load() 每次读 CSV 灌入, 改 CSV 即时生效。
     "asn_registry": _load_asn_registry_csv(),
-
-    # 入库范围:
-    #   "global" = 全球全表(收全部 v4 前缀, 不按 ASN/国家过滤; focus_* 仅作高亮/导航)。
-    #   "focus"  = 旧口径(境内 ∩ AS_PATH 含 focus_asns)。
-    "ingest_scope": "global",
 
     # 数据源
     "ipdb_path": str(util.DEFAULT_IPDB),
@@ -124,8 +81,8 @@ def load() -> dict[str, Any]:
         raw = json.loads(util.CONFIG_PATH.read_text(encoding="utf-8"))
     merged = dict(DEFAULT_CONFIG)   # 补齐新增默认键
     merged.update(raw)
-    # asn_registry: peeras 站始终以 data/asn_registry.csv 为权威源(改 CSV 即时生效, 覆盖任何被
-    # 旧 init 冻结进 config.json 的表)。dn42 站走 registry.py、保持其 config 的空表, 不灌 CSV。
+    # asn_registry: peeras 站始终以 data/asn_registry.csv 为唯一权威源(改 CSV 即时生效, 忽略
+    # config.json 里的任何残留表)。dn42 站走 registry.py、保持其 config 的空表, 不灌 CSV。
     if merged.get("site", "peeras") != "dn42":
         merged["asn_registry"] = _load_asn_registry_csv()
     bgp.set_registry(merged.get("asn_registry") or [])

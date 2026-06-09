@@ -94,7 +94,7 @@
   {#if features.geo}
     <datalist id="cclist">
       {#each S.meta?.countries || [] as c}
-        <option value={ccLabel(c.cc)}>{c.n_prefix.toLocaleString()}{(S.meta?.focus_countries || []).includes(c.cc) ? (S.lang === 'zh' ? ' · 可到城市' : ' · city-level') : ''}</option>
+        <option value={ccLabel(c.cc)}>{c.n_prefix.toLocaleString()}</option>
       {/each}
     </datalist>
     <datalist id="citylist">

@@ -33,25 +33,6 @@ def set_registry(entries: Iterable[dict]) -> None:
             ASN_NAME[asn] = name
 
 
-def resolve_asns(items: Iterable) -> list[int]:
-    """把混合列表 (int / 数字串) 解析成去重 ASN int 列表 (保序)。非数字项忽略。"""
-    out: list[int] = []
-    seen: set[int] = set()
-    for it in items or []:
-        if isinstance(it, bool):
-            continue
-        if isinstance(it, int):
-            n = it
-        else:
-            s = str(it).strip()
-            if not s.isdigit():
-                continue
-            n = int(s)
-        if n not in seen:
-            seen.add(n); out.append(n)
-    return out
-
-
 def clean_path(asns: Iterable[int]) -> list[int]:
     """折叠连续重复 (AS prepend), 保留顺序。"""
     out: list[int] = []

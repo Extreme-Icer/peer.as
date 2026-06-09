@@ -6,7 +6,7 @@
   pathsearch{,_v6}/ 全表一行/前缀(paths_blob+origin_asn+cc), 按 origin_asn 排序(不选国家时全局搜索)。
   geo{,_v6}/<cc>/   国家 working-set: 每 (pid,cc,city) 一行 + segs(本段范围) + paths_blob + prefix。
   meta.json         version + files(含 _v6) + counts + dfz_ref{,_v6} + countries + country_names(country_dim) +
-                    cities + presets + focus_asns + asn_names/ops + asn org(asn_dim) + site_base。
+                    cities + asn_names/ops + asn org(asn_dim) + site_base。
 另: ssg.generate 产出 c/<cc>.html 双语 SEO 落地页 + sitemap + robots。
 
 **v4/v6 类型**: v4 的 ip_start/ip_end/segs 导成 **BIGINT**(前端按 number 处理, 行为不变);
@@ -54,14 +54,6 @@ PREFIX_FILE_SIZE = "2MB"
 SEG_OVERLAP_CAP = 256
 # 每个 (前缀,城市) 最多内嵌多少条 CIDR 子段(跨城大段会很多, 截断)。
 SEG_CAP = 48
-
-
-def _focus_countries(cfg: dict) -> set[str]:
-    """哪些国家在侧栏给出城市下拉(导航用)。默认 CN + 配置 focus_geo_countries。
-    注意: carve 现在**所有**国家都切到城市(一步到位), 这里只决定 UI 城市列表列哪些国家。"""
-    s = {"CN"}
-    s.update(cfg.get("focus_geo_countries") or [])
-    return s
 
 
 def _autnums(url: str) -> dict[int, str]:
@@ -676,12 +668,12 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         files["asn_neigh"] = _rel("asn_neigh")
         files["asn_neigh_key"] = _num_index(files["asn_neigh"], "asn")
 
-    # 国家清单(union 两 family) + 双语名(country_dim) + focus 国家城市清单(侧栏导航)。
+    # 国家清单(union 两 family) + 双语名(country_dim) + 各国城市清单(侧栏导航)。
+    # carve 把**所有**国家都切到城市级, 故城市下拉对每个国家都构建(不再限定焦点国)。
     # geo 关闭(dn42)则全空 —— 无 country_dim 表、无地理可言。
     countries: list = []
     country_names: dict = {}
     country_names_en: dict = {}
-    focus_cc: list = []
     cities: dict = {}
     if geo_on:
         countries = [{"cc": r[0], "n_prefix": int(r[1])} for r in con.execute(
@@ -689,13 +681,12 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         cn_rows = con.execute("SELECT cc, name_zh, name_en FROM country_dim").fetchall()
         country_names = {r[0]: r[1] for r in cn_rows if r[1]}
         country_names_en = {r[0]: r[2] for r in cn_rows if r[2]}
-        # 城市统计从 v4 seg 难取(seg 表已被 v6 覆盖); 改从 pgeo 的代表 city 取(够导航用)。
-        focus_cc = sorted(_focus_countries(cfg))
-        for cc in focus_cc:
-            rows = con.execute(
-                "SELECT city, count(*) c FROM pgeo WHERE cc=? AND city IS NOT NULL GROUP BY city ORDER BY c DESC", [cc]).fetchall()
-            if rows:
-                cities[cc] = [{"name": r[0], "n_prefix": int(r[1])} for r in rows]
+        # 城市统计从 v4 seg 难取(seg 表已被 v6 覆盖); 改从 pgeo 的代表 city 取(够导航用)。一次出全部国家。
+        # HAVING count>=2 滤掉「全国仅 1 前缀」的碎地名(GeoLite 城市粒度过细, 如 US 8k+ 地名), 当导航无意义。
+        for cc, city, c in con.execute(
+            "SELECT cc, city, count(*) c FROM pgeo WHERE cc IS NOT NULL AND city IS NOT NULL "
+            "GROUP BY cc, city HAVING count(*) >= 2 ORDER BY cc, c DESC").fetchall():
+            cities.setdefault(cc, []).append({"name": city, "n_prefix": int(c)})
 
     n_prefix_total = sum(fam_results[f]["n_prefix"] for f in families)
     n_paths_total = sum(fam_results[f]["n_paths"] for f in families)
@@ -747,13 +738,10 @@ def export(cfg: dict, con, out_dir: str = "dist") -> dict:
         "countries": countries,
         "country_names": country_names,
         "country_names_en": country_names_en,
-        "focus_countries": focus_cc,
         "cities": cities,
         # dn42: 按 person 导航(取代国家/地区)。persons=[{id,name,asns,n_prefix}]; asn_person={asn:pid}。peeras 为空。
         "persons": persons_meta,
         "asn_person": asn_person_meta,
-        "path_presets": cfg.get("path_presets") or [],
-        "focus_asns": bgp.resolve_asns(cfg.get("focus_asns") or []),
         # asn 名称: dn42 用 registry as-name(seen 集); peeras 用 config 注册表(高亮集, 大表在 asnames.json)。
         "asn_names": ({str(a): n for a, n in asnames.items()} if profile.site(cfg) == "dn42"
                       else {str(a): v["name"] for a, v in bgp.ASN_REGISTRY.items()}),

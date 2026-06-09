@@ -217,36 +217,6 @@ class GeoIndex:
         return out
 
 
-def focus_intervals(conn: sqlite3.Connection, city_set, prov_set) -> tuple[list, list]:
-    """焦点城市/省的 ipdb 区间, 合并相邻后按 start 升序返回 (starts, ends)。供范围相交判定。"""
-    if not (city_set or prov_set):
-        return [], []
-    conds, params = [], []
-    if city_set:
-        conds.append(f"city IN ({','.join('?' * len(city_set))})"); params += list(city_set)
-    if prov_set:
-        conds.append(f"province IN ({','.join('?' * len(prov_set))})"); params += list(prov_set)
-    rows = conn.execute(
-        f"SELECT start_num,end_num FROM geo WHERE {' OR '.join(conds)} ORDER BY start_num", params)
-    starts: list[int] = []
-    ends: list[int] = []
-    for s, e in rows:
-        if ends and s <= ends[-1] + 1:        # 合并相邻/重叠
-            if e > ends[-1]:
-                ends[-1] = e
-        else:
-            starts.append(s); ends.append(e)
-    return starts, ends
-
-
-def interval_overlap(starts: list, ends: list, s: int, e: int) -> bool:
-    """[s,e] 是否与合并区间 (starts,ends) 中任一相交。O(log n)。"""
-    if not starts:
-        return False
-    i = bisect_right(starts, e) - 1
-    return i >= 0 and ends[i] >= s
-
-
 def tag_for_prefix(conn: sqlite3.Connection, start_num: int) -> dict:
     """给前缀打地理标签 (用网络地址查)。返回 dict 便于写入 prefix 表。"""
     row = lookup_int(conn, start_num)

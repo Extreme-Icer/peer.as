@@ -47,7 +47,7 @@
     const r = await probeEgressIps((ip) => {
       const fi = ip.includes(':') ? 1 : 0
       const cur = fams[fi].entries
-      if (cur.length >= 3 || cur.some(e => e.ip === ip)) return    // 每族最多 3 张; 去重
+      if (cur.length >= 4 || cur.some(e => e.ip === ip)) return    // 每族最多 4 张(顶 + 露 3 角); 去重
       const ei = cur.length
       fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '' }]
       reveal(fams[fi].fam + ':' + ip)                              // 排程入场动画(下一帧落入叠堆)
@@ -154,13 +154,13 @@
     if (!settled) {
       return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
     }
-    // 露角值: 第一张(dd=1)与原来完全一致(dx7/dy11/rot2.4); 第二张(dd=2)等比延展; 第 4 张起隐藏。
-    let dx = 0, dy = 0, sc = 1, rot = 0, op = 1
-    if (dd === 1) { dx = 7; dy = 11; sc = 0.94; rot = 2.4; op = 0.82 }
-    else if (dd === 2) { dx = 14; dy = 21; sc = 0.89; rot = 4.6; op = 0.64 }
-    else if (dd >= 3) { dx = 14; dy = 21; sc = 0.89; rot = 4.6; op = 0 }
-    const z = 30 - dd, pe = dd <= 2 ? 'auto' : 'none'
-    return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy}px) scale(${sc}) rotate(${rot}deg); opacity:${op}; z-index:${z}; pointer-events:${pe};`
+    // 露角: 不管背后 1/2/3 张, "最深那张"始终落在同一极限(= 原版单张露角 dx7/dy11/rot2.4),
+    // 故侵占下方的空位恒定 —— 张数多时只是把这段 0→极限 等分得更密(每张占 dd/behind), 不再越叠越往外。
+    const behind = Math.min(fams[c.fi].entries.length - 1, 3)   // 背后露角的张数(最多 3)
+    const frac = behind ? Math.min(dd / behind, 1) : 0          // dd=behind → 1(到极限); 顶张/单张 → 0
+    const dx = 7 * frac, dy = 11 * frac, rot = 2.4 * frac
+    const sc = 1 - 0.06 * frac, op = 1 - 0.18 * frac
+    return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy.toFixed(1)}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg); opacity:${op.toFixed(2)}; z-index:${30 - dd}; pointer-events:auto;`
   }
   // 叠堆最上面那张(最新到的)才挂 famtag / +N 角标; 摊开时 famtag 走 expanded|| 全显。
   function topVisible(c) {

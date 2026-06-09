@@ -99,9 +99,19 @@
   // 逐张入场: 每张新卡(按 key)先以"叠堆正上方 + 透明"渲染一帧, 下一帧记入 revealed →
   // 由 .card 的 CSS transition 落入叠堆 = 一张张"插牌"动画(每拿到一个 IP 就插一张)。
   let revealed = $state(new Set())
-  function reveal(key) {
-    // 稍微压一拍再落: 新卡在叠堆上方多停约 120ms 再掉下去, 插牌动作更有节奏(不至于一到就瞬间归位)。
-    setTimeout(() => requestAnimationFrame(() => { if (!revealed.has(key)) revealed = new Set(revealed).add(key) }), 120)
+  // 入场"飞入"串行队列: 相邻两张强制间隔 100ms 才放下一张 —— 多个 IP 几乎同时到也一张一张落, 不会一起砸下来。
+  let revealQ = []
+  let revealBusy = false
+  function reveal(key) { revealQ.push(key); if (!revealBusy) pumpReveal() }
+  function pumpReveal() {
+    revealBusy = true
+    const key = revealQ.shift()
+    if (key === undefined) { revealBusy = false; return }
+    // 双 rAF: 先让新卡以"上方+透明"渲染并绘制一帧, 再翻 revealed → CSS transition 才会从上方落下(否则瞬间归位)。
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!revealed.has(key)) revealed = new Set(revealed).add(key)
+      setTimeout(pumpReveal, 100)                  // 强制间隔 100ms 再放下一张
+    }))
   }
 
   const depthOf = (c) => {
@@ -128,39 +138,16 @@
     if (expanded) {
       return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(.96) rotate(0deg); opacity:0; z-index:0; pointer-events:none;`
     }
-    // 探测进行中(尚未摊开): 卡片叠成"整齐一叠"(最新到的盖在最上, 下面的只微露一道边), 新卡从上方飞入落顶;
-    // 不露边角散开 —— 等全部 probe 完成后才自动 expand 摊成网格。
-    if (probing && c.kind === 'ip') {
-      const dd = Math.min((fams[c.fi].entries.length - 1) - c.ci, 4)   // 最新=0(最上), 越早到越靠下
-      const off = dd * 3
-      return `transform: translate(${(pileOffset - CARDW / 2 + off).toFixed(1)}px, ${off}px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
-    }
-    // 叠态: front + 背后最多 2 张(共 3 张可见), 紧凑堆叠(每层小幅下移/缩放/微旋); 第 4 张起隐藏。
-    const d = depthOf(c)
-    let dx = 0, dy = 0, sc = 1, rot = 0, op = 1
-    if (d === 1) { dx = 5; dy = 8; sc = 0.96; rot = 1.8; op = 0.9 }
-    else if (d === 2) { dx = 10; dy = 16; sc = 0.92; rot = 3.4; op = 0.76 }
-    else if (d >= 3) { dx = 10; dy = 16; sc = 0.92; rot = 3.4; op = 0 }
-    const z = 30 - d, pe = d <= 2 ? 'auto' : 'none'
-    return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy}px) scale(${sc}) rotate(${rot}deg); opacity:${op}; z-index:${z}; pointer-events:${pe};`
+    // 未摊开(探测中 / 探测完都一样): 卡片叠成"整齐一叠" —— 最新到的盖在最上, 下面的只微露一道边;
+    // 新卡从上方飞入落顶。不自动展开; 点叠堆才摊成网格。
+    const dd = Math.min((fams[c.fi].entries.length - 1) - c.ci, 4)   // 最新=0(最上), 越早到越靠下
+    const off = dd * 3
+    return `transform: translate(${(pileOffset - CARDW / 2 + off).toFixed(1)}px, ${off}px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
   }
-  const delayMs = (c) => (c.kind === 'ip' ? c.ci : 0) * 70
-
-  // 当前"叠堆最上面那张"(famtag / +N 角标只挂它): 探测中=最新到的; 收叠态=front。
+  // 叠堆最上面那张(最新到的)才挂 famtag / +N 角标; 摊开时 famtag 走 expanded|| 全显。
   function topVisible(c) {
-    if (c.kind !== 'ip') return false
-    if (probing) return c.ci === fams[c.fi].entries.length - 1
-    return depthOf(c) === 0
+    return c.kind === 'ip' && c.ci === fams[c.fi].entries.length - 1
   }
-
-  // 全部 probe 完成 + 确有卡(且仍在首页) → 自动摊开成网格。一次性, 之后用户可手动收回。
-  let autoDealt = false
-  $effect(() => {
-    if (!probing && renderList.length && !S.whois.kind && !autoDealt) {
-      autoDealt = true
-      S.probeExpanded = true
-    }
-  })
 
   $effect(() => {
     if (expanded && secEl) requestAnimationFrame(() => secEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
@@ -222,7 +209,7 @@
     {#each renderList as c (c.key)}
       {@const top = topVisible(c)}
       <div class="card" class:clickable={!expanded && c.kind === 'ip'}
-           data-t={c.fam} style="--ac:{c.accent}; transition-delay:{delayMs(c)}ms; {styleFor(c)}"
+           data-t={c.fam} style="--ac:{c.accent}; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
         {@render body(c.fi, c.e, !expanded && top && fams[c.fi].entries.length > 1)}

@@ -120,15 +120,19 @@
 
       <form class="console" onsubmit={submit}>
         <span class="prompt" aria-hidden="true">▸</span>
-        <input
+        <!-- textarea(非 input): 彻底避免 1Password 等把它当密码框。rows=1 + 拦 Enter, 行为同单行 input -->
+        <textarea
           bind:this={inputEl}
           class="cmd"
-          type="text" name="q"
+          rows="1"
+          name="q"
           bind:value={box}
           placeholder={t('wv_ph')}
           spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
-          aria-label="WHOIS"
-        />
+          aria-label="WHOIS" data-1p-ignore data-lpignore="true"
+          onkeydown={(e) => { if (e.key === 'Enter') submit(e) }}
+          oninput={() => { if (box.includes('\n')) box = box.replace(/\n/g, '') }}
+        ></textarea>
         {#if box}
           <button type="button" class="clear" onclick={clearBox} aria-label="清除" title="清除"><Fa icon={iClose} /></button>
         {/if}
@@ -283,10 +287,14 @@
   .console:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-dim), 0 14px 40px -22px rgba(0,0,0,.55); }
   .prompt { color: var(--accent); font: 700 16px var(--mono); animation: blink 1.25s step-end infinite; user-select: none; }
   @keyframes blink { 0%,55% { opacity: 1 } 56%,100% { opacity: .25 } }
+  /* textarea 当单行用: 固定一行高、不换行、无 resize 拖拽角、无滚动条 */
   .cmd {
-    flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent;
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
     font: 500 17px var(--mono); color: var(--fg); letter-spacing: -.005em;
+    height: 24px; line-height: 24px; padding: 0; margin: 0;
+    resize: none; white-space: nowrap; overflow: hidden;
   }
+  .cmd::-webkit-scrollbar { display: none; }
   /* 占位符是中文(输入提示), 用 sans —— mono 下中文难看; 实际输入(ASN/IP/域名)仍走上面的 mono。 */
   .cmd::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); font-size: 14px; }
   .run {
@@ -387,7 +395,7 @@
     .spwrap { display: none; }
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
-    .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
+    .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; line-height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
     .clear { order: 2; }                                                              /* 与 ▸/输入同行, 在其右 */
     .adv { order: 2; }                                                                /* 「专业版」与搜索框同一行 */
     .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }          /* 整行换到下一行 */

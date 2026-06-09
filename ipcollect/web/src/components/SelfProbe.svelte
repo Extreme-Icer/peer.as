@@ -88,6 +88,14 @@
   // 舞台高度: 无卡时收为 0(探测中且还没拿到任何 IP); 有卡后按叠/摊布局撑开。
   let stageH = $derived(!renderList.length ? 0 : expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + 20)
 
+  // 叠态每族横向落点: 只有一族有卡 → 居中(0); 两族都有 → 左右分置。按"实际有卡的族"数算, 不写死 v4 左/v6 右。
+  let pileXs = $derived.by(() => {
+    const present = fams.map((f, i) => i).filter(i => fams[i].entries.length > 0)
+    const xs = {}
+    present.forEach((fi, k) => { xs[fi] = present.length <= 1 ? 0 : (k - (present.length - 1) / 2) * (CARDW + PILEGAP) })
+    return xs
+  })
+
   // 逐张入场: 每张新卡(按 key)先以"叠堆正上方 + 透明"渲染一帧, 下一帧记入 revealed →
   // 由 .card 的 CSS transition 落入叠堆 = 一张张"插牌"动画(每拿到一个 IP 就插一张)。
   let revealed = $state(new Set())
@@ -103,7 +111,7 @@
   }
 
   function styleFor(c) {
-    const pileOffset = (c.fi - 0.5) * (CARDW + PILEGAP)
+    const pileOffset = pileXs[c.fi] ?? 0
     // 入场前(尚未 reveal): 停在归位叠堆的正上方 + 透明且置顶(z 高 → 看得到它从上方落下);
     // reveal 后 CSS transition 落入叠堆并归位到本卡的层深 z = "插牌"动画。
     if (c.kind === 'ip' && !revealed.has(c.key)) {

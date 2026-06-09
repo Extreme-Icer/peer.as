@@ -268,6 +268,25 @@ print(c.execute('SELECT family,count(*) FROM prefix GROUP BY family').fetchall()
 - **纯维护性改动不写**（重构、依赖升级、数据每日刷新、文档/措辞、性能调优等无可见行为变化的）。
 - 格式跟随现有条目即可（`## YYYY-MM-DD` 分组 + `- **新增/改进：…**` 列表项）。改了它前端要重新 `npm run build`。
 
+## 部署 SOP（每次部署看这一节就够，别再通读下方长清单 / `deploy.sh`）
+
+**目录分工（机器上现状）：**
+- **别在这两个"部署目录"里开发**（都挂 cron，保持 `git status` 干净）：peeras 主 checkout `/home/aosc/test-ip-collect`(branch `main`)、dn42 `/home/aosc/dn42-peer-as`(branch `dn42-prod`)。
+- **日常开发 worktree = `/home/aosc/test-ip-collect-dev`(branch `dev`)**：已建好并软链 `node_modules`/`dist|public 的 data`/`duckdb-ext`/`.env`/`.venv`，可直接 `npm run dev`、`npx vite build`。
+
+**部署五步：**
+1. 在 dev worktree 改完 → `git add` **只加改的源文件**；**绝不 `git add -A`**（`public/data`、`public/duckdb-ext`、`.venv` 是本地 symlink，未 gitignore 但**不该提交**）→ commit。
+2. `git fetch origin` → 确认能快进：`git merge-base --is-ancestor origin/main HEAD`。不能（origin/main 被 dn42 提交推进、已分叉）→ `git rebase origin/main`（可能撞 `AGENTS.md`/`db.js`，解冲突）。
+3. `git push origin dev:main`。**GitOps 的唯一真源是 `origin/main`；不 push 到 main，线上 ≤8h 会被 cron 回滚。**
+4. **从主 checkout** `cd /home/aosc/test-ip-collect && scripts/deploy.sh`：
+   - 只动前端/代码 → 无 flag（复用现有数据）；改了数据/要全重推 v4+v6 → `--data`。
+   - 它自己会 GitOps ff 到 origin/main、`npm build`、数据闸校验、推 **CF + CN** 两端、末尾核两端入口一致。
+   - **绝不在缺 `.env` 的 worktree 跑 deploy.sh**（CN 静默跳过→两端 meta 不一致）；**绝不手敲 wrangler/rsync/手动 build**。
+5. 成功 = 日志末尾打印 `完成 ✅`（含「✓ peer.as 入口一致」「✓ cn.peer.as 入口一致」）。**dn42 站由它自己的 10min cron 从 origin/main 自动同步，无需手动部署。**
+
+> 纯文档/记忆类改动（如本文件）：走 1–3（commit + `push origin dev:main`）即可，**不必跑 deploy.sh**（不进 dist、不影响站点）。
+> 需要排错或细节时，再往下读「部署注意事项(踩坑清单)」与「构建 & 部署」。
+
 ## 构建 & 部署（Cloudflare Pages）
 
 **唯一部署入口 = `scripts/deploy.sh`**。cron(daily-refresh)、手动改完推送、开发全重推数据/只动前端 **全走它同一段部署核心**，

@@ -226,7 +226,7 @@
   <div class="stage" bind:clientWidth={stageW} style="height:{stageH}px">
     {#each renderList as c (c.key)}
       {@const top = topVisible(c)}
-      <div class="card" class:clickable={!expanded && c.kind === 'ip'} class:flat={!expanded && !top}
+      <div class="card" class:clickable={!expanded && c.kind === 'ip'} class:flat={!expanded && c.ci !== 0}
            data-t={c.fam} style="--ac:{c.accent}; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
@@ -259,7 +259,8 @@
     box-shadow: 0 16px 34px -22px rgba(0,0,0,.5);
     transition: transform .55s cubic-bezier(.2, .8, .25, 1), opacity .45s ease;
   }
-  /* 叠放时只让最上面那张(最新落下的主卡)带阴影托住整叠; 背后各张去阴影, 避免层层叠加变重。 */
+  /* 叠放时只让最底那张(最先到、压在最下面的 ci=0)带阴影投到地面(符合物理: 整叠的影子来自最底);
+     其余各张去阴影, 避免层层叠加变重。 */
   .card.flat { box-shadow: none; }
   .card.clickable { cursor: pointer; }
   .sp.expanded .card { cursor: default; }

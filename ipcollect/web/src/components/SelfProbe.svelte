@@ -35,6 +35,7 @@
   }
 
   let probing = $state(true)
+  let settled = $state(false)             // 叠堆是否已"结算"(全部 probe + 飞入都完): false=对齐一摞, true=微旋露右下角
   let defaultIp = $state(null)            // 被最多端点看到的出口(浏览器主用栈)
   let fams = $state([
     { fam: 'ip4', label: 'IPv4', accent: '#2563eb', entries: [], front: 0 },   // 蓝
@@ -57,8 +58,9 @@
         if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
       }).catch(() => { fams[fi].entries[ei].enriching = false })
     })
-    probing = false                 // 所有端点结束: 此后空协议栈才显示"无 IPvx"卡(探测中不预判为空)
+    probing = false                 // 所有端点结束
     defaultIp = r.defaultIp          // 用最终票数确定活跃(浏览器主用)协议栈的高亮
+    maybeSettle()                    // probe 全完: 若飞入也已派发完, 排定结算(展成露角叠堆)
   })
 
   const stop = (e) => e.stopPropagation()
@@ -86,7 +88,7 @@
   let cols = $derived(Math.max(1, Math.min(4, entryCount || 1, Math.floor((stageW + GAP) / (CARDW + GAP)) || 1)))
   let gridRows = $derived(Math.max(1, Math.ceil((entryCount || 1) / cols)))
   // 舞台高度: 无卡时收为 0(探测中且还没拿到任何 IP); 有卡后按叠/摊布局撑开。
-  let stageH = $derived(!renderList.length ? 0 : expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + 20)
+  let stageH = $derived(!renderList.length ? 0 : expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + (settled ? 26 : 6))
 
   // 叠态每族横向落点: 只有一族有卡 → 居中(0); 两族都有 → 左右分置。按"实际有卡的族"数算, 不写死 v4 左/v6 右。
   let pileXs = $derived.by(() => {
@@ -106,12 +108,19 @@
   function pumpReveal() {
     revealBusy = true
     const key = revealQ.shift()
-    if (key === undefined) { revealBusy = false; return }
+    if (key === undefined) { revealBusy = false; maybeSettle(); return }   // 队列空 → 看能否结算
     // 双 rAF: 先让新卡以"上方+透明"渲染并绘制一帧, 再翻 revealed → CSS transition 才会从上方落下(否则瞬间归位)。
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (!revealed.has(key)) revealed = new Set(revealed).add(key)
       setTimeout(pumpReveal, 100)                  // 强制间隔 100ms 再放下一张
     }))
+  }
+
+  // 结算: 全部 probe 完成 + 所有飞入都派发并播完之后, 叠堆才从"整齐一摞"展成"微旋露右下角"(发牌感)。
+  // 任一条件未满足(还有 probe pending / 还有卡在排队飞入)就不结算。
+  function maybeSettle() {
+    if (settled || probing || revealBusy || revealQ.length) return
+    setTimeout(() => { if (!settled && !probing && !revealBusy && !revealQ.length) settled = true }, 560)  // 等最后一张落位动画(~.55s)播完
   }
 
   const depthOf = (c) => {
@@ -138,11 +147,20 @@
     if (expanded) {
       return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(.96) rotate(0deg); opacity:0; z-index:0; pointer-events:none;`
     }
-    // 未摊开(探测中 / 探测完都一样): 卡片叠成"整齐一叠" —— 最新到的盖在最上, 下面的只微露一道边;
-    // 新卡从上方飞入落顶。不自动展开; 点叠堆才摊成网格。
-    const dd = Math.min((fams[c.fi].entries.length - 1) - c.ci, 4)   // 最新=0(最上), 越早到越靠下
-    const off = dd * 3
-    return `transform: translate(${(pileOffset - CARDW / 2 + off).toFixed(1)}px, ${off}px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
+    // 未摊开, 分两段时序:
+    //  · 未结算(飞入中 / 仍有 probe pending): 整齐对齐叠成一摞, 不露角; 新卡从上方飞入落顶。
+    //  · 已结算(全部 probe 完 + 飞入动画都播完): 才微微旋转、错开露出右下角一点(front + 背后最多 2 张)。
+    const dd = (fams[c.fi].entries.length - 1) - c.ci    // 0=最新(最上), 越早到越靠下
+    if (!settled) {
+      return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
+    }
+    // 露角值: 第一张(dd=1)与原来完全一致(dx7/dy11/rot2.4); 第二张(dd=2)等比延展; 第 4 张起隐藏。
+    let dx = 0, dy = 0, sc = 1, rot = 0, op = 1
+    if (dd === 1) { dx = 7; dy = 11; sc = 0.94; rot = 2.4; op = 0.82 }
+    else if (dd === 2) { dx = 14; dy = 21; sc = 0.89; rot = 4.6; op = 0.64 }
+    else if (dd >= 3) { dx = 14; dy = 21; sc = 0.89; rot = 4.6; op = 0 }
+    const z = 30 - dd, pe = dd <= 2 ? 'auto' : 'none'
+    return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy}px) scale(${sc}) rotate(${rot}deg); opacity:${op}; z-index:${z}; pointer-events:${pe};`
   }
   // 叠堆最上面那张(最新到的)才挂 famtag / +N 角标; 摊开时 famtag 走 expanded|| 全显。
   function topVisible(c) {

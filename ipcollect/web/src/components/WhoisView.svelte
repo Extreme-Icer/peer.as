@@ -192,7 +192,7 @@
     position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
     transition: padding-top .5s ease, padding-bottom .5s ease;
   }
-  .scroll.center { padding-top: 26vh; }                /* 让「字标 + 查询框」这一组落在页面视觉中心(示例/接入卡在其下, 可滚动) */
+  .scroll.center { padding-top: 28vh; }                /* 让「字标 + 查询框」这一组落在页面视觉中心(示例/接入卡在其下, 可滚动) */
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
@@ -268,7 +268,7 @@
 
   /* 「你的接入」探测卡片包裹层: 出结果时与 hero 同步收起(高度折叠 + 下沉淡出, 不直接消失) */
   .spwrap {
-    overflow: hidden; max-height: 480px; opacity: 1;     /* 折叠用上界: 桌面两栏内容远小于此 */
+    max-height: 480px; opacity: 1;     /* 折叠用上界: 桌面两栏内容远小于此 */
     transition: max-height .5s ease, opacity .4s ease, transform .5s ease, margin .5s ease;
   }
   .spwrap.gone { max-height: 0; opacity: 0; transform: translateY(16px); margin: 0; pointer-events: none; }

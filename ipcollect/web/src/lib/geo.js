@@ -167,13 +167,19 @@ async function upyunIp(url) {
   } catch (e) { return null }
 }
 
-export async function probeEgressIps() {
-  const results = await Promise.all([
+// onIp(ip): 每发现一个"新的"(去重后)出口 IP 就立即回调一次 —— 让 UI 拿到一个就插一张卡,
+// 不必等所有端点(含慢/超时的)跑完。返回值仍是全部端点跑完后的最终汇总(按票数排序 + defaultIp)。
+export async function probeEgressIps(onIp) {
+  const count = new Map()
+  const seen = new Set()
+  await Promise.all([
     ...EGRESS_TRACE.map(u => traceIp(u)),
     upyunIp(EGRESS_UPYUN),
-  ])
-  const count = new Map()
-  for (const ip of results) if (ip) count.set(ip, (count.get(ip) || 0) + 1)
+  ].map(p => p.then(ip => {
+    if (!ip) return
+    count.set(ip, (count.get(ip) || 0) + 1)
+    if (!seen.has(ip)) { seen.add(ip); if (onIp) { try { onIp(ip) } catch (e) { /* UI 回调异常不拖累探测 */ } } }
+  })))
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })
   const byN = (a, b) => b.n - a.n

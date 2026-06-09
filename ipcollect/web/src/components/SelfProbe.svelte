@@ -42,24 +42,23 @@
   ])
 
   onMount(async () => {
-    const r = await probeEgressIps()
-    probing = false
-    defaultIp = r.defaultIp
-    const fill = (fi, ips) => {
-      const es = (ips || []).slice(0, 4).map(ip => ({ ip, enriching: true, info: null, holder: '' }))
-      fams[fi].entries = es
-      fams[fi].front = 0
-      es.forEach((e, ei) => {
-        probeIp(e.ip).then((info) => {
-          fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
-          // IP 所属组织(RDAP, 异步独立填充, 失败静默): 与 origin ASN(运营商)不同
-          const px = info && info.prefix
-          if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
-        }).catch(() => { fams[fi].entries[ei].enriching = false })
-      })
-    }
-    fill(0, r.v4)
-    fill(1, r.v6)
+    // 每拿到一个出口 IP 就立刻插一张卡(不等所有端点跑完); 卡内的库内富集(prefix/ASN/geo)随后异步在原地补。
+    const r = await probeEgressIps((ip) => {
+      const fi = ip.includes(':') ? 1 : 0
+      const cur = fams[fi].entries
+      if (cur.length >= 3 || cur.some(e => e.ip === ip)) return    // 每族最多 3 张; 去重
+      const ei = cur.length
+      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '' }]
+      reveal(fams[fi].fam + ':' + ip)                              // 排程入场动画(下一帧落入叠堆)
+      probeIp(ip).then((info) => {
+        fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
+        // IP 所属组织(RDAP, 异步独立填充, 失败静默): 与 origin ASN(运营商)不同
+        const px = info && info.prefix
+        if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
+      }).catch(() => { fams[fi].entries[ei].enriching = false })
+    })
+    probing = false                 // 所有端点结束: 此后空协议栈才显示"无 IPvx"卡(探测中不预判为空)
+    defaultIp = r.defaultIp          // 用最终票数确定活跃(浏览器主用)协议栈的高亮
   })
 
   const stop = (e) => e.stopPropagation()
@@ -78,8 +77,11 @@
     const out = []; let g = 0
     fams.forEach((f, fi) => {
       const base = { fi, fam: f.fam, accent: f.accent, label: f.label }
-      if (probing) { out.push({ ...base, key: f.fam + ':skel', kind: 'skel', ci: 0, e: null, g: -1 }); return }
-      if (!f.entries.length) { out.push({ ...base, key: f.fam + ':none', kind: 'none', ci: 0, e: null, g: -1 }); return }
+      if (!f.entries.length) {
+        // 该族暂无 IP: 探测中先不出卡(可能还在来); 全部端点结束后才确定是真没有 → 出"无 IPvx"卡
+        if (!probing) out.push({ ...base, key: f.fam + ':none', kind: 'none', ci: 0, e: null, g: -1 })
+        return
+      }
       f.entries.forEach((e, ci) => out.push({ ...base, key: f.fam + ':' + e.ip, kind: 'ip', ci, e, g: g++ }))
     })
     return out
@@ -87,7 +89,16 @@
   let entryCount = $derived(renderList.filter(c => c.kind === 'ip').length)
   let cols = $derived(Math.max(1, Math.min(4, entryCount || 1, Math.floor((stageW + GAP) / (CARDW + GAP)) || 1)))
   let gridRows = $derived(Math.max(1, Math.ceil((entryCount || 1) / cols)))
-  let stageH = $derived(expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + 16)
+  // 舞台高度: 无卡时收为 0(探测中且还没拿到任何 IP); 有卡后按叠/摊布局撑开。
+  let stageH = $derived(!renderList.length ? 0 : expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + 20)
+
+  // 逐张入场: 每张新卡(按 key)先以"叠堆正上方 + 透明"渲染一帧, 下一帧记入 revealed →
+  // 由 .card 的 CSS transition 落入叠堆 = 一张张"插牌"动画(每拿到一个 IP 就插一张)。
+  let revealed = $state(new Set())
+  function reveal(key) {
+    // 稍微压一拍再落: 新卡在叠堆上方多停约 120ms 再掉下去, 插牌动作更有节奏(不至于一到就瞬间归位)。
+    setTimeout(() => requestAnimationFrame(() => { if (!revealed.has(key)) revealed = new Set(revealed).add(key) }), 120)
+  }
 
   const depthOf = (c) => {
     if (c.kind !== 'ip') return 0
@@ -97,6 +108,11 @@
 
   function styleFor(c) {
     const pileOffset = (c.fi - 0.5) * (CARDW + PILEGAP)
+    // 入场前(尚未 reveal): 停在归位叠堆的正上方 + 透明且置顶(z 高 → 看得到它从上方落下);
+    // reveal 后 CSS transition 落入叠堆并归位到本卡的层深 z = "插牌"动画。
+    if (c.kind === 'ip' && !revealed.has(c.key)) {
+      return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, -30px) scale(.92) rotate(0deg); opacity:0; z-index:40; pointer-events:none;`
+    }
     if (expanded && c.kind === 'ip') {
       const row = Math.floor(c.g / cols), col = c.g % cols
       const rowCount = Math.min(cols, entryCount - row * cols)
@@ -108,11 +124,13 @@
     if (expanded) {
       return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(.96) rotate(0deg); opacity:0; z-index:0; pointer-events:none;`
     }
+    // 叠态: front + 背后最多 2 张(共 3 张可见), 紧凑堆叠(每层小幅下移/缩放/微旋); 第 4 张起隐藏。
     const d = depthOf(c)
     let dx = 0, dy = 0, sc = 1, rot = 0, op = 1
-    if (d === 1) { dx = 7; dy = 11; sc = 0.94; rot = 2.4; op = 0.82 }
-    else if (d >= 2) { dx = 7; dy = 11; sc = 0.94; rot = 2.4; op = 0 }
-    const z = 30 - d, pe = d <= 1 ? 'auto' : 'none'
+    if (d === 1) { dx = 5; dy = 8; sc = 0.96; rot = 1.8; op = 0.9 }
+    else if (d === 2) { dx = 10; dy = 16; sc = 0.92; rot = 3.4; op = 0.76 }
+    else if (d >= 3) { dx = 10; dy = 16; sc = 0.92; rot = 3.4; op = 0 }
+    const z = 30 - d, pe = d <= 2 ? 'auto' : 'none'
     return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy}px) scale(${sc}) rotate(${rot}deg); opacity:${op}; z-index:${z}; pointer-events:${pe};`
   }
   const delayMs = (c) => (c.kind === 'ip' ? c.ci : 0) * 70
@@ -180,9 +198,7 @@
            data-t={c.fam} style="--ac:{c.accent}; transition-delay:{delayMs(c)}ms; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
-        {#if c.kind === 'skel'}
-          <div class="cbody"><span class="ip skel">····· ·····</span></div>
-        {:else if c.kind === 'none'}
+        {#if c.kind === 'none'}
           <div class="cbody"><span class="none">{c.fam === 'ip4' ? t('sp_v4none') : t('sp_v6none')}</span></div>
         {:else}
           {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
@@ -245,7 +261,6 @@
   .iprow { padding-right: 30px; line-height: 1.65; }
   .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
   a.ip:hover { color: var(--ac); text-decoration: none; }
-  .ip.skel { color: var(--muted); opacity: .45; letter-spacing: .22em; cursor: default; }
   .ip.masked { user-select: none; cursor: default; color: var(--muted); opacity: .7; letter-spacing: .03em; }
   .none { font: 500 13px var(--sans); color: var(--muted); }
   .sub { font-size: 12.5px; }

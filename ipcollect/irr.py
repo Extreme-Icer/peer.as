@@ -20,6 +20,8 @@ import csv
 import gzip
 import ipaddress
 import json
+import re
+import socket
 import time
 from pathlib import Path
 
@@ -28,6 +30,17 @@ from . import profile, util
 IRR_DIR = util.CACHE_DIR / "irr"
 ROUTE_CSV = IRR_DIR / "route.csv"
 META_JSON = IRR_DIR / "meta.json"
+
+# RADB 增量镜像(NRTMv3 over TCP)。RADB 无 HTTPS, 全量 FTP dump 要 ~37min; 改为:
+#   首跑/断档 -> FTP 全量 bootstrap(+读 RADB.CURRENTSERIAL 定位精确 serial, 无缝衔接);
+#   之后每跑 -> `-g RADB:3:<上次+1>-<当前>` 拉增量(ADD/DEL), 应用到持久化对象集, 几秒完成。
+# 状态持久化在 cache/irr/(radb.objects.csv = RADB 那部分 route 行; radb.serial = 已应用到的 serial)。
+NRTM_HOST, NRTM_PORT = "nrtm.radb.net", 43
+RADB_STATE = IRR_DIR / "radb.objects.csv"
+RADB_SERIAL = IRR_DIR / "radb.serial"
+# 落后超过此 op 数就直接重 bootstrap。RADB NRTM 流被限速到 ~15-40 op/s, 30k op ≈ 全量 dump 耗时,
+# 再多 streaming 反而更慢。正常日增量仅数千 op。
+RADB_MAX_DELTA = 30_000
 
 # (默认来源库名, dump URL)。RPSL 对象自带 `source:` 时以对象为准(RADB dump 内混了被镜像库)。
 DEFAULT_SOURCES: list[tuple[str, str]] = [
@@ -105,6 +118,176 @@ def _download(url: str, dest: Path) -> bool:
     return util.download_file(url, dest)   # 支持 http(s) 与 ftp(RADB)
 
 
+# ── RADB NRTMv3 增量 ───────────────────────────────────────────────
+def _nrtm_query(query: str, connect_timeout: int = 15, idle_timeout: int = 30,
+                until: bytes | None = None, max_bytes: int = 64_000_000) -> bytes:
+    """连 nrtm.radb.net:43 发一条 IRRd 查询, 读到 `until` 终止符 / 连接关闭 / 空闲超时返回全部字节。
+    传 until(如 b'%END RADB')可在终止符到达即停, 既快又能让调用方据其判断流是否完整(防被空闲超时截断)。"""
+    s = socket.create_connection((NRTM_HOST, NRTM_PORT), timeout=connect_timeout)
+    s.settimeout(idle_timeout)
+    try:
+        s.sendall((query + "\n").encode())
+        buf = bytearray()
+        while len(buf) < max_bytes:
+            try:
+                d = s.recv(65536)
+            except socket.timeout:
+                break
+            if not d:
+                break
+            buf += d
+            if until and until in buf[-(len(d) + len(until)):]:   # 终止符到达即停, 不空等
+                break
+        return bytes(buf)
+    finally:
+        s.close()
+
+
+def _radb_status() -> tuple[bool, int, int] | None:
+    """!jRADB -> (mirrorable, oldest_serial, current_serial); 失败/不可解析 -> None。"""
+    try:
+        resp = _nrtm_query("!jRADB", idle_timeout=8, until=b"\nC\n").decode("latin-1", "replace")
+    except OSError as e:
+        util.log(f"  ! RADB !j 查询失败: {e}", err=True)
+        return None
+    m = re.search(r"RADB:([A-Z]):(\d+)-(\d+)", resp)
+    if not m:
+        util.log(f"  ! RADB !j 无法解析: {resp[:80]!r}", err=True)
+        return None
+    return (m.group(1) == "Y", int(m.group(2)), int(m.group(3)))
+
+
+def _radb_currentserial(url: str) -> int | None:
+    """读 RADB.CURRENTSERIAL(全量 dump 对应的精确 serial)。"""
+    dest = IRR_DIR / "RADB.CURRENTSERIAL"
+    try:
+        if not util.download_file(url, dest):
+            return None
+        return int(dest.read_text(encoding="latin-1").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _load_radb_state() -> set | None:
+    if not RADB_STATE.exists():
+        return None
+    objs: set = set()
+    with open(RADB_STATE, newline="", encoding="utf-8") as f:
+        for row in csv.reader(f):
+            if len(row) != 6:
+                continue
+            try:
+                objs.add((int(row[0]), int(row[1]), int(row[2]), int(row[3]), int(row[4]), row[5]))
+            except ValueError:
+                continue
+    return objs
+
+
+def _save_radb_state(objs: set, serial: int) -> None:
+    with open(RADB_STATE, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(sorted(objs))
+    RADB_SERIAL.write_text(str(int(serial)), encoding="utf-8")
+
+
+def _load_radb_serial() -> int | None:
+    try:
+        return int(RADB_SERIAL.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _apply_nrtm_deltas(text: str, objs: set) -> tuple[int, int]:
+    """把 NRTMv3 流(%START / ADD<serial> / DEL<serial> / RPSL 块 / %END)应用到 objs。返回 (净增, 净删)。"""
+    op: str | None = None
+    cur: list[tuple[str, str]] = []
+    nadd = ndel = 0
+
+    def flush() -> None:
+        nonlocal cur, nadd, ndel
+        r = _emit(cur, "RADB")
+        cur = []
+        if r is None or op is None:
+            return
+        if op == "ADD":
+            if r not in objs:
+                nadd += 1
+            objs.add(r)
+        else:
+            if r in objs:
+                ndel += 1
+            objs.discard(r)
+
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r")
+        s = line.strip()
+        if s.startswith("%"):            # %START / %END -> 边界
+            flush()
+            continue
+        u = s.upper()
+        if u.startswith("ADD ") or u == "ADD" or u.startswith("DEL ") or u == "DEL":
+            flush()                       # 先收掉上一个对象(用上一个 op), 再切换 op
+            op = "ADD" if u[0] == "A" else "DEL"
+            continue
+        if not s:                         # 空行 -> 对象边界
+            flush()
+            continue
+        if line[0] in " \t+":             # RPSL 续行
+            if cur:
+                cur[-1] = (cur[-1][0], (cur[-1][1] + " " + s).strip())
+        elif line[0] == "#":
+            continue
+        else:
+            k, sep, v = line.partition(":")
+            if sep:
+                cur.append((k.strip().lower(), v.strip()))
+    flush()
+    return nadd, ndel
+
+
+def _radb_routes(bootstrap_url: str) -> set | None:
+    """取 RADB route 行集合: 优先 NRTMv3 增量, 首跑/断档/失败回退 FTP 全量 dump。"""
+    st = _radb_status()                   # (mirrorable, oldest, current) | None
+    objs = _load_radb_state()
+    serial0 = _load_radb_serial()
+    if (st and st[0] and objs is not None and serial0 is not None
+            and st[1] <= serial0 <= st[2] and (st[2] - serial0) <= RADB_MAX_DELTA):
+        current = st[2]
+        if serial0 >= current:
+            util.log(f"    RADB: 无变化(serial {current}), 复用 {util.human(len(objs))} 对象")
+            return objs
+        try:
+            text = _nrtm_query(f"-g RADB:3:{serial0 + 1}-{current}", until=b"%END RADB").decode("latin-1", "replace")
+            # 必须见到完整 %START…%END(否则可能被空闲超时截断丢尾): 不完整就当失败回退, 不提交 serial。
+            if "%START" not in text or "%END" not in text:
+                raise OSError(f"NRTM 流不完整(缺 %START/%END): {text[:60]!r}…{text[-60:]!r}")
+            na, nd = _apply_nrtm_deltas(text, objs)
+            _save_radb_state(objs, current)
+            util.log(f"    RADB: NRTM 增量 +{na}/-{nd} (serial {serial0}→{current}) -> {util.human(len(objs))} 对象")
+            return objs
+        except OSError as e:
+            util.log(f"  ! RADB NRTM 增量失败({e}), 回退 FTP 全量", err=True)
+
+    # bootstrap: FTP 全量 dump + RADB.CURRENTSERIAL 定位精确 serial(无缝衔接)
+    gz = IRR_DIR / bootstrap_url.rstrip("/").split("/")[-1]
+    if not _download(bootstrap_url, gz):
+        return objs                        # 下载失败 -> 旧状态兜底(可能 None)
+    dump_serial = _radb_currentserial(bootstrap_url.rsplit("/", 1)[0] + "/RADB.CURRENTSERIAL")
+    new: set = set()
+    try:
+        with gzip.open(gz, "rb") as fh:
+            for r in _parse_stream(fh, "RADB"):
+                new.add(r)
+    except Exception as e:  # noqa
+        util.log(f"  ! RADB dump 解析失败: {e}", err=True)
+        return objs
+    if dump_serial is None and st:
+        dump_serial = st[2]                # 兜底: 用 !j current(可能略丢 dump→current 间变更, 下轮增量自愈)
+    if dump_serial is not None:
+        _save_radb_state(new, dump_serial)
+    util.log(f"    RADB: FTP 全量 bootstrap {util.human(len(new))} 对象 (serial={dump_serial})")
+    return new
+
+
 def _rows_from_registry(cfg) -> tuple[list[tuple], list[str]]:
     """dn42: registry route/route6 即 IRR(source=DN42, 权威)。"""
     from . import registry
@@ -150,6 +333,15 @@ def refresh(cfg: dict, force: bool = False) -> dict | None:
         for s in srcs:
             name = (s.get("name") if isinstance(s, dict) else s[0])
             url = (s.get("url") if isinstance(s, dict) else s[1])
+            # RADB: 走 NRTMv3 增量(无 HTTPS, 全量 FTP 太慢), 详见 _radb_routes。
+            if name.upper() == "RADB":
+                radb = _radb_routes(url)
+                if radb:
+                    n0 = len(seen)
+                    seen |= radb
+                    sources_ok.append(name)
+                    util.log(f"    {name}: +{util.human(len(seen) - n0)} route 对象(去重后)")
+                continue
             gz = IRR_DIR / (url.rstrip("/").split("/")[-1])
             if not _download(url, gz):
                 continue

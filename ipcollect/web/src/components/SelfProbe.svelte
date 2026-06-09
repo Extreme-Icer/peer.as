@@ -74,14 +74,10 @@
   function toggleExpand() { S.probeExpanded = !S.probeExpanded }
 
   let renderList = $derived.by(() => {
+    // 没探到 IP 的协议栈 = 整块不显示(不出"无 IPvx"提示); 探到几个就出几张卡。
     const out = []; let g = 0
     fams.forEach((f, fi) => {
       const base = { fi, fam: f.fam, accent: f.accent, label: f.label }
-      if (!f.entries.length) {
-        // 该族暂无 IP: 探测中先不出卡(可能还在来); 全部端点结束后才确定是真没有 → 出"无 IPvx"卡
-        if (!probing) out.push({ ...base, key: f.fam + ':none', kind: 'none', ci: 0, e: null, g: -1 })
-        return
-      }
       f.entries.forEach((e, ci) => out.push({ ...base, key: f.fam + ':' + e.ip, kind: 'ip', ci, e, g: g++ }))
     })
     return out
@@ -198,11 +194,7 @@
            data-t={c.fam} style="--ac:{c.accent}; transition-delay:{delayMs(c)}ms; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
-        {#if c.kind === 'none'}
-          <div class="cbody"><span class="none">{c.fam === 'ip4' ? t('sp_v4none') : t('sp_v6none')}</span></div>
-        {:else}
-          {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
-        {/if}
+        {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
         {#if expanded || d === 0}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
       </div>
     {/each}
@@ -262,7 +254,6 @@
   .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
   a.ip:hover { color: var(--ac); text-decoration: none; }
   .ip.masked { user-select: none; cursor: default; color: var(--muted); opacity: .7; letter-spacing: .03em; }
-  .none { font: 500 13px var(--sans); color: var(--muted); }
   .sub { font-size: 12.5px; }
   .muted { color: var(--muted); font-family: var(--sans); }
 

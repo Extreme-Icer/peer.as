@@ -38,28 +38,25 @@
   })
   let dgLoading = $derived(dgRouteLoading)
 
-  // 背景全屏立体字 PEER.AS: 鼠标"按下"视差 + 入场淡入(bgShown) + 出结果淡出
-  // 立体字整体位移(用 translate, 不用 margin): 桌面上移 150px; 移动端上移 190px
-  const wordUpFor = () => (window.innerWidth <= 820 ? -190 : -150)
-  let wordUp = $state(wordUpFor())
-  let wordTransform = $state(`translateY(${wordUp}px)`)
+  // 立体字 PEER.AS: 现在是查询框正上方的字标(不再是全屏背景), 与查询框作为一组纵向居中。
+  // 只保留鼠标视差的 3D 倾斜 + 入场淡入(bgShown) + 出结果折叠淡出。
+  let wordTransform = $state('')
   let bgShown = $state(false)
-  let booting = $state(true)   // 首帧禁用过渡/动画: 直接从 URL 带查询进来时 logo/地球直接隐藏, 不放动画
-  // 最近一次指针位置(client 坐标): 用于 resize 重算 wordUp 后保持视差不跳
+  let booting = $state(true)   // 首帧禁用过渡/动画: 直接从 URL 带查询进来时字标/地球直接隐藏, 不放动画
+  // 最近一次指针位置(client 坐标): 用于 resize 后保持视差不跳
   let lastPx = 0, lastPy = 0
-  // 统一的立体字视差更新: 同时被 window mousemove 与 canvas 转发(onpointer)调用,
-  // 这样指针移到 canvas 上也不会丢失跟随效果。
+  // 统一的立体字视差更新: 同时被 window mousemove 与 canvas 转发(onpointer)调用。
   function updateWord(clientX, clientY) {
     lastPx = clientX; lastPy = clientY
     const ox = Math.max(-0.5, Math.min(0.5, clientX / window.innerWidth - 0.5))
     const oy = Math.max(-0.5, Math.min(0.5, clientY / window.innerHeight - 0.5))
-    wordTransform = `translateY(${wordUp}px) rotateX(${(-oy * 12).toFixed(2)}deg) rotateY(${(ox * 12).toFixed(2)}deg)`
+    wordTransform = `rotateX(${(-oy * 10).toFixed(2)}deg) rotateY(${(ox * 10).toFixed(2)}deg)`
   }
   onMount(() => {
     // 两帧后再开过渡 + 触发入场(此时若带查询, 仍是 gone 态, 不会有动画)
     requestAnimationFrame(() => requestAnimationFrame(() => { booting = false; bgShown = true }))
     const onMove = (e) => updateWord(e.clientX, e.clientY)
-    const onResize = () => { wordUp = wordUpFor(); updateWord(lastPx, lastPy) }
+    const onResize = () => updateWord(lastPx, lastPy)
     window.addEventListener('mousemove', onMove)
     window.addEventListener('resize', onResize)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('resize', onResize) }
@@ -113,15 +110,17 @@
 </script>
 
 <main class="wv">
-  <!-- 全屏背景 3D 立体字: 整个 view 大小, 在内容(.scroll)之后; 入场淡入, 出结果淡出 -->
-  <div class="bgword" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true"><div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div></div>
+  <!-- 右侧 3D 地球: 入场从右上远方放大就位 → 占据右侧、露约 1/3 球面缓慢转动 → 出结果放大右移退场。
+       露出的弧面可拖动/点击(命中层裁成圆, 圆外穿透), 用 CSS transform 框出"地球左侧视图"的感觉。 -->
+  <div class="globe-stage" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting>
+    <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
+  </div>
   <MobileBar />
   <div class="scroll" class:center={!S.whois.kind}>
     <div class="col" class:wide={S.probeExpanded}>
-      <div class="hero" class:gone={S.whois.kind || S.probeExpanded} class:booting>
-        <div class="heroinner">
-          <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
-        </div>
+      <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
+      <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
+        <div class="word" style:transform={wordTransform}><span class="p">PEER.</span><span class="a">AS</span></div>
       </div>
 
       <form class="console" onsubmit={submit}>
@@ -187,7 +186,8 @@
   /* 视图配色: 暗色为运营商终端, 亮色为干净变体(沿用全局 token)。背景= 点阵网格 + 顶部 accent 辉光。 */
   .wv {
     flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh;
-    position: relative; overflow: hidden;            /* bgword 定位上下文 + 裁到 view 内 */
+    position: relative; overflow: hidden;            /* 地球/字标定位上下文 + 裁到 view 内 */
+    container-type: inline-size;                      /* 供 @container 判断内容区宽度(地球太窄退场) */
     background:
       radial-gradient(1100px 460px at 50% -180px, var(--accent-dim), transparent 70%),
       radial-gradient(rgba(125,200,190,.05) 1px, transparent 1px) 0 0 / 22px 22px,
@@ -198,65 +198,79 @@
     position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
     transition: padding-top .5s ease, padding-bottom .5s ease;
   }
-  .scroll.center { padding-top: 4vh; }                 /* 底部留白交给 base 的 60px(12vh 只会凭空生出多余滚动) */
+  .scroll.center { padding-top: 26vh; }                /* 让「字标 + 查询框」这一组落在页面视觉中心(示例/接入卡在其下, 可滚动) */
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
-  /* 搜索框/示例/hero 仍居中收窄在 820 —— 尤其 hero: 若随列变宽, 地球 canvas 会触发 ResizeObserver
-     重置 WebGL 画布(发牌瞬间"闪一下"); 锁住其宽度即可消除闪烁。 */
-  .col.wide .console, .col.wide .examples, .col.wide .hero { max-width: 820px; margin-left: auto; margin-right: auto; }
+  /* 「你的接入」摊牌时列放宽, 但搜索框/示例仍居中收窄在 820(地球已移到列外的侧景层, 不受列宽影响) */
+  .col.wide .console, .col.wide .examples { max-width: 820px; margin-left: auto; margin-right: auto; }
 
-  /* ── 全屏背景 3D 立体字 PEER.AS ── 整个 view 大小, 不被裁剪; 入场淡入 / 出结果淡出 / 鼠标视差 ── */
-  .bgword {
-    /* 固定 100vh 高(不随内容/折叠改变 → 字不跳); 整个 view 宽 */
-    position: absolute; top: 0; left: 0; right: 0; height: 100vh; z-index: 0; pointer-events: none;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; perspective: 900px;
-    opacity: 0; transition: opacity .8s ease;
-    /* 浅色默认; 暗色在下方覆盖 */
-    --w1: #97a8b9; --w1e: #7e90a2; --w2: #cf9f63; --w2e: #b58a55;
+  /* ── PEER.AS 字标(查询框正上方) ── 3D 叠层立体字 + 鼠标视差; 入场淡入 / 出结果折叠淡出 ──
+     宽度 ≈ 查询框(820)的 70%; 与查询框作为一组, 由 .scroll.center 的 padding 纵向居中。 */
+  .wordmark {
+    display: flex; justify-content: center; perspective: 900px;
+    margin: 0 auto 24px; max-height: 220px; overflow: visible;
+    opacity: 0; transition: opacity .8s ease, max-height .5s ease, margin .5s ease;
+    /* 浅色默认; 暗色在下方覆盖。对比度压低一档(前景往背景靠 + 立体阴影变浅) */
+    --w1: #aeb9c4; --w1e: #9aa7b3; --w2: #dab98c; --w2e: #c7a87e;
   }
-  .bgword.in { opacity: 1; }                /* 入场淡入 */
-  .bgword.gone { opacity: 0; transition: opacity .45s ease; }   /* 出结果淡出(覆盖 .in) */
-  .bgword.booting { transition: none; }     /* 首帧不放动画(URL 直达带查询时直接隐藏) */
-  .bgword .word {
-    font: 800 clamp(72px, 15vw, 300px)/1 var(--sans);
+  .wordmark.in { opacity: 1; }                /* 入场淡入 */
+  .wordmark.gone {                            /* 出结果: 折叠 + 淡出, 把查询框让到顶部 */
+    opacity: 0; max-height: 0; margin: 0; overflow: hidden;
+    transition: opacity .4s ease, max-height .5s ease, margin .5s ease;
+  }
+  .wordmark.booting { transition: none; }     /* 首帧不放动画(URL 直达带查询时直接隐藏) */
+  .wordmark .word {
+    font: 800 clamp(54px, 12.5vw, 150px)/1 var(--sans);   /* 约为查询框宽度的 70% */
     letter-spacing: -.045em; white-space: nowrap;
-    transform-style: preserve-3d; opacity: .6; user-select: none; will-change: transform;
-    transition: transform .3s ease;                  /* 视差平滑(位移在 transform 内) */
+    transform-style: preserve-3d; user-select: none; will-change: transform;
+    transition: transform .3s ease;                  /* 视差平滑 */
   }
-  .bgword span {
+  .wordmark span {
     text-shadow:
       1px 1px 0 var(--ext), 2px 2px 0 var(--ext), 3px 3px 0 var(--ext), 4px 4px 0 var(--ext),
-      8px 12px 22px rgba(0,0,0,.22);
+      6px 9px 18px rgba(0,0,0,.20);
   }
-  .bgword .p { color: var(--w1); --ext: var(--w1e); }
-  .bgword .a { color: var(--w2); --ext: var(--w2e); }
+  .wordmark .p { color: var(--w1); --ext: var(--w1e); }
+  .wordmark .a { color: var(--w2); --ext: var(--w2e); }
   @media (prefers-color-scheme: dark) {
-    :global(:root:not([data-theme])) .bgword { --w1: #6a85a3; --w1e: #26333f; --w2: #d0a464; --w2e: #4d3a23; }
+    :global(:root:not([data-theme])) .wordmark { --w1: #566f88; --w1e: #232e38; --w2: #b08f5b; --w2e: #3f3220; }
   }
-  :global(:root[data-theme='dark']) .bgword { --w1: #6a85a3; --w1e: #26333f; --w2: #d0a464; --w2e: #4d3a23; }
+  :global(:root[data-theme='dark']) .wordmark { --w1: #566f88; --w1e: #232e38; --w2: #b08f5b; --w2e: #3f3220; }
 
-  /* 3D 地球 doodle hero: 装饰; 出结果淡出再收起(进入则先展开再淡入), 不卡顿/不直接消失 */
-  /* 收起靠 .hero 的 height 折叠(把搜索框上移); overflow:hidden 把内层裁掉 ——
-     这样下沉/位移都不会撑出 .scroll 的滚动区(否则滚动条忽隐忽现, 整列横向抖 ~2px)。
-     .heroinner 固定高度(canvas 不缩放→不卡), 出结果时向下沉 + 淡出, 被收起的"地板"裁掉,
-     形成"没入"效果; 回首页则从下方升起 + 淡入。 */
-  .hero {
-    width: 100%; height: clamp(320px, 44vw, 420px); margin: 0 auto 0px; overflow: hidden;
-    transition: height .55s ease, margin-bottom .55s ease;
+  /* ── 右侧 3D 地球侧景 stage ──
+     一个大方块绝对定位在 view 右侧, 用 translateX 把"球心"推出右边缘, 只露出左侧约 1/3 球面
+     —— 像隔着窗拍地球的左侧。canvas 在自己方块里居中(globe.js), 偏移全交给这层 transform。
+     纯装饰: pointer-events:none + z-index 0(在内容之下), 不抢中间查询框的点击。
+     canvas 分辨率取自未变换尺寸(globe.js 用 offsetWidth), 故入场缩放既不糊也不会被 RO 重置。 */
+  .globe-stage {
+    --gs-size: min(118vh, 1100px);
+    position: absolute; top: 50%; right: 0; z-index: 2;  /* 在内容之上, 才接得到拖动/点击 */
+    width: var(--gs-size); height: var(--gs-size);
+    transform: translate(56%, -50%) scale(1);            /* 就位: 球心推到右缘外, 露左侧 ~1/3 */
+    transform-origin: center center; opacity: 1;
+    transition: transform 1.15s cubic-bezier(.22, .61, .36, 1), opacity 1.05s ease;
+    will-change: transform, opacity;
+    pointer-events: none;                                /* 本层(含画布)不接事件 → 让命中层(裁成圆)接 */
   }
-  .hero.gone { height: 0; margin-bottom: 0; pointer-events: none; }
-  .hero.booting { transition: none; }       /* 首帧不放动画 */
-  .heroinner {
-    height: clamp(320px, 44vw, 420px); width: 100%; opacity: 1;
-    transition: transform .55s ease, opacity .55s ease;
+  .globe-stage :global(.doodle) { width: 100%; height: 100%; }
+  /* 只把"命中层"裁成圆(球心在右缘外, 只罩住露出的弧面): 弧面可拖动/点击, 圆外(中间查询框那侧)
+     指针穿透回内容、不挡查询框。画布在下层不裁 → 节点卡片/标注溢出圆外也照样完整显示。 */
+  .globe-stage :global(.dg-hit) { pointer-events: auto; clip-path: circle(32% at 50% 50%); }
+  /* 入场前(未加 .in): 远在右上角且极小且透明 → 加 .in 过渡到就位 = 从远方放大飞入 */
+  .globe-stage:not(.in) { transform: translate(150%, -125%) scale(.2); opacity: 0; }
+  /* 出结果 / 「你的接入」摊牌: 放大 + 继续右移 + 淡出 = 向右拉近离场 */
+  .globe-stage.gone {
+    transform: translate(118%, -50%) scale(1.45); opacity: 0;
+    transition: transform .85s cubic-bezier(.5, 0, .75, 0), opacity .7s ease;
   }
-  .hero.gone .heroinner { transform: translateY(70px); opacity: 0; }   /* 向下沉没入 + 淡出 */
-  .hero.booting .heroinner { transition: none; }
-  @media (max-width: 820px) {
-    .hero { height: clamp(200px, 56vw, 280px); }
-    .heroinner { height: clamp(200px, 56vw, 280px); }
+  .globe-stage.booting { transition: none; }            /* 首帧不放动画(URL 直达带查询时直接隐藏) */
+  /* 内容区(.wv)太窄 → 地球自动退场(放大右移淡出), 不再压住中间查询框。
+     1320 按"查询框 820 + 两侧留白 + 球露出的弧"估算; 嫌早/晚就调这个数。 */
+  @container (max-width: 1320px) {
+    .globe-stage { transform: translate(120%, -50%) scale(1.2); opacity: 0; pointer-events: none; }
   }
+  @media (max-width: 680px) { .globe-stage { display: none; } }   /* 手机: 彻底不渲染侧球 */
 
   /* 「你的接入」探测卡片包裹层: 出结果时与 hero 同步收起(高度折叠 + 下沉淡出, 不直接消失) */
   .spwrap {

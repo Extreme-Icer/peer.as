@@ -7,9 +7,9 @@
   // onpointer: (clientX, clientY) => void —— 指针在 canvas 上时转发位置(供背景立体字视差用)
   let { origin = null, route = null, loading = false, onpick = null, onpointer = null } = $props()
 
-  let canvasEl, tipEl, ctrl
+  let canvasEl, hitEl, tipEl, ctrl
   onMount(() => {
-    ctrl = createGlobe(canvasEl, { tip: tipEl, onpick, onpointer })
+    ctrl = createGlobe(canvasEl, { tip: tipEl, hit: hitEl, onpick, onpointer })
     return () => ctrl?.destroy()
   })
   // 推送 props 变化(起点 / 路由图 / 加载态)到引擎
@@ -18,14 +18,18 @@
 
 <div class="doodle">
   <canvas bind:this={canvasEl}></canvas>
+  <!-- 命中层(透明): 接收拖动/点击; WhoisView 把它裁成圆, 圆外的指针穿透到下方查询框, 画布不裁→标注不丢 -->
+  <div class="dg-hit" bind:this={hitEl}></div>
   <div class="dg-tip" bind:this={tipEl}><div class="dg-asn"></div><div class="dg-nm"></div></div>
 </div>
 
 <style>
   .doodle { position: relative; width: 100%; height: 100%; touch-action: none; }
-  .doodle canvas { display: block; width: 100%; height: 100%; cursor: grab; position: relative; z-index: 1; }
-  .doodle :global(canvas.hot) { cursor: pointer; }
-  .doodle :global(canvas.grabbing) { cursor: grabbing; }
+  .doodle canvas { display: block; width: 100%; height: 100%; position: relative; z-index: 1; pointer-events: none; }
+  /* 命中层覆盖整块; 光标态(grab/pointer)挂在这层。裁剪由使用方(WhoisView)套上, Doodle 自身不裁。 */
+  .doodle .dg-hit { position: absolute; inset: 0; z-index: 2; cursor: grab; }
+  .doodle .dg-hit.hot { cursor: pointer; }
+  .doodle .dg-hit.grabbing { cursor: grabbing; }
 
   .dg-tip {
     position: absolute; left: 0; top: 0; transform: translate(-50%, -130%);

@@ -11,7 +11,7 @@
   import { features } from '../lib/site.js'
   import { regionName, asnName } from '../lib/bgp.js'
   import { fetchTrace, ccLatLon } from '../lib/geo.js'
-  import { iSearch, iArrowR, iClose } from '../lib/icons.js'
+  import { iSearch, iArrowR, iClose, iNodes } from '../lib/icons.js'
   import MobileBar from './MobileBar.svelte'
   import Whois from './Whois.svelte'
   import Doodle from './Doodle.svelte'
@@ -95,11 +95,6 @@
     return ''
   })
 
-  // peeras: 含 mozz.ie 演示 ccTLD WHOIS 兜底(无 RDAP -> 走 worker)。dn42 关此视图, 不会到这。
-  const EXAMPLES = features.rdapWhois
-    ? ['AS13335', '1.1.1.0/24', '2606:4700::/32', 'cloudflare.com', 'mozz.ie']
-    : []
-
   // 「高级搜索」开 -> 任何查询直接进路由分析; 否则简洁 WHOIS(runWhois 内部仍会把 as-set/名称等非 WHOIS 对象转路由)。
   function run(x) { S.advWhois ? openInRouting(x) : runWhois(x) }
   function submit(e) { e?.preventDefault(); run(box) }
@@ -128,6 +123,7 @@
         <input
           bind:this={inputEl}
           class="cmd"
+          type="text" name="q"
           bind:value={box}
           placeholder={t('wv_ph')}
           spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
@@ -136,22 +132,16 @@
         {#if box}
           <button type="button" class="clear" onclick={clearBox} aria-label="清除" title="清除"><Fa icon={iClose} /></button>
         {/if}
+        {#if features.rdapWhois}
+          <!-- 「专业版」开关: 嵌在输入框内、查询按钮左侧。一个图标表激活/非激活, 不再有滑动开关 -->
+          <button type="button" class="adv" class:on={S.advWhois}
+                  onclick={() => { S.advWhois = !S.advWhois; persistAdv() }}
+                  aria-pressed={S.advWhois} aria-label={t('wv_adv')} title={t('wv_adv') + ' · ' + t('wv_adv_hint')}>
+            <Fa icon={iNodes} />
+          </button>
+        {/if}
         <button type="submit" class="run"><Fa icon={iSearch} /> <span>{t('wv_go')}</span></button>
       </form>
-
-      {#if EXAMPLES.length}
-        <div class="examples">
-          <span class="exlabel">{t('wv_examples')}</span>
-          {#each EXAMPLES as ex}
-            <button class="chip" onclick={() => pick(ex)}>{ex}</button>
-          {/each}
-          <label class="adv" class:on={S.advWhois} title={t('wv_adv_hint')}>
-            <input type="checkbox" bind:checked={S.advWhois} onchange={persistAdv} />
-            <span class="adv-sw" aria-hidden="true"><span class="adv-knob"></span></span>
-            <span class="adv-txt">{t('wv_adv')}</span>
-          </label>
-        </div>
-      {/if}
 
       <!-- 「你的接入」自助探测卡片: 仅首页(出结果时随 hero 一并收起) -->
       <div class="spwrap" class:gone={S.whois.kind} class:expanded={S.probeExpanded} class:booting>
@@ -202,8 +192,8 @@
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
-  /* 「你的接入」摊牌时列放宽, 但搜索框/示例仍居中收窄在 820(地球已移到列外的侧景层, 不受列宽影响) */
-  .col.wide .console, .col.wide .examples { max-width: 820px; margin-left: auto; margin-right: auto; }
+  /* 「你的接入」摊牌时列放宽, 但搜索框仍居中收窄在 820(地球已移到列外的侧景层, 不受列宽影响) */
+  .col.wide .console { max-width: 820px; margin-left: auto; margin-right: auto; }
 
   /* ── PEER.AS 字标(查询框正上方) ── 3D 叠层立体字 + 鼠标视差; 入场淡入 / 出结果折叠淡出 ──
      宽度 ≈ 查询框(820)的 70%; 与查询框作为一组, 由 .scroll.center 的 padding 纵向居中。 */
@@ -335,38 +325,18 @@
   [data-t='bad']    { --tc: #ef4444; }
   [data-t='none']   { --tc: var(--muted); }
 
-  /* ── 示例 chip ── */
-  .examples { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 2px 0; }
-  .exlabel { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 2px; }
-  .chip {
-    font: 500 12.5px var(--mono); color: var(--link); background: var(--inbg);
-    border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px; cursor: pointer;
-    transition: all .13s;
-  }
-  .chip:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
-
-  /* 「高级搜索」开关: 推到示例行最右; 迷你 switch + 文字, 勾上时 accent。状态记忆于 localStorage。 */
+  /* 「专业版」开关: 命令行内、查询按钮左侧的图标按钮。一个图标表激活/非激活 ——
+     灰=关, accent(亮+淡底)=开。状态记忆于 localStorage。 */
   .adv {
-    margin-left: auto; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
-    padding: 4px 6px 4px 4px; border-radius: 999px; border: 1px solid var(--line); background: var(--inbg);
-    transition: border-color .15s, background .15s;
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; padding: 0; border-radius: 10px; cursor: pointer;
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    transition: color .15s, background .15s, border-color .15s;
   }
-  .adv:hover { border-color: var(--accent); }
-  .adv.on { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-dim); }
-  .adv input { position: absolute; opacity: 0; width: 0; height: 0; }
-  .adv-sw {
-    position: relative; flex: 0 0 auto; width: 28px; height: 16px; border-radius: 999px;
-    background: color-mix(in srgb, var(--muted) 45%, transparent); transition: background .18s;
-  }
-  .adv-knob {
-    position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%;
-    background: var(--panel); box-shadow: 0 1px 3px rgba(0,0,0,.4); transition: transform .18s;
-  }
-  .adv.on .adv-sw { background: var(--accent); }
-  .adv.on .adv-knob { transform: translateX(12px); background: var(--accent-fg); }
-  .adv input:focus-visible + .adv-sw { box-shadow: 0 0 0 3px var(--accent-dim); }
-  .adv-txt { font: 600 12px var(--sans); color: var(--muted); white-space: nowrap; transition: color .15s; }
-  .adv.on .adv-txt { color: var(--accent); }
+  .adv:hover { color: var(--fg); background: var(--alt); }
+  .adv.on { color: var(--accent); background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 32%, transparent); }
+  .adv:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-dim); }
+  .adv :global(svg) { width: 15px; }
 
   /* ── record 卷宗 ── */
   .dossier {
@@ -419,6 +389,7 @@
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */
     .clear { order: 2; }                                                              /* 与 ▸/输入同行, 在其右 */
+    .adv { order: 2; }                                                                /* 「专业版」与搜索框同一行 */
     .run { order: 3; flex: 1 1 100%; justify-content: center; height: 40px; }          /* 整行换到下一行 */
     /* 卷宗: 色脊转为顶部横条 */
     .dossier { flex-direction: column; }

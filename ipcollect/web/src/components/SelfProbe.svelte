@@ -115,7 +115,7 @@
     // 入场前(尚未 reveal): 停在归位叠堆的正上方 + 透明且置顶(z 高 → 看得到它从上方落下);
     // reveal 后 CSS transition 落入叠堆并归位到本卡的层深 z = "插牌"动画。
     if (c.kind === 'ip' && !revealed.has(c.key)) {
-      return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, -30px) scale(.92) rotate(0deg); opacity:0; z-index:40; pointer-events:none;`
+      return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, -34px) scale(.92) rotate(0deg); opacity:0; z-index:40; pointer-events:none;`
     }
     if (expanded && c.kind === 'ip') {
       const row = Math.floor(c.g / cols), col = c.g % cols
@@ -128,6 +128,13 @@
     if (expanded) {
       return `transform: translate(${(pileOffset - CARDW / 2).toFixed(1)}px, 0px) scale(.96) rotate(0deg); opacity:0; z-index:0; pointer-events:none;`
     }
+    // 探测进行中(尚未摊开): 卡片叠成"整齐一叠"(最新到的盖在最上, 下面的只微露一道边), 新卡从上方飞入落顶;
+    // 不露边角散开 —— 等全部 probe 完成后才自动 expand 摊成网格。
+    if (probing && c.kind === 'ip') {
+      const dd = Math.min((fams[c.fi].entries.length - 1) - c.ci, 4)   // 最新=0(最上), 越早到越靠下
+      const off = dd * 3
+      return `transform: translate(${(pileOffset - CARDW / 2 + off).toFixed(1)}px, ${off}px) scale(1) rotate(0deg); opacity:1; z-index:${30 - dd}; pointer-events:auto;`
+    }
     // 叠态: front + 背后最多 2 张(共 3 张可见), 紧凑堆叠(每层小幅下移/缩放/微旋); 第 4 张起隐藏。
     const d = depthOf(c)
     let dx = 0, dy = 0, sc = 1, rot = 0, op = 1
@@ -138,6 +145,22 @@
     return `transform: translate(${(pileOffset - CARDW / 2 + dx).toFixed(1)}px, ${dy}px) scale(${sc}) rotate(${rot}deg); opacity:${op}; z-index:${z}; pointer-events:${pe};`
   }
   const delayMs = (c) => (c.kind === 'ip' ? c.ci : 0) * 70
+
+  // 当前"叠堆最上面那张"(famtag / +N 角标只挂它): 探测中=最新到的; 收叠态=front。
+  function topVisible(c) {
+    if (c.kind !== 'ip') return false
+    if (probing) return c.ci === fams[c.fi].entries.length - 1
+    return depthOf(c) === 0
+  }
+
+  // 全部 probe 完成 + 确有卡(且仍在首页) → 自动摊开成网格。一次性, 之后用户可手动收回。
+  let autoDealt = false
+  $effect(() => {
+    if (!probing && renderList.length && !S.whois.kind && !autoDealt) {
+      autoDealt = true
+      S.probeExpanded = true
+    }
+  })
 
   $effect(() => {
     if (expanded && secEl) requestAnimationFrame(() => secEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
@@ -197,13 +220,13 @@
 <section class="sp" class:expanded bind:this={secEl}>
   <div class="stage" bind:clientWidth={stageW} style="height:{stageH}px">
     {#each renderList as c (c.key)}
-      {@const d = depthOf(c)}
+      {@const top = topVisible(c)}
       <div class="card" class:clickable={!expanded && c.kind === 'ip'}
            data-t={c.fam} style="--ac:{c.accent}; transition-delay:{delayMs(c)}ms; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
-        {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
-        {#if expanded || d === 0}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
+        {@render body(c.fi, c.e, !expanded && top && fams[c.fi].entries.length > 1)}
+        {#if expanded || top}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
       </div>
     {/each}
   </div>

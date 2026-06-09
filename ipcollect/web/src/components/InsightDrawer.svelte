@@ -3,6 +3,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { compilePathQuery, asnName, parseBest } from '../lib/bgp.js'
+  import { holderOrg } from '../lib/rdap.js'
   import { showInsight, showAsn, closeInsight, hardCloseDetail, navBack, navForward, navCanBack, navCanFwd } from '../lib/queries.js'
   import { iClose, iStar, iUp, iDown, iSpinner, iArrowL, iArrowR } from '../lib/icons.js'
   import PathGraph from './PathGraph.svelte'
@@ -32,6 +33,14 @@
   let originsOpen = $state(false)
   $effect(() => { ins?.prefix; originsOpen = false })
   let shownOrigins = $derived(ins?.origins ? (originsOpen ? ins.origins : ins.origins.slice(0, ORIGINS_HEAD)) : [])
+
+  // IP 所属组织(RDAP inetnum 持有者): 与 origin ASN(运营商)不同, 实时查、失败静默。换前缀重置。
+  let holder = $state('')
+  $effect(() => {
+    const px = ins?.prefix
+    holder = ''
+    if (px) holderOrg(px).then(h => { if (S.insight?.prefix === px && h) holder = h })
+  })
 
   // 关闭: 移动端直接全关; 桌面端沿用智能关闭(看 prefix 且主体是 ASN 时先返回 ASN)。
   function onClose() {
@@ -85,6 +94,9 @@
             · <span class="badge {ins.lowvis ? 'b-warn' : 'b-ok'}">{ins.n_paths || 0}/{S.meta.dfz_ref} {ins.lowvis ? t('lowvis') : 'DFZ'}</span>
           {/if}
         </div>
+        {#if holder}
+          <div class="pill holder"><span class="hk">{t('ip_holder')}</span> {holder}</div>
+        {/if}
 
         {#if ins.n_origins > 1 && ins.origins?.length}
           <div class="moasbox" data-sec="moas">
@@ -203,6 +215,8 @@
   h2 .loc { color: var(--muted); font-weight: 400; font-size: 13px; font-family: var(--sans); }
   .pill { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; line-height: 1.7; }
   .pill b { color: var(--fg); font-family: var(--mono); }
+  .pill.holder { color: var(--fg); font-size: 12.5px; font-family: var(--sans); margin-top: -2px; }
+  .pill.holder .hk { font: 700 9px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-right: 6px; }
   .moastag { margin: 0 4px; font-size: 10px; padding: 0 6px; vertical-align: middle; cursor: help; }
   .moasbox { margin: 6px 0 2px; padding: 9px 11px; border: 1px solid color-mix(in srgb, #8b5cf6 32%, transparent); border-radius: 8px; background: color-mix(in srgb, #8b5cf6 7%, transparent); }
   .moashdr { font-size: 11px; color: var(--muted); margin-bottom: 7px; display: flex; align-items: center; gap: 7px; }

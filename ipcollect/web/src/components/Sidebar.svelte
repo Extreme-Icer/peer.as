@@ -5,7 +5,7 @@
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iClose } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
@@ -14,22 +14,26 @@
   let themeLabel = $derived({ auto: 'AUTO', light: 'LIGHT', dark: 'DARK' }[S.theme] || 'AUTO')
 </script>
 
-<aside class="side">
+{#if S.side}<div class="scrim" onclick={() => (S.side = false)} role="presentation"></div>{/if}
+<aside class="side" class:open={S.side}>
   <div class="brand">
-    <button class="logo" onclick={goHome} title={t('home')} aria-label={t('home')}>
+    <button class="logo" onclick={() => { S.side = false; goHome() }} title={t('home')} aria-label={t('home')}>
       <span class="dot"></span>{brand.main}<span class="hi">{brand.hi}</span>
+    </button>
+    <button class="sideclose" onclick={() => (S.side = false)} title={t('menu')} aria-label={t('menu')}>
+      <Fa icon={iClose} />
     </button>
   </div>
 
   {#if features.whoisView}
     <nav class="vnav" aria-label={t('nav_views')}>
       <button class="vitem" class:on={S.view === 'whois'} aria-current={S.view === 'whois'}
-        onclick={() => setView('whois')}>
+        onclick={() => { S.side = false; setView('whois') }}>
         <Fa icon={iWhois} /> <span>{t('nav_whois')}</span>
       </button>
       <button class="vitem" class:on={S.view === 'routing'} aria-current={S.view === 'routing'}
-        onclick={() => setView('routing')}>
-        <Fa icon={iNet} /> <span>{t('nav_routing')}</span>
+        onclick={() => { S.side = false; setView('routing') }}>
+        <Fa icon={iNodes} /> <span>{t('nav_routing')}</span>
       </button>
     </nav>
   {/if}
@@ -72,15 +76,29 @@
 </aside>
 
 <style>
+  /* 左侧抽屉: 固定离屏(默认收起), .open 滑入。遮罩 .scrim 点击外部收起。 */
+  .scrim { position: fixed; inset: 0; z-index: 29; background: rgba(2, 6, 14, .5); animation: fade .16s ease; }
+  @keyframes fade { from { opacity: 0; } }
   .side {
-    flex: 0 0 218px; width: 218px; color: #aeb9c9;
+    position: fixed; top: 0; left: 0; z-index: 30;
+    width: 232px; height: 100vh; color: #aeb9c9;
     background:
       radial-gradient(rgba(255,255,255,.022) 1px, transparent 1px) 0 0 / 15px 15px,
       linear-gradient(180deg, #0a0e15, #070a0f);
-    display: flex; flex-direction: column; gap: 20px; padding: 18px 16px 14px;
-    position: sticky; top: 0; height: 100vh; overflow: auto;
-    border-right: 1px solid #182234;
+    display: flex; flex-direction: column; gap: 20px; padding: 16px 16px 14px;
+    overflow: auto; border-right: 1px solid #182234;
+    transform: translateX(-100%); transition: transform .22s ease, box-shadow .22s ease;
   }
+  .side.open { transform: translateX(0); box-shadow: 0 0 50px -8px rgba(0, 0, 0, .65); }
+
+  .brand { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .sideclose {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    background: transparent; border: 1px solid #25324a; color: #8693a6; transition: all .14s;
+  }
+  .sideclose:hover { color: #fff; border-color: var(--accent); background: #131c2b; }
+  .sideclose :global(svg) { width: 12px; }
   .brand .logo {
     font: 800 18px/1 var(--mono); letter-spacing: -.01em; color: #f3f6fa;
     display: flex; align-items: center;
@@ -148,8 +166,8 @@
   }
   .ctl .ghost:hover { background: #131c2b; color: #fff; border-color: var(--accent); }
 
-  /* 移动端: 桌面侧栏隐藏, 改用 MobileBar(顶栏 logo + 下拉菜单) */
+  /* 移动端: 桌面侧栏抽屉隐藏, 改用 MobileBar(顶栏 logo + 下拉菜单) */
   @media (max-width: 820px) {
-    .side { display: none; }
+    .side, .scrim { display: none; }
   }
 </style>

@@ -247,3 +247,26 @@ export function fetchRdap(kind, key) {
 export const rdapAsn = asn => fetchRdap('autnum', String(asn))
 export const rdapIp = prefix => fetchRdap('ip', String(prefix))
 export const rdapDomain = domain => fetchRdap('domain', String(domain).toLowerCase().replace(/\.$/, ''))
+
+// 「IP 所属组织」= 前缀(inetnum)的登记持有者, 可能是承载 AS 的下游企业, 与 origin ASN(运营商)是两回事。
+// 从 IP 的 RDAP 规范化模型里抽: 优先 registrant/administrative 实体的 org 行或实体名, 回退 netname。
+export function ipHolder(n) {
+  if (!n) return null
+  const ents = n.entities || []
+  const pick = ents.find(e => (e.roles || []).includes('registrant'))
+    || ents.find(e => (e.roles || []).includes('administrative'))
+    || ents[0]
+  let org = ''
+  if (pick) {
+    const r = (pick.rows || []).find(x => x.key === 'org')
+    org = (r && r.value) || (pick.name && pick.name !== '?' ? pick.name : '')
+  }
+  const row = k => ((n.head || []).find(x => x.key === k) || {}).value || ''
+  return { org, netname: row('name'), cc: row('country') }
+}
+
+// 便捷: 取前缀持有者组织名(org 优先, 回退 netname); 失败/无则空串。复用 rdapIp 的缓存。
+export async function holderOrg(prefix) {
+  try { const h = ipHolder(await rdapIp(prefix)); return (h && (h.org || h.netname)) || '' }
+  catch { return '' }
+}

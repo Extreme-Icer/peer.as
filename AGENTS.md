@@ -96,10 +96,17 @@
   前缀切到这些城市(`carve(…, city_set)`)，城市框只列它们。改 `focus_cities` 只需重新 `build`(不必 reingest)。
 - `focus_country_code`：ingest 国家过滤（默认 `CN`，空=不限）；`ingest --all-countries` 临时不限。
 - `path_presets`：面板/CLI 的预制 path 下拉项 `[{alias, path:[asns]}]`。
-- `asn_registry`：ASN→`{name, name_en?, op}`（展示/下拉/着色用），`config.load()` 时灌入 `bgp` 模块。
-  `name`=中文别名、`name_en`=可选英文别名（i18n，缺省时英文界面从 `name` 滤出拉丁部分兜底，如 `电信CN2→CN2`）；
-  `op` 是运营商分类（电信/联通/移动/教育/科技/国际，**仅 6 类**），英文译名在前端 `bgp.js` 的 `OP_EN` 维护（UI 词表，不进 config）。
+- `asn_registry`：ASN→`{name, name_en?, op}`（展示/下拉/着色用）。**权威源 = `ipcollect/data/asn_registry.csv`**
+  （CSV，可直接 PR；`#` 开头行为注释），`config.load()` 读 CSV 灌入 `bgp` 模块。CSV 改了即时生效——
+  `save()` **不**把 `asn_registry` 写回 `config.json`（避免冻结 CSV），仅当 `config.json` 显式给出非空 `asn_registry` 才覆盖 CSV（逃生口）。
+  `name`=中文/主展示名、`name_en`=可选英文别名（i18n，缺省时英文界面从 `name` 滤出拉丁部分兜底，如 `电信CN2→CN2`）；
+  `op`=运营商/厂商分类：三大运营商有专属配色（电信/联通/移动），其余 `教育/科技/国际/IDC`（IDC=云/主机厂商，无专属配色）；
+  新增 op 值会优雅降级（前端 `bgp.js` 的 `OP_CLS` 无该项=无配色、`OP_EN` 无该项=回退中文原值），要配色/英文名再补 `bgp.js` 两表。
   export 把 `name`→`meta.asn_names`、`name_en`→`meta.asn_names_en`、`op`→`meta.asn_ops`。
+- **三层命名分工**（前端）：① **运营商/承载网**（curated `name`+`op`，用于路由列表/AsPath/probe origin）；
+  ② **AS Name 原始 handle**（`asnames.json`/APNIC，便于搜索消歧，在 ASN detail 与 WHOIS 突出）；
+  ③ **IP 所属组织**（前缀 inetnum 持有者，**RDAP 实时**，`rdap.js` 的 `holderOrg(prefix)`，在 prefix detail/SelfProbe 显示，
+  可能是承载 AS 的下游企业，**与 origin ASN 不是一回事**；GeoLite `org`=AS 级组织，**不是** IP 级持有者，别混用）。
 
 ---
 
@@ -619,7 +626,8 @@ parquet`)后该 SET 不再触发任何 autoload。**别把会触发扩展 autolo
 - **RPKI 覆盖判定别写双不等式区间 join**（会退化 nested-loop 卡死）——用 `rpki.classify` 的分桶等值 hash join。改 import 源列表见 `irr.py`/`asset.py` 的 `DEFAULT_SOURCES`。
 - **`origin asn` 仅展示**，不得参与筛选/排序；命名永远叫 "origin asn"，不叫"回程 asn"。
 - path 搜索是**连续相邻子序列**（`1299 23764 4809` ≠ `1299 4809`），不是"含且无序"。`--asn` 才是无序含任一。
-- **ASN 名称/分组在 `config.json` 的 `asn_registry`**，不在代码里；改名加 ASN 改这里即可（中文 `name` + 可选英文 `name_en`）。
+- **ASN 名称/分组在 `ipcollect/data/asn_registry.csv`**（CSV，可直接 PR），不在代码里；改名/加 ASN/标 IDC 改这里即可
+  （列 `asn,name,name_en,op`；`#` 行注释）。改 CSV 即时生效（不写回 config.json）。
 - **i18n 显示(语言感知)**：`bgp.js` 的 `asnName(a)`(zh=中文别名优先, en=`name_en`→APNIC 英文名→中文别名滤拉丁兜底)、
   `opText(a)`(op 分类按 `OP_EN` 译)、`placeLabel(prov,city,cc)`(英文界面滤掉 CJK 地名段、滤空回退英文国名 —— 修
   geo 里「英文省+中文市」混排，**纯前端、无需重建 geo**)。`opOf`/`opCls` 仍用中文 op key 做配色/排序。改了

@@ -14,6 +14,7 @@
   import { t } from '../lib/i18n.js'
   import { probeEgressIps } from '../lib/geo.js'
   import { probeIp } from '../lib/queries.js'
+  import { holderOrg } from '../lib/rdap.js'
   import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
   import { iChevD } from '../lib/icons.js'
 
@@ -45,23 +46,25 @@
     probing = false
     defaultIp = r.defaultIp
     const fill = (fi, ips) => {
-      const es = (ips || []).slice(0, 4).map(ip => ({ ip, enriching: true, info: null }))
+      const es = (ips || []).slice(0, 4).map(ip => ({ ip, enriching: true, info: null, holder: '' }))
       fams[fi].entries = es
       fams[fi].front = 0
       es.forEach((e, ei) => {
-        probeIp(e.ip).then((info) => { fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false })
-                     .catch(() => { fams[fi].entries[ei].enriching = false })
+        probeIp(e.ip).then((info) => {
+          fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
+          // IP 所属组织(RDAP, 异步独立填充, 失败静默): 与 origin ASN(运营商)不同
+          const px = info && info.prefix
+          if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
+        }).catch(() => { fams[fi].entries[ei].enriching = false })
       })
     }
     fill(0, r.v4)
     fill(1, r.v6)
   })
 
-  function cycle(fi) {
-    const n = fams[fi].entries.length
-    if (n > 1) fams[fi].front = (fams[fi].front + 1) % n
-  }
   const stop = (e) => e.stopPropagation()
+  // 隐藏态: 把每个十六进制位换成 'x'(保留 . : / 分隔符与位数), 真实 IP 不进 DOM, 截图/取证也无法还原。
+  const maskIp = (ip) => String(ip).replace(/[0-9a-fA-F]/g, 'x')
 
   // ── 摊开态 + 布局 ───────────────────────────────────────────────
   let expanded = $derived(S.probeExpanded)
@@ -138,7 +141,7 @@
     {/if}
     <div class="iprow">
       {#if hide[fi]}
-        <span class="ip masked">{e.ip}</span>
+        <span class="ip masked">{maskIp(e.ip)}</span>
       {:else}
         <button class="ip" onclick={(ev) => { stop(ev); onpick(e.ip) }} title={e.ip}>{e.ip}</button>
       {/if}
@@ -153,10 +156,11 @@
         <span class="sub muted">{t('sp_nocover')}</span>
       {/if}
     {:else}
-      <div class="kv"><span class="k">{t('sp_prefix')}</span>
-        <button class="lk mono" onclick={(ev) => { stop(ev); onpick(e.info.prefix) }}>{e.info.prefix}</button></div>
       {#if e.info.origin_asn != null}
         <div class="kv">{@render asn(e.info)}</div>
+      {/if}
+      {#if e.holder}
+        <div class="kv"><span class="k">{t('sp_holder')}</span><span class="holder">{e.holder}</span></div>
       {/if}
       {#if e.info.loc}
         <div class="loc"><Fa icon={iLoc} /><span>{e.info.loc}</span></div>
@@ -169,10 +173,10 @@
   <div class="stage" bind:clientWidth={stageW} style="height:{stageH}px">
     {#each renderList as c (c.key)}
       {@const d = depthOf(c)}
-      <div class="card" class:multi={c.kind === 'ip' && fams[c.fi].entries.length > 1}
+      <div class="card" class:clickable={!expanded && c.kind === 'ip'}
            data-t={c.fam} style="--ac:{c.accent}; transition-delay:{delayMs(c)}ms; {styleFor(c)}"
-           role={!expanded && c.kind === 'ip' && fams[c.fi].entries.length > 1 ? 'button' : undefined}
-           onclick={() => { if (!expanded && c.kind === 'ip') cycle(c.fi) }}>
+           role={!expanded && c.kind === 'ip' ? 'button' : undefined}
+           onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
         {#if c.kind === 'skel'}
           <div class="cbody"><span class="ip skel">····· ·····</span></div>
         {:else if c.kind === 'none'}
@@ -181,15 +185,14 @@
           {@render body(c.fi, c.e, !expanded && d === 0 && fams[c.fi].entries.length > 1)}
         {/if}
         {#if expanded || d === 0}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
-        {#if c.kind === 'ip' && !expanded && d === 1}<span class="peekhint" aria-hidden="true">›</span>{/if}
       </div>
     {/each}
   </div>
 
-  {#if !probing && entryCount > 0}
+  {#if !probing && expanded && entryCount > 0}
     <div class="dealrow">
-      <button class="dealbtn" class:up={expanded} onclick={toggleExpand}
-              title={expanded ? t('sp_collapse') : t('sp_dealout')} aria-label={expanded ? t('sp_collapse') : t('sp_dealout')}>
+      <button class="dealbtn up" onclick={toggleExpand}
+              title={t('sp_collapse')} aria-label={t('sp_collapse')}>
         <Fa icon={iChevD} />
       </button>
     </div>
@@ -197,7 +200,7 @@
 </section>
 
 <style>
-  .sp { margin: 14px 0 0; padding: 6px 26px 18px; }
+  .sp { margin: 30px 0 0; padding: 6px 26px 18px; }
 
   .stage { position: relative; width: 100%; transition: height .55s cubic-bezier(.2, .8, .25, 1); }
 
@@ -209,13 +212,8 @@
     box-shadow: 0 16px 34px -22px rgba(0,0,0,.5);
     transition: transform .55s cubic-bezier(.2, .8, .25, 1), opacity .45s ease;
   }
-  .card.multi { cursor: pointer; }
+  .card.clickable { cursor: pointer; }
   .sp.expanded .card { cursor: default; }
-
-  .peekhint {
-    position: absolute; right: 9px; bottom: 5px; z-index: 4; pointer-events: none;
-    font: 800 15px var(--sans); line-height: 1; color: var(--ac); opacity: .6;
-  }
 
   /* 右下角 family 色标(IPv4/IPv6, 仅第一张): 非活跃栈=灰; 活跃(浏览器主用)栈=淡橙(低对比度) */
   .famtag {
@@ -244,7 +242,7 @@
   .ip { font: 600 15px var(--mono); text-align: left; color: var(--fg); letter-spacing: -.01em; background: none; border: 0; padding: 0; cursor: pointer; word-break: break-all; }
   button.ip:hover { color: var(--ac); }
   .ip.skel { color: var(--muted); opacity: .45; letter-spacing: .22em; cursor: default; }
-  .ip.masked { filter: blur(7px); user-select: none; cursor: default; opacity: .85; }
+  .ip.masked { user-select: none; cursor: default; color: var(--muted); opacity: .7; letter-spacing: .03em; }
   .none { font: 500 13px var(--sans); color: var(--muted); }
   .sub { font-size: 12.5px; }
   .muted { color: var(--muted); font-family: var(--sans); }
@@ -259,6 +257,7 @@
   .k { font: 700 9px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   .lk { background: none; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 13.5px var(--sans); text-align: left; }
   .lk.mono { font-family: var(--mono); font-size: 13.5px; word-break: break-all; }
+  .holder { font: 500 12.5px var(--sans); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
   .lk:hover { text-decoration: underline; text-underline-offset: 3px; }
 
   /* origin: ASxxxx + 名称 badge */

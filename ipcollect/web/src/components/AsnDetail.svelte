@@ -3,13 +3,17 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { showInsight, showAsn, scanNeighbors, runAsSet } from '../lib/queries.js'
-  import { ccLabel, isTier1 } from '../lib/bgp.js'
+  import { ccLabel, isTier1, asnOrg, opText, opCls } from '../lib/bgp.js'
   import { iPrefix, iUp, iDown, iRange, iNodes, iSpinner, iUsers } from '../lib/icons.js'
   import Whois from './Whois.svelte'
   import RelGroup from './RelGroup.svelte'
 
   let a = $derived(S.asnView)
   let total = $derived((a?.count4 || 0) + (a?.count6 || 0))
+  // 三层命名摊开: op 分类(运营商/厂商) · 原始注册名(APNIC handle, 便于搜索消歧) · GeoLite 组织名
+  let handle = $derived(a ? (S.asnNames?.[a.asn] || '') : '')
+  let geoOrg = $derived(a ? asnOrg(a.asn) : '')
+  let op = $derived(a ? opText(a.asn) : '')
   let t1 = $derived(a && isTier1(a.asn))
   let neighEmpty = $derived(a?.neigh && !a.neigh.loading && !a.neigh.error && !a.neigh.up.length && !a.neigh.peer.length && !a.neigh.down.length)
 
@@ -23,6 +27,14 @@
 
 {#if a}
   <h2>AS{a.asn} {#if a.name}<span class="loc">· {a.name}</span>{/if}</h2>
+
+  {#if op || handle || (geoOrg && geoOrg !== handle)}
+    <div class="names">
+      {#if op}<span class="opbadge {opCls(a.asn)}">{op}</span>{/if}
+      {#if handle}<span class="ni"><span class="nl">{t('asn_handle')}</span><span class="mono">{handle}</span></span>{/if}
+      {#if geoOrg && geoOrg !== handle}<span class="ni"><span class="nl">{t('asn_org')}</span>{geoOrg}</span>{/if}
+    </div>
+  {/if}
 
   {#if a.error}
     <div class="dload err">{a.error}</div>
@@ -97,6 +109,14 @@
 <style>
   h2 { font: 600 15px var(--mono); margin: 0 0 7px; color: var(--fg); }
   h2 .loc { color: var(--muted); font-weight: 400; font-size: 13px; font-family: var(--sans); }
+  .names { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 8px; font-size: 12.5px; color: var(--fg); }
+  .names .ni { display: inline-flex; align-items: baseline; gap: 5px; }
+  .names .nl { font: 700 9px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .names .mono { font-family: var(--mono); }
+  .opbadge { font: 700 10px var(--sans); padding: 2px 8px; border-radius: 999px; background: var(--alt); border: 1px solid var(--line); color: var(--muted); }
+  .opbadge.op-ct { color: #c0392b; border-color: color-mix(in srgb, #c0392b 40%, transparent); background: color-mix(in srgb, #c0392b 10%, transparent); }
+  .opbadge.op-cu { color: #2563eb; border-color: color-mix(in srgb, #2563eb 40%, transparent); background: color-mix(in srgb, #2563eb 10%, transparent); }
+  .opbadge.op-cm { color: #15803d; border-color: color-mix(in srgb, #15803d 40%, transparent); background: color-mix(in srgb, #15803d 10%, transparent); }
   .pill { font-size: 11.5px; color: var(--muted); margin-bottom: 6px; line-height: 1.7; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .pill .fam { color: var(--muted); }
   .dsec { font: 700 11px var(--sans); letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin: 20px 0 8px; border-top: 1px solid var(--line2); padding-top: 13px; display: flex; align-items: center; gap: 7px; }

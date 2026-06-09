@@ -7,7 +7,7 @@
   import { cycleTheme, toggleLang } from '../lib/ui.js'
   import { setView, goHome } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNet, iWhois } from '../lib/icons.js'
+  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
@@ -34,7 +34,7 @@
           <Fa icon={iWhois} /> {t('nav_whois')}
         </button>
         <button class="vitem" class:on={S.view === 'routing'} onclick={() => { close(); setView('routing') }}>
-          <Fa icon={iNet} /> {t('nav_routing')}
+          <Fa icon={iNodes} /> {t('nav_routing')}
         </button>
       </nav>
     {/if}

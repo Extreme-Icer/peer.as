@@ -45,6 +45,7 @@ export const S = $state({
   changelog: false,
   pathHelp: false,            // AS_PATH 语法帮助弹窗
   menu: false,                // 移动端下拉菜单开关
+  side: false,                // 桌面左侧栏抽屉开关(默认收起, 顶部左上 menubtn 切换)
   sortKey: 'n_paths',
   sortDir: -1,
   // ── 结果表分页 + 导出(仅 global/country/subnet 表格模式)──

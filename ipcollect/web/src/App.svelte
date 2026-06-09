@@ -8,7 +8,7 @@
   import { applyRoute, hardCloseDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
   import { brand, features } from './lib/site.js'
-  import { iSpinner } from './lib/icons.js'
+  import { iSpinner, iMenu, iClose } from './lib/icons.js'
   import Sidebar from './components/Sidebar.svelte'
   import MobileBar from './components/MobileBar.svelte'
   import Topbar from './components/Topbar.svelte'
@@ -66,7 +66,7 @@
 
     // 路由监听 + Esc 尽早注册(独立于数据/引擎): 直开 /whois 也要能 PJAX 前进后退、Esc。
     window.addEventListener('popstate', () => applyRoute())
-    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; S.exportOpen = false; if (S.detailKind) hardCloseDetail() } })
+    window.addEventListener('keydown', e => { if (e.key === 'Escape') { S.about = false; S.changelog = false; S.pathHelp = false; S.menu = false; S.side = false; S.exportOpen = false; if (S.detailKind) hardCloseDetail() } })
 
     // meta.json 必须拿最新的(它带 version, 决定其它文件的 ?v=); no-cache 强制条件请求(未变则 304, 变了取新)。
     // getData 带回退: 选定宿主(可能是 CN VPS)失败时整体回退 CF。失败置 fatal(路由视图显示), 但不 return ——
@@ -92,6 +92,12 @@
 
 <div class="app">
   <Sidebar />
+  <!-- 左上角开合按钮(桌面专用, 首页 + 路由分析两页都有); 抽屉展开时由侧栏自带的关闭钮/遮罩收起 -->
+  {#if !S.side}
+    <button class="sidetoggle" onclick={() => (S.side = true)} aria-label={t('menu')} aria-expanded={S.side}>
+      <Fa icon={iMenu} />
+    </button>
+  {/if}
   {#if S.view === 'whois'}
     <!-- WHOIS·RDAP 独立视图(自带 MobileBar + 全宽 record, 无 Topbar 过滤器 / 无右侧详情面板) -->
     <WhoisView />
@@ -124,6 +130,19 @@
 <style>
   .app { display: flex; min-height: 100vh; }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  /* 左上角开合按钮: 固定悬浮, 用主题 token 与页面同色(明暗自适应)。抽屉收起时常驻。 */
+  .sidetoggle {
+    position: fixed; top: 12px; left: 12px; z-index: 31;
+    display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px;
+    color: var(--muted); cursor: pointer; box-shadow: 0 6px 18px -12px rgba(0,0,0,.45);
+    -webkit-tap-highlight-color: transparent; outline: none; appearance: none;
+    transition: border-color .14s, color .14s, background .14s;
+  }
+  .sidetoggle:hover { color: var(--fg); border-color: var(--accent); background: var(--alt); }
+  .sidetoggle:active { background: var(--alt); }            /* 明确 active 态, 避免 UA 默认白底闪烁 */
+  .sidetoggle:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .sidetoggle :global(svg) { width: 15px; }
   /* flex 列: 让空状态的赞助条用 margin-top:auto 贴到底部; 底 padding 14px 与侧栏 .foot 对齐 */
   .content { flex: 1; padding: 6px 18px 14px; display: flex; flex-direction: column; }
   .boot { padding: 70px 20px; text-align: center; color: var(--muted); font: 13px var(--mono); display: flex; align-items: center; justify-content: center; gap: 10px; }
@@ -133,5 +152,6 @@
   @media (max-width: 820px) {
     .app { flex-direction: column; }
     .content { padding: 4px 12px 24px; }
+    .sidetoggle { display: none; }   /* 移动端用 MobileBar 的菜单钮 */
   }
 </style>

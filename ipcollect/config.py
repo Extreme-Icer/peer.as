@@ -1,10 +1,36 @@
 """配置: 焦点 ASN / 焦点地区 / 数据源。存为 JSON, 可手改也可用 `ipc config` 改。"""
 from __future__ import annotations
 
+import csv
 import json
+from pathlib import Path
 from typing import Any
 
 from . import bgp, util
+
+# ASN 注册表数据文件 (随包分发, 可直接 PR 补充)。见文件头注释说明列含义。
+ASN_REGISTRY_CSV = Path(__file__).resolve().parent / "data" / "asn_registry.csv"
+
+
+def _load_asn_registry_csv() -> list[dict[str, Any]]:
+    """读 data/asn_registry.csv -> [{asn, name, name_en?, op}]。
+    '#' 开头的行为注释 (在送入 csv 前剔除); name_en 留空则不输出该键。"""
+    if not ASN_REGISTRY_CSV.exists():
+        return []
+    lines = [ln for ln in ASN_REGISTRY_CSV.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")]
+    out: list[dict[str, Any]] = []
+    for row in csv.DictReader(lines):
+        asn = (row.get("asn") or "").strip()
+        if not asn.isdigit():
+            continue
+        e: dict[str, Any] = {"asn": int(asn), "name": (row.get("name") or "").strip(),
+                             "op": (row.get("op") or "").strip()}
+        name_en = (row.get("name_en") or "").strip()
+        if name_en:
+            e["name_en"] = name_en
+        out.append(e)
+    return out
 
 DEFAULT_CONFIG: dict[str, Any] = {
     # ingest 入库口径 = (AS_PATH 含 focus_asns 任一) ∩ (地理落在 focus_cities/provinces)。
@@ -47,51 +73,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"alias": "教育网→科技网", "path": [4538, 7497]},
     ],
 
-    # ASN 注册表: ASN -> 名称(展示/下拉用) + op(所属网络)。在此集中维护, 不在代码里 hard code。
-    # 给 focus_asns / path_presets / 面板里出现的 ASN 起中文名; 也是 focus_asns 的"备注"来源。
-    "asn_registry": [
-        # 中国电信
-        {"asn": 4809,  "name": "电信CN2",          "op": "电信"},
-        {"asn": 23764, "name": "电信CTGNet",        "op": "电信"},
-        {"asn": 4134,  "name": "电信163(ChinaNet)", "op": "电信"},
-        {"asn": 4812,  "name": "上海电信",          "op": "电信"},
-        {"asn": 4847,  "name": "北京电信",          "op": "电信"},
-        # 中国联通
-        {"asn": 9929,  "name": "联通CUII",  "op": "联通"},
-        {"asn": 10099, "name": "联通(CUG)", "op": "联通"},
-        {"asn": 4837,  "name": "联通169",   "op": "联通"},
-        {"asn": 4808,  "name": "北京联通",  "op": "联通"},
-        {"asn": 17621, "name": "上海联通",  "op": "联通"},
-        {"asn": 17622, "name": "广州联通",  "op": "联通"},
-        {"asn": 17816, "name": "广东联通",  "op": "联通"},
-        # 中国移动
-        {"asn": 58807, "name": "移动CMIN2", "op": "移动"},
-        {"asn": 58453, "name": "移动CMI",   "op": "移动"},
-        {"asn": 9808,  "name": "移动CMNET", "op": "移动"},
-        {"asn": 24400, "name": "移动",       "op": "移动"},
-        {"asn": 56040, "name": "广东移动",   "op": "移动"},
-        {"asn": 56041, "name": "浙江移动",   "op": "移动"},
-        # 中国教育和科研计算机网 CERNET
-        {"asn": 4538,  "name": "教育网CERNET",        "op": "教育"},
-        {"asn": 23910, "name": "教育网CERNET2(IPv6)", "op": "教育"},
-        # 中国科技网 CSTNET
-        {"asn": 7497,  "name": "科技网CSTNET", "op": "科技"},
-        # 常见国际 transit
-        {"asn": 1299,  "name": "Arelion(Telia)", "op": "国际"},
-        {"asn": 2914,  "name": "NTT",      "op": "国际"},
-        {"asn": 6453,  "name": "TATA",     "op": "国际"},
-        {"asn": 3257,  "name": "GTT",      "op": "国际"},
-        {"asn": 6762,  "name": "Sparkle",  "op": "国际"},
-        {"asn": 12956, "name": "Telxius",  "op": "国际"},
-        {"asn": 174,   "name": "Cogent",   "op": "国际"},
-        {"asn": 3356,  "name": "Lumen",    "op": "国际"},
-        {"asn": 6939,  "name": "HE",       "op": "国际"},
-        {"asn": 3491,  "name": "PCCW",     "op": "国际"},
-        {"asn": 1273,  "name": "Vodafone", "op": "国际"},
-        {"asn": 701,   "name": "Verizon",  "op": "国际"},
-        {"asn": 7018,  "name": "AT&T",     "op": "国际"},
-        {"asn": 3320,  "name": "DTAG",     "op": "国际"},
-    ],
+    # ASN 注册表: ASN -> 名称(展示/下拉用) + op(运营商/厂商分类) [+ name_en 可选]。
+    # 数据集中维护在 data/asn_registry.csv (可直接 PR), 不在代码里 hard code。
+    # config.json 里若有 asn_registry 会整体覆盖此默认表。
+    "asn_registry": _load_asn_registry_csv(),
 
     # 入库范围:
     #   "global" = 全球全表(收全部 v4 前缀, 不按 ASN/国家过滤; focus_* 仅作高亮/导航)。
@@ -134,20 +119,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 def load() -> dict[str, Any]:
+    raw: dict[str, Any] = {}
     if util.CONFIG_PATH.exists():
-        cfg = json.loads(util.CONFIG_PATH.read_text(encoding="utf-8"))
-        # 补齐新增默认键
-        merged = dict(DEFAULT_CONFIG)
-        merged.update(cfg)
-    else:
-        merged = dict(DEFAULT_CONFIG)
+        raw = json.loads(util.CONFIG_PATH.read_text(encoding="utf-8"))
+    merged = dict(DEFAULT_CONFIG)   # 补齐新增默认键
+    merged.update(raw)
+    # asn_registry: peeras 站始终以 data/asn_registry.csv 为权威源(改 CSV 即时生效, 覆盖任何被
+    # 旧 init 冻结进 config.json 的表)。dn42 站走 registry.py、保持其 config 的空表, 不灌 CSV。
+    if merged.get("site", "peeras") != "dn42":
+        merged["asn_registry"] = _load_asn_registry_csv()
     bgp.set_registry(merged.get("asn_registry") or [])
     return merged
 
 
 def save(cfg: dict[str, Any]) -> None:
+    # 不把 asn_registry 持久化进 config.json(保持精简 + 不冻结 CSV); 维护走 data/asn_registry.csv。
+    out = {k: v for k, v in cfg.items() if k != "asn_registry"}
     util.CONFIG_PATH.write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 

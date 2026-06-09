@@ -115,6 +115,8 @@
       var(--panel);
     border-bottom: 1px solid var(--line);
   }
+  /* 桌面: 只在第一行左侧给左上角悬浮开合按钮(App .sidetoggle, 固定 left:12 + 38 宽)留位, 不挤占整条 topbar */
+  @media (min-width: 821px) { .row.primary { padding-left: 46px; } }
   .filters { display: flex; flex-direction: column; gap: 9px; }
   .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
   .rowbreak { display: none; }   /* 仅 ≤410px 启用(flex-basis:100% 占满整行→强制后续元素换行) */

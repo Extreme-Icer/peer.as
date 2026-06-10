@@ -105,9 +105,18 @@
   let activeFam = $derived(defaultIp ? (defaultIp.includes(':') ? 'ip6' : 'ip4') : null)
   let secEl = $state()
   let stageW = $state(820)
-  // 窄屏(移动端「IP 探测」摊开)自适应: 卡片近乎整宽、单列、更扁; 桌面维持 300×150。
-  let narrow = $derived(stageW > 0 && stageW < 560)
-  let CARDW = $derived(narrow ? Math.max(150, Math.min(stageW - 4, 460)) : 300)
+  // 可用宽度: 移动端(<820)的 stage 从 display:none 切显示时 clientWidth 常没及时更新(还停在初始 820),
+  // 会被误算成多列、卡片重叠。故移动端宽度直接用 window 宽(col 整宽 - 边距), 桌面才用实测 stageW。
+  let winW = $state(typeof window !== 'undefined' ? window.innerWidth : 1200)
+  onMount(() => {
+    const f = () => { winW = window.innerWidth }
+    f(); window.addEventListener('resize', f)
+    return () => window.removeEventListener('resize', f)
+  })
+  let avail = $derived(winW < 820 ? Math.max(150, winW - 20) : (stageW || winW))
+  // 窄屏(移动端「IP 探测」摊开)自适应: 卡片近整宽、单列、更扁; 桌面维持 300×150。
+  let narrow = $derived(avail < 560)
+  let CARDW = $derived(narrow ? Math.min(avail, 460) : 300)
   let CARDH = $derived(narrow ? 116 : 150)
   function toggleExpand() { collapseProbe() }   // 收起钮 = 退出 IP 探测摊开态(回 / URL)
 
@@ -121,7 +130,7 @@
     return out
   })
   let entryCount = $derived(renderList.filter(c => c.kind === 'ip').length)
-  let cols = $derived(Math.max(1, Math.min(4, entryCount || 1, Math.floor((stageW + GAP) / (CARDW + GAP)) || 1)))
+  let cols = $derived(Math.max(1, Math.min(4, entryCount || 1, Math.floor((avail + GAP) / (CARDW + GAP)) || 1)))
   let gridRows = $derived(Math.max(1, Math.ceil((entryCount || 1) / cols)))
   // 舞台高度: 无卡时收为 0(探测中且还没拿到任何 IP); 有卡后按叠/摊布局撑开。
   let stageH = $derived(!renderList.length ? 0 : expanded ? gridRows * (CARDH + GAP) - GAP : CARDH + (settled ? 26 : 6))

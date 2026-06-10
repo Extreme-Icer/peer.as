@@ -73,7 +73,7 @@ const SELF_IP = {
 
 // JSONP 取数: 注入 <script src=...&callback=cb>, 服务端回 cb({...})。超时/失败 resolve(null)。
 let _jsonpN = 0
-export function jsonp(url, timeout = 8000) {
+export function jsonp(url, timeout = 8000, cbParam = 'callback') {
   return new Promise((resolve) => {
     if (typeof document === 'undefined') { resolve(null); return }
     const cb = '__ipc_jsonp_' + (++_jsonpN)
@@ -89,7 +89,7 @@ export function jsonp(url, timeout = 8000) {
     window[cb] = (data) => finish(data)
     s.onerror = () => finish(null)
     tm = setTimeout(() => finish(null), timeout)
-    s.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb
+    s.src = url + (url.includes('?') ? '&' : '?') + cbParam + '=' + cb
     document.head.appendChild(s)
   })
 }
@@ -152,6 +152,8 @@ const EGRESS_NETEASE = [
   'https://cstaticdun.126.net/favicon.ico',
   'https://necaptcha.nosdn.127.net/favicon.ico',
 ]
+// 阿里云 CDN DNS 探测(JSONP, 回调参数 cb): 返回 {...,content:{localIp,...}}; 取 content.localIp。
+const EGRESS_ALICDN = 'https://53351f1f-43fe-4601-8781-78e382c57795.dns-detect.alicdn.com/api/detect/DescribeDNSLookup'
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -201,6 +203,13 @@ async function headerIp(url, headerName, ms = 8000) {
   } catch (e) { return null }
 }
 
+// 阿里云 CDN JSONP: 取 content.localIp; 失败/非串 → null。
+async function alicdnIp() {
+  const d = await jsonp(EGRESS_ALICDN, 8000, 'cb')
+  const ip = d && d.content && d.content.localIp
+  return (typeof ip === 'string' && ip) ? ip : null
+}
+
 // onSource(ip, {name, host}): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名 + 实际 host)。
 // 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N", host 走 tooltip)。
 // 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
@@ -219,6 +228,7 @@ export async function probeEgressIps(onSource) {
     textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6-direct', hostOf(EGRESS_V6_LITERAL))),
     textIp(EGRESS_V4_SINGLE).then(ip => report(ip, 'IPv4-single', hostOf(EGRESS_V4_SINGLE))),
     ...EGRESS_NETEASE.map(u => headerIp(u, 'cdn-user-ip').then(ip => report(ip, 'Netease', hostOf(u)))),
+    alicdnIp().then(ip => report(ip, 'Aliyun', 'dns-detect.alicdn.com')),
   ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })

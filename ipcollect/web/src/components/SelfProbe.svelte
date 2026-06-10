@@ -16,7 +16,7 @@
   import { probeIp, openProbe, collapseProbe } from '../lib/queries.js'
   import { holderOrg } from '../lib/rdap.js'
   import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
-  import { iChevD } from '../lib/icons.js'
+  import { iChevD, iProbe } from '../lib/icons.js'
 
   let { onpick = () => {} } = $props()
 
@@ -299,7 +299,7 @@
   {#if !expanded}
     <div class="dealrow mdeal">
       <button class="dealbtn down" onclick={openProbe} title={t('sp_dealout')} aria-label={t('sp_dealout')}>
-        <Fa icon={iChevD} /> <span>{t('sp_dealout')}</span>
+        <Fa icon={iProbe} />
       </button>
     </div>
   {/if}
@@ -407,10 +407,10 @@
   .dealbtn.up:hover { transform: translateY(-1px); }
   .dealbtn :global(svg) { width: 14px; transition: transform .45s cubic-bezier(.16,1,.3,1); }
   .dealbtn.up :global(svg) { transform: rotate(180deg); }
-  /* 移动端首页「摊开」按钮(带文字): 桌面隐藏, 仅窄屏显示。 */
+  /* 移动端首页「摊开」按钮(仅图标, 用 IP 探测同款图标): 桌面隐藏, 仅窄屏显示。 */
   .mdeal { display: none; }
-  .dealbtn.down { width: auto; gap: 8px; padding: 0 18px; height: 34px; font: 600 12.5px var(--sans); }
-  .dealbtn.down :global(svg) { width: 12px; }
+  .dealbtn.down { width: 54px; height: 34px; }
+  .dealbtn.down :global(svg) { width: 15px; }
 
   @media (max-width: 820px) {
     /* 移动端「IP 探测」: 卡片近整宽、更扁、内距更紧凑(去掉桌面的大留白)。 */

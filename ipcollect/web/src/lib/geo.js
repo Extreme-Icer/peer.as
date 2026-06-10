@@ -152,8 +152,17 @@ const EGRESS_NETEASE = [
   'https://cstaticdun.126.net/favicon.ico',
   'https://necaptcha.nosdn.127.net/favicon.ico',
 ]
-// 阿里云 CDN DNS 探测(JSONP, 回调参数 cb): 返回 {...,content:{localIp,...}}; 取 content.localIp。
-const EGRESS_ALICDN = 'https://53351f1f-43fe-4601-8781-78e382c57795.dns-detect.alicdn.com/api/detect/DescribeDNSLookup'
+// 阿里云 CDN DNS 探测(JSONP, 回调参数 cb): 子域每次用随机 uuid(确保是未缓存的全新 DNS 解析, 也避免限流);
+// 返回 {...,content:{localIp,...}}, 取 content.localIp。
+const ALICDN_URL = (uuid) => `https://${uuid}.dns-detect.alicdn.com/api/detect/DescribeDNSLookup`
+// 随机 uuid 串(无需库): 优先 crypto.randomUUID, 退路按 uuid 形状拼。
+function randUuid() {
+  try { if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID() } catch (e) { /* */ }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16)
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+  })
+}
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -205,7 +214,7 @@ async function headerIp(url, headerName, ms = 8000) {
 
 // 阿里云 CDN JSONP: 取 content.localIp; 失败/非串 → null。
 async function alicdnIp() {
-  const d = await jsonp(EGRESS_ALICDN, 8000, 'cb')
+  const d = await jsonp(ALICDN_URL(randUuid()), 8000, 'cb')
   const ip = d && d.content && d.content.localIp
   return (typeof ip === 'string' && ip) ? ip : null
 }

@@ -111,7 +111,7 @@
     <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
   </div>
   <MobileBar />
-  <div class="scroll" class:center={!S.whois.kind}>
+  <div class="scroll" class:center={!S.whois.kind && !S.probeExpanded}>
     <div class="col" class:wide={S.probeExpanded}>
       <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
       <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
@@ -390,9 +390,11 @@
   .more:hover :global(svg) { transform: translateX(3px); }
 
   @media (max-width: 820px) {
-    .scroll { padding: 22px 12px 48px; }
-    /* 移动端暂时隐藏「你的接入」卡片堆(还没想好合适的窄屏样式) */
+    .scroll { padding: 14px 8px 36px; }
+    .scroll.center { padding-top: 20vh; }                /* 移动端首页(未摊开)居中略上提, 不占太多上方空白 */
+    /* 移动端首页默认不展示「你的接入」卡堆(保持简洁); 但从「IP 探测」入口摊开时显示。 */
     .spwrap { display: none; }
+    .spwrap.expanded { display: block; }
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; line-height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */

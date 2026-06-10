@@ -13,15 +13,15 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { probeEgressIps, probeStun } from '../lib/geo.js'
-  import { probeIp } from '../lib/queries.js'
+  import { probeIp, openProbe, collapseProbe } from '../lib/queries.js'
   import { holderOrg } from '../lib/rdap.js'
   import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
   import { iChevD } from '../lib/icons.js'
 
   let { onpick = () => {} } = $props()
 
-  // 几何常量(桌面; 窄屏整块隐藏)。卡宽=叠卡宽=摊卡宽(纯位移, 不缩放→不闪)。
-  const CARDW = 300, CARDH = 150, GAP = 16, PILEGAP = 40
+  // 几何: 间距常量固定; 卡宽/高随窄屏(移动端 IP 探测)自适应 —— 见下 narrow/CARDW/CARDH。
+  const GAP = 16, PILEGAP = 40
 
   // 来源徽标配色: 按站点类别分类(AI / 交易所 / 开发工具 / 媒体社交 / WebRTC / 直连探测 / 其它)。
   const CAT_COLOR = { ai: '#a855f7', ex: '#f59e0b', dev: '#3b82f6', media: '#ec4899', stun: '#14b8a6', direct: '#22c55e', other: '#6366f1' }
@@ -105,7 +105,11 @@
   let activeFam = $derived(defaultIp ? (defaultIp.includes(':') ? 'ip6' : 'ip4') : null)
   let secEl = $state()
   let stageW = $state(820)
-  function toggleExpand() { S.probeExpanded = !S.probeExpanded }
+  // 窄屏(移动端「IP 探测」摊开)自适应: 卡片近乎整宽、单列、更扁; 桌面维持 300×150。
+  let narrow = $derived(stageW > 0 && stageW < 560)
+  let CARDW = $derived(narrow ? Math.max(150, Math.min(stageW - 4, 460)) : 300)
+  let CARDH = $derived(narrow ? 116 : 150)
+  function toggleExpand() { collapseProbe() }   // 收起钮 = 退出 IP 探测摊开态(回 / URL)
 
   let renderList = $derived.by(() => {
     // 没探到 IP 的协议栈 = 整块不显示(不出"无 IPvx"提示); 探到几个就出几张卡。
@@ -266,7 +270,7 @@
       <div class="card" class:clickable={!expanded && c.kind === 'ip'} class:flat={!expanded && c.ci !== 0}
            data-t={c.fam} style="--ac:{c.accent}; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
-           onclick={() => { if (!expanded && c.kind === 'ip') S.probeExpanded = true }}>
+           onclick={() => { if (!expanded && c.kind === 'ip') openProbe() }}>
         {@render body(c.fi, c.e, !expanded && top && fams[c.fi].entries.length > 1)}
         {#if expanded || top}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
       </div>
@@ -387,7 +391,13 @@
   .dealbtn.up :global(svg) { transform: rotate(180deg); }
 
   @media (max-width: 820px) {
-    .sp { padding: 6px 16px 16px; }
-    .ip { font-size: 16px; }
+    /* 移动端「IP 探测」: 卡片近整宽、更扁、内距更紧凑(去掉桌面的大留白)。 */
+    .sp { margin-top: 14px; padding: 2px 2px 8px; }
+    .card { border-radius: 13px; box-shadow: 0 10px 22px -16px rgba(0,0,0,.5); }
+    .cbody { padding: 9px 13px 10px; gap: 5px; }
+    .iprow { line-height: 1.4; padding-right: 8px; }
+    .ip { font-size: 15px; }
+    .loc { padding-right: 8px; }
+    .dealrow { margin-top: 10px; }
   }
 </style>

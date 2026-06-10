@@ -26,6 +26,7 @@ export {
   faClock as iClock,
   faBolt as iBolt,
   faNetworkWired as iNet,
+  faTowerBroadcast as iProbe,
   faCircleNodes as iNodes,
   faSpinner as iSpinner,
   faEraser as iClear,

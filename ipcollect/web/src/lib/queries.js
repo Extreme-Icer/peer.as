@@ -708,6 +708,23 @@ export function goHome() {
   else { S.view = 'routing'; go('/'); ensureEngine().then(() => runSearch()).catch(() => {}) }
 }
 
+// 「IP 探测」专用视图(= WHOIS 首页 + 卡片摊开网格, URL /probe)。侧栏/移动菜单入口指向它。
+// 复位到干净首页(同 goHome), 但摊开「你的接入」网格 + 落 /probe URL(可深链/前进后退)。
+export function openProbe() {
+  closeDetailState()
+  Object.assign(S.filters, { cc: '', city: '', person: '', path: '', origin: '', ip: '', limit: 500, incllow: false, fam: 'all' })
+  S.dns = null; S.asset = null; S.rows = []; S.msg = ''
+  S.view = 'whois'
+  S.whois = { input: '', kind: null, key: null, err: '' }
+  S.probeExpanded = true
+  go('/probe')
+}
+// 收起摊开网格(卡堆收起钮): 回到 WHOIS 首页 URL(/)。
+export function collapseProbe() {
+  S.probeExpanded = false
+  if (S.view === 'whois' && !S.whois.kind) go('/')
+}
+
 // ── 结果表分页 + 导出 ─────────────────────────────────────────────
 // 翻页: 调 runSearch(true) 保留 S.page; OFFSET=page*limit 重查(复用整套搜索逻辑与 _best/排序后处理)。
 export function gotoPage(delta) {
@@ -768,12 +785,13 @@ export async function exportCsv(keys) {
 
 // 顶层视图切换(侧栏 / 移动菜单)。各视图保留自身 S 状态, 仅翻 S.view + 还原对应 URL(入历史栈, 可前进/后退)。
 export function setView(v) {
-  if (v === S.view) return
   if (v === 'whois') {
+    S.probeExpanded = false   // 从「IP 探测」摊开态/其它视图回首页时收起网格
     S.view = 'whois'
     const inp = (S.whois?.input || '').trim()
     go(inp ? '/whois/' + encodeURIComponent(inp) : '/')   // 首页 = /
   } else {
+    if (v === S.view) return
     S.view = 'routing'
     const box = (S.filters.ip || '').trim()
     go(box ? `/?q=${encodeURIComponent(box)}` : ROUTING_HOME)   // 路由分析落地页 = /advanced(peeras)
@@ -843,9 +861,10 @@ export async function applyRoute({ initial = false } = {}) {
     S.view = 'routing'                             // 默认顶层视图; whois 分支改 'whois'(从 whois 后退到路由 URL 即自动复位)
     // peeras 首页 = WHOIS 视图: 空路径且无 ?q(落地页), 以及 /whois[/<q>] 深链。纯 RDAP, 不碰引擎。
     // dn42(无 whoisView)空路径仍走下面的路由空落地页, 不进 whois。
-    if (features.whoisView && ((path === '' && q0 == null) || path === 'whois' || path.startsWith('whois/'))) {
+    if (features.whoisView && ((path === '' && q0 == null) || path === 'whois' || path.startsWith('whois/') || path === 'probe')) {
       S.loading = false
       runWhois(path.startsWith('whois/') ? decodeURIComponent(path.slice(6)) : '')
+      S.probeExpanded = (path === 'probe')   // /probe -> 直接进「IP 探测」摊开态(runWhois 已先置 false)
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。

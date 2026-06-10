@@ -143,6 +143,9 @@ const EGRESS_UPYUN = 'https://pubstatic.b0.upaiyun.com/?_upnode'
 // = 我们 CN 站(Caddy)自建: respond "{client_ip}" 纯文本 + CORS *; LE shortlived IP 证书自动续。
 // 地址 = VPS 的 SLAAC 全局 v6(若 VPS 换地址需同步改这里与 Caddyfile 的站点块)。
 const EGRESS_V6_LITERAL = 'https://[2605:52c0:2:1d:be24:11ff:fe22:251b]/'
+// IPv4 单栈端点(A-only 主机, 无 AAAA): 强制走 v4, 拿真实 v4 出口(happy-eyeballs 不会误选 v6)。
+// 第三方(13a.com), 返回纯文本 IP; CORS 反射 Origin(我们的源能读)。
+const EGRESS_V4_SINGLE = 'https://ip4.13a.com/'
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -182,20 +185,22 @@ async function textIp(url, ms = 8000) {
   } catch (e) { return null }
 }
 
-// onSource(ip, sourceName): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名)。
-// 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N")。
+// onSource(ip, {name, host}): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名 + 实际 host)。
+// 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N", host 走 tooltip)。
 // 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
 export async function probeEgressIps(onSource) {
   const count = new Map()
-  const report = (ip, name) => {
+  const hostOf = (u) => { try { return new URL(u).host } catch (e) { return u } }
+  const report = (ip, name, host) => {
     if (!ip) return
     count.set(ip, (count.get(ip) || 0) + 1)
-    if (onSource) { try { onSource(ip, name) } catch (e) { /* UI 回调异常不拖累探测 */ } }
+    if (onSource) { try { onSource(ip, { name, host }) } catch (e) { /* UI 回调异常不拖累探测 */ } }
   }
   await Promise.all([
-    ...EGRESS_TRACE.map(s => traceIp(s.url).then(ip => report(ip, s.name))),
-    upyunIp(EGRESS_UPYUN).then(ip => report(ip, 'Upyun')),
-    textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连')),
+    ...EGRESS_TRACE.map(s => traceIp(s.url).then(ip => report(ip, s.name, hostOf(s.url)))),
+    upyunIp(EGRESS_UPYUN).then(ip => report(ip, 'Upyun', hostOf(EGRESS_UPYUN))),
+    textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连', hostOf(EGRESS_V6_LITERAL))),
+    textIp(EGRESS_V4_SINGLE).then(ip => report(ip, 'IPv4 单栈', hostOf(EGRESS_V4_SINGLE))),
   ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })
@@ -234,7 +239,7 @@ function stunOne({ name, server }, onSource, ms = 6000) {
       if (!addr) return
       addr = addr.replace(/[[\]]/g, '')
       if (addr.indexOf('.local') > -1) return                    // mDNS 主机名, 跳过
-      if (onSource) { try { onSource(addr, name) } catch (e) { /* */ } }
+      if (onSource) { try { onSource(addr, { name, host: server }) } catch (e) { /* */ } }
     }
     try {
       pc.createDataChannel('ip')

@@ -23,6 +23,23 @@
   // 几何常量(桌面; 窄屏整块隐藏)。卡宽=叠卡宽=摊卡宽(纯位移, 不缩放→不闪)。
   const CARDW = 300, CARDH = 150, GAP = 16, PILEGAP = 40
 
+  // 来源徽标配色: 按站点类别分类(AI / 交易所 / 开发工具 / 媒体社交 / WebRTC / 直连探测 / 其它)。
+  const CAT_COLOR = { ai: '#a855f7', ex: '#f59e0b', dev: '#3b82f6', media: '#ec4899', stun: '#14b8a6', direct: '#22c55e', other: '#6366f1' }
+  const SRC_CAT = {
+    OpenAI: 'ai', Claude: 'ai', Grok: 'ai', Anthropic: 'ai', Perplexity: 'ai', ChatGPT: 'ai', Sora: 'ai',
+    Coinbase: 'ex', OKX: 'ex',
+    cdnjs: 'dev', jsDelivr: 'dev', 'CF Mirrors': 'dev', npm: 'dev', Kali: 'dev', unpkg: 'dev', 'Node.js': 'dev', GitLab: 'dev', PerfOps: 'dev', 'CF-NS': 'dev', Upyun: 'dev',
+    Crunchyroll: 'media', Discord: 'media', X: 'media', Medium: 'media',
+    Qualcomm: 'other',
+  }
+  function srcCat(name) {
+    if (!name) return 'other'
+    if (name.startsWith('STUN')) return 'stun'                 // WebRTC/STUN 一类
+    if (name.startsWith('IPv4') || name.startsWith('IPv6')) return 'direct'   // 直连/单栈探测一类
+    return SRC_CAT[name] || 'other'
+  }
+  const srcColor = (name) => CAT_COLOR[srcCat(name)]
+
   // 隐藏 IP(截图/隐私): 仅遮挡出口地址, 富集照常。v4/v6 各自独立, 记忆于 localStorage("v4,v6" 两位)。
   const HIDE_KEY = 'ipc-hide-self-ip'
   let hide = $state((() => {
@@ -46,18 +63,18 @@
     // onSource(ip, source): 每个端点每看到一次出口 IP 就回调(带来源品牌名)。
     //  · 新 IP → 立刻插卡 + 异步库内富集(prefix/ASN/geo)在原地补;
     //  · 已有该 IP → 只把来源累加进 sources(展开详情显示"来源 +N")。
-    const onSource = (ip, source) => {
+    const onSource = (ip, src) => {                               // src = { name, host }
       const fi = ip.includes(':') ? 1 : 0
       const cur = fams[fi].entries
       const idx = cur.findIndex(e => e.ip === ip)
-      if (idx >= 0) {                                              // 已有: 累加来源(去重)
+      if (idx >= 0) {                                              // 已有: 累加来源(按 name 去重)
         const s = cur[idx].sources
-        if (!s.includes(source)) fams[fi].entries[idx].sources = [...s, source]
+        if (!s.some(x => x.name === src.name)) fams[fi].entries[idx].sources = [...s, src]
         return
       }
       if (cur.length >= 4) return                                 // 每族最多 4 张(顶 + 露 3 角)
       const ei = cur.length
-      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '', sources: [source] }]
+      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '', sources: [src] }]
       reveal(fams[fi].fam + ':' + ip)                             // 排程入场动画(下一帧落入叠堆)
       probeIp(ip).then((info) => {
         fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
@@ -208,9 +225,10 @@
            onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { stop(ev); ev.preventDefault(); onpick(e.ip) } }}>{e.ip}</a>
       {/if}
       {#if showBadge}<span class="ipmore">+{fams[fi].entries.length - 1} IP</span>{/if}
-      <!-- 展开详情: IP 后面挂"来源"(经哪个站点/服务看到的); 多来源再跟一个 +N -->
+      <!-- 展开详情: IP 后面挂"来源"(经哪个站点/服务看到的; 按类别配色); 悬停显示来源 host。
+           多来源再跟一个 +N, 悬停列出全部来源 host。 -->
       {#if expanded && e.sources?.length}
-        <span class="ipmore src">{e.sources[0]}</span>{#if e.sources.length > 1}<span class="ipmore">+{e.sources.length - 1}</span>{/if}
+        <span class="ipmore src" style="--sc:{srcColor(e.sources[0].name)}" title={e.sources[0].host}>{e.sources[0].name}</span>{#if e.sources.length > 1}<span class="ipmore srcmore" title={e.sources.map(s => s.name + ' — ' + s.host).join('\n')}>+{e.sources.length - 1}</span>{/if}
       {/if}
     </div>
     {#if e.enriching}
@@ -315,9 +333,15 @@
     color: var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--ac) 34%, transparent); border-radius: 999px; padding: 3px 7px; white-space: nowrap;
   }
-  /* 来源名徽标: 用中性灰(区别于 family 色的计数徽标), 字重略轻 */
+  /* 来源名徽标: 按站点类别配色(--sc, 见 srcColor); 悬停显示来源 host。 */
   .ipmore.src {
-    color: var(--muted); font-weight: 600;
+    color: var(--sc); font-weight: 700; cursor: help;
+    background: color-mix(in srgb, var(--sc) 15%, transparent);
+    border-color: color-mix(in srgb, var(--sc) 36%, transparent);
+  }
+  /* +N 来源徽标: 中性灰(它是计数, 非具体来源); 悬停列出全部来源 host。 */
+  .ipmore.srcmore {
+    color: var(--muted); cursor: help;
     background: color-mix(in srgb, var(--muted) 12%, transparent);
     border-color: color-mix(in srgb, var(--muted) 28%, transparent);
   }

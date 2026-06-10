@@ -28,8 +28,8 @@
   const SRC_CAT = {
     OpenAI: 'ai', Claude: 'ai', Grok: 'ai', Anthropic: 'ai', Perplexity: 'ai', ChatGPT: 'ai', Sora: 'ai',
     Coinbase: 'ex', OKX: 'ex',
-    cdnjs: 'dev', jsDelivr: 'dev', 'CF Mirrors': 'dev', npm: 'dev', Kali: 'dev', unpkg: 'dev', 'Node.js': 'dev', GitLab: 'dev', PerfOps: 'dev', 'CF-NS': 'dev', Upyun: 'dev',
-    Crunchyroll: 'media', Discord: 'media', X: 'media', Medium: 'media',
+    SakuraFrp: 'dev', cdnjs: 'dev', jsDelivr: 'dev', 'CF Mirrors': 'dev', npm: 'dev', Kali: 'dev', unpkg: 'dev', 'Node.js': 'dev', GitLab: 'dev', PerfOps: 'dev', 'CF-NS': 'dev', Upyun: 'dev',
+    Crunchyroll: 'media', Discord: 'media', X: 'media', Medium: 'media', Netease: 'media',
     Qualcomm: 'other',
   }
   function srcCat(name) {

@@ -137,6 +137,7 @@ const EGRESS_TRACE = [
   { url: 'https://perfops.cloudflareperf.com/cdn-cgi/trace', name: 'PerfOps' },
   { url: 'https://www.qualcomm.cn/cdn-cgi/trace', name: 'Qualcomm' },
   { url: 'https://www.cf-ns.com/cdn-cgi/trace', name: 'CF-NS' },
+  { url: 'https://www.natfrp.com/cdn-cgi/trace', name: 'SakuraFrp' },
 ]
 const EGRESS_UPYUN = 'https://pubstatic.b0.upaiyun.com/?_upnode'
 // 字面 IPv6 端点(不走 DNS, 直连 v6): 即便 AAAA 被污染/屏蔽也能拿到真实 v6 出口 → 暴露"AAAA 被屏蔽"的情况。
@@ -146,6 +147,11 @@ const EGRESS_V6_LITERAL = 'https://[2605:52c0:2:1d:be24:11ff:fe22:251b]/'
 // IPv4 单栈端点(A-only 主机, 无 AAAA): 强制走 v4, 拿真实 v4 出口(happy-eyeballs 不会误选 v6)。
 // 第三方(13a.com), 返回纯文本 IP; CORS 反射 Origin(我们的源能读)。
 const EGRESS_V4_SINGLE = 'https://ip4.13a.com/'
+// 网易: favicon.ico 把客户端 IP 放进 cdn-user-ip 响应头(ACAO:* + Expose-Headers:*, 浏览器可读)。两个域名任一即可。
+const EGRESS_NETEASE = [
+  'https://cstaticdun.126.net/favicon.ico',
+  'https://necaptcha.nosdn.127.net/favicon.ico',
+]
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -185,6 +191,16 @@ async function textIp(url, ms = 8000) {
   } catch (e) { return null }
 }
 
+// 取响应头里的 IP(网易 favicon.ico 把客户端 IP 放在 cdn-user-ip 头); 非 IP / 失败 / 超时 → null。
+async function headerIp(url, headerName, ms = 8000) {
+  const r = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), ms)
+  if (!r || !r.ok) return null
+  try {
+    const v = (r.headers.get(headerName) || '').trim()
+    return (v.length >= 3 && v.length <= 45 && /^[0-9a-fA-F:.]+$/.test(v)) ? v : null
+  } catch (e) { return null }
+}
+
 // onSource(ip, {name, host}): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名 + 实际 host)。
 // 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N", host 走 tooltip)。
 // 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
@@ -202,6 +218,7 @@ export async function probeEgressIps(onSource) {
     // 这两个用稳定标识(非展示文案), 由前端 srcLabel() 经 i18n 译成"IPv6 直连 / IPv4 单栈"。
     textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6-direct', hostOf(EGRESS_V6_LITERAL))),
     textIp(EGRESS_V4_SINGLE).then(ip => report(ip, 'IPv4-single', hostOf(EGRESS_V4_SINGLE))),
+    ...EGRESS_NETEASE.map(u => headerIp(u, 'cdn-user-ip').then(ip => report(ip, 'Netease', hostOf(u)))),
   ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })

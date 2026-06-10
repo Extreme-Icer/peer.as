@@ -39,6 +39,12 @@
     return SRC_CAT[name] || 'other'
   }
   const srcColor = (name) => CAT_COLOR[srcCat(name)]
+  // 展示文案: 品牌名原样; 两个直连探测的稳定标识经 i18n 译出(随语言切换)。
+  function srcLabel(name) {
+    if (name === 'IPv6-direct') return t('sp_src_v6direct')
+    if (name === 'IPv4-single') return t('sp_src_v4single')
+    return name
+  }
 
   // 隐藏 IP(截图/隐私): 仅遮挡出口地址, 富集照常。v4/v6 各自独立, 记忆于 localStorage("v4,v6" 两位)。
   const HIDE_KEY = 'ipc-hide-self-ip'
@@ -228,7 +234,7 @@
       <!-- 展开详情: IP 后面挂"来源"(经哪个站点/服务看到的; 按类别配色); 悬停显示来源 host。
            多来源再跟一个 +N, 悬停列出全部来源 host。 -->
       {#if expanded && e.sources?.length}
-        <span class="ipmore src" style="--sc:{srcColor(e.sources[0].name)}" title={e.sources[0].host}>{e.sources[0].name}</span>{#if e.sources.length > 1}<span class="ipmore srcmore" title={e.sources.map(s => s.name + ' — ' + s.host).join('\n')}>+{e.sources.length - 1}</span>{/if}
+        <span class="ipmore src" style="--sc:{srcColor(e.sources[0].name)}" title={e.sources[0].host}>{srcLabel(e.sources[0].name)}</span>{#if e.sources.length > 1}<span class="ipmore srcmore" title={e.sources.map(s => srcLabel(s.name) + ' — ' + s.host).join('\n')}>+{e.sources.length - 1}</span>{/if}
       {/if}
     </div>
     {#if e.enriching}

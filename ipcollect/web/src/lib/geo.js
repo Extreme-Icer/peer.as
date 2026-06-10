@@ -199,8 +199,9 @@ export async function probeEgressIps(onSource) {
   await Promise.all([
     ...EGRESS_TRACE.map(s => traceIp(s.url).then(ip => report(ip, s.name, hostOf(s.url)))),
     upyunIp(EGRESS_UPYUN).then(ip => report(ip, 'Upyun', hostOf(EGRESS_UPYUN))),
-    textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连', hostOf(EGRESS_V6_LITERAL))),
-    textIp(EGRESS_V4_SINGLE).then(ip => report(ip, 'IPv4 单栈', hostOf(EGRESS_V4_SINGLE))),
+    // 这两个用稳定标识(非展示文案), 由前端 srcLabel() 经 i18n 译成"IPv6 直连 / IPv4 单栈"。
+    textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6-direct', hostOf(EGRESS_V6_LITERAL))),
+    textIp(EGRESS_V4_SINGLE).then(ip => report(ip, 'IPv4-single', hostOf(EGRESS_V4_SINGLE))),
   ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })

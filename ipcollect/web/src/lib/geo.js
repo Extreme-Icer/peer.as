@@ -111,33 +111,37 @@ export async function probeSelfIps() {
 // 客户端 IP。多 WAN / 多线 / happy-eyeballs / CDN 不同 PoP 会让不同站点看到不同出口地址,
 // 借此把"你实际拥有的全部接入出口"摸出来; 去重后按 family(v4/v6)分组、按出现频次排序。
 // 任一端点失败/超时静默忽略, 不阻塞首页。
+// 每个端点带一个"来源"品牌名(展开详情里显示这个 IP 是通过哪个站点/服务看到的)。
 const EGRESS_TRACE = [
-  'https://cdnjs.cloudflare.com/cdn-cgi/trace',
-  'https://coinbase.com/cdn-cgi/trace',
-  'https://www.okx.com/cdn-cgi/trace',
-  'https://testingcf.jsdelivr.net/cdn-cgi/trace',
-  'https://cloudflaremirrors.com/cdn-cgi/trace',
-  'https://registry.npmjs.org/cdn-cgi/trace',
-  'https://kali.download/cdn-cgi/trace',
-  'https://app.unpkg.com/cdn-cgi/trace',
-  'https://crunchyroll.com/cdn-cgi/trace',
-  'https://nodejs.org/cdn-cgi/trace',
-  'https://gitlab.com/cdn-cgi/trace',
-  'https://openai.com/cdn-cgi/trace',
-  'https://claude.ai/cdn-cgi/trace',
-  'https://grok.com/cdn-cgi/trace',
-  'https://anthropic.com/cdn-cgi/trace',
-  'https://www.perplexity.ai/cdn-cgi/trace',
-  'https://chatgpt.com/cdn-cgi/trace',
-  'https://sora.com/cdn-cgi/trace',
-  'https://gateway.discord.gg/cdn-cgi/trace',
-  'https://x.com/cdn-cgi/trace',
-  'https://medium.com/cdn-cgi/trace',
-  'https://perfops.cloudflareperf.com/cdn-cgi/trace',
-  'https://www.qualcomm.cn/cdn-cgi/trace',
-  'https://www.cf-ns.com/cdn-cgi/trace',
+  { url: 'https://cdnjs.cloudflare.com/cdn-cgi/trace', name: 'cdnjs' },
+  { url: 'https://coinbase.com/cdn-cgi/trace', name: 'Coinbase' },
+  { url: 'https://www.okx.com/cdn-cgi/trace', name: 'OKX' },
+  { url: 'https://testingcf.jsdelivr.net/cdn-cgi/trace', name: 'jsDelivr' },
+  { url: 'https://cloudflaremirrors.com/cdn-cgi/trace', name: 'CF Mirrors' },
+  { url: 'https://registry.npmjs.org/cdn-cgi/trace', name: 'npm' },
+  { url: 'https://kali.download/cdn-cgi/trace', name: 'Kali' },
+  { url: 'https://app.unpkg.com/cdn-cgi/trace', name: 'unpkg' },
+  { url: 'https://crunchyroll.com/cdn-cgi/trace', name: 'Crunchyroll' },
+  { url: 'https://nodejs.org/cdn-cgi/trace', name: 'Node.js' },
+  { url: 'https://gitlab.com/cdn-cgi/trace', name: 'GitLab' },
+  { url: 'https://openai.com/cdn-cgi/trace', name: 'OpenAI' },
+  { url: 'https://claude.ai/cdn-cgi/trace', name: 'Claude' },
+  { url: 'https://grok.com/cdn-cgi/trace', name: 'Grok' },
+  { url: 'https://anthropic.com/cdn-cgi/trace', name: 'Anthropic' },
+  { url: 'https://www.perplexity.ai/cdn-cgi/trace', name: 'Perplexity' },
+  { url: 'https://chatgpt.com/cdn-cgi/trace', name: 'ChatGPT' },
+  { url: 'https://sora.com/cdn-cgi/trace', name: 'Sora' },
+  { url: 'https://gateway.discord.gg/cdn-cgi/trace', name: 'Discord' },
+  { url: 'https://x.com/cdn-cgi/trace', name: 'X' },
+  { url: 'https://medium.com/cdn-cgi/trace', name: 'Medium' },
+  { url: 'https://perfops.cloudflareperf.com/cdn-cgi/trace', name: 'PerfOps' },
+  { url: 'https://www.qualcomm.cn/cdn-cgi/trace', name: 'Qualcomm' },
+  { url: 'https://www.cf-ns.com/cdn-cgi/trace', name: 'CF-NS' },
 ]
 const EGRESS_UPYUN = 'https://pubstatic.b0.upaiyun.com/?_upnode'
+// 字面 IPv6 端点(不走 DNS, 直连 v6): 即便 AAAA 被污染/屏蔽也能拿到真实 v6 出口 → 暴露"AAAA 被屏蔽"的情况。
+// 返回 JSON { ip: <客户端看到的地址>, ... }。
+const EGRESS_V6_LITERAL = 'https://[2604:a880:800:10::e6:b001]/api/full'
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -167,25 +171,79 @@ async function upyunIp(url) {
   } catch (e) { return null }
 }
 
-// onIp(ip): 每发现一个"新的"(去重后)出口 IP 就立即回调一次 —— 让 UI 拿到一个就插一张卡,
-// 不必等所有端点(含慢/超时的)跑完。返回值仍是全部端点跑完后的最终汇总(按票数排序 + defaultIp)。
-export async function probeEgressIps(onIp) {
+// 取 JSON 里的 .ip(字面 v6 /api/full 等); 失败/超时 → null。
+async function jsonIp(url, ms = 8000) {
+  const r = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), ms)
+  if (!r || !r.ok) return null
+  try {
+    const j = await r.json()
+    return (typeof j.ip === 'string' && j.ip) ? j.ip : null
+  } catch (e) { return null }
+}
+
+// onSource(ip, sourceName): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名)。
+// 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N")。
+// 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
+export async function probeEgressIps(onSource) {
   const count = new Map()
-  const seen = new Set()
-  await Promise.all([
-    ...EGRESS_TRACE.map(u => traceIp(u)),
-    upyunIp(EGRESS_UPYUN),
-  ].map(p => p.then(ip => {
+  const report = (ip, name) => {
     if (!ip) return
     count.set(ip, (count.get(ip) || 0) + 1)
-    if (!seen.has(ip)) { seen.add(ip); if (onIp) { try { onIp(ip) } catch (e) { /* UI 回调异常不拖累探测 */ } } }
-  })))
+    if (onSource) { try { onSource(ip, name) } catch (e) { /* UI 回调异常不拖累探测 */ } }
+  }
+  await Promise.all([
+    ...EGRESS_TRACE.map(s => traceIp(s.url).then(ip => report(ip, s.name))),
+    upyunIp(EGRESS_UPYUN).then(ip => report(ip, 'Upyun')),
+    jsonIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连')),
+  ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })
   const byN = (a, b) => b.n - a.n
   v4.sort(byN); v6.sort(byN)
-  // 默认出口 = 被最多端点看到的那个地址(浏览器实际主用的接入), 用于卡片上的 live 小点。
   let defaultIp = null, best = -1
   for (const [ip, n] of count) if (n > best) { best = n; defaultIp = ip }
   return { v4: v4.map(x => x.ip), v6: v6.map(x => x.ip), defaultIp }
+}
+
+// ── WebRTC / STUN 泄漏探测 ───────────────────────────────────────────
+// 用 RTCPeerConnection 向 STUN 服务器问"你看到我的公网地址是多少"(srflx 候选)。
+// 这是 HTTP 之外的第二通道: 能暴露被 WebRTC 泄漏、但 HTTP 出口看不到的地址(典型 VPN/代理泄漏)。
+// 参考 ip.ainou.moe 的 stunApi 实现: 只取 srflx 候选的 address。
+const STUN_SERVERS = [
+  { name: 'STUN·CF', server: 'turn.cloudflare.com:53' },
+  { name: 'STUN·Google', server: 'stun.l.google.com:19302' },
+  { name: 'STUN·MiWiFi', server: 'stun.miwifi.com' },
+  { name: 'STUN·Bilibili', server: 'stun.chat.bilibili.com' },
+]
+
+function stunOne({ name, server }, onSource, ms = 6000) {
+  return new Promise((resolve) => {
+    let pc
+    try { pc = new RTCPeerConnection({ iceServers: [{ urls: `stun:${server}` }] }) }
+    catch (e) { resolve(); return }
+    let done = false
+    const finish = () => { if (done) return; done = true; try { pc.close() } catch (e) { /* */ } resolve() }
+    const tm = setTimeout(finish, ms)
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) { clearTimeout(tm); finish(); return }   // null = 收集完成
+      const c = e.candidate
+      if (!c.candidate || c.candidate.indexOf('srflx') < 0) return
+      // address(新)优先; 老浏览器回退解析 candidate 串的第 5 段
+      let addr = c.address || c.candidate.split(' ')[4]
+      if (!addr) return
+      addr = addr.replace(/[[\]]/g, '')
+      if (addr.indexOf('.local') > -1) return                    // mDNS 主机名, 跳过
+      if (onSource) { try { onSource(addr, name) } catch (e) { /* */ } }
+    }
+    try {
+      pc.createDataChannel('ip')
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => { clearTimeout(tm); finish() })
+    } catch (e) { clearTimeout(tm); finish() }
+  })
+}
+
+// 同步触发全部 STUN, 各自独立把发现的 srflx 地址经 onSource 上报(与 HTTP 探测并行)。
+export function probeStun(onSource) {
+  if (typeof RTCPeerConnection === 'undefined') return Promise.resolve()
+  return Promise.all(STUN_SERVERS.map(s => stunOne(s, onSource)))
 }

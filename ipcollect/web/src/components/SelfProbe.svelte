@@ -12,7 +12,7 @@
   import Fa from 'svelte-fa'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { probeEgressIps } from '../lib/geo.js'
+  import { probeEgressIps, probeStun } from '../lib/geo.js'
   import { probeIp } from '../lib/queries.js'
   import { holderOrg } from '../lib/rdap.js'
   import { iVisible, iLowvis, iLoc } from '../lib/icons.js'
@@ -43,23 +43,32 @@
   ])
 
   onMount(async () => {
-    // 每拿到一个出口 IP 就立刻插一张卡(不等所有端点跑完); 卡内的库内富集(prefix/ASN/geo)随后异步在原地补。
-    const r = await probeEgressIps((ip) => {
+    // onSource(ip, source): 每个端点每看到一次出口 IP 就回调(带来源品牌名)。
+    //  · 新 IP → 立刻插卡 + 异步库内富集(prefix/ASN/geo)在原地补;
+    //  · 已有该 IP → 只把来源累加进 sources(展开详情显示"来源 +N")。
+    const onSource = (ip, source) => {
       const fi = ip.includes(':') ? 1 : 0
       const cur = fams[fi].entries
-      if (cur.length >= 4 || cur.some(e => e.ip === ip)) return    // 每族最多 4 张(顶 + 露 3 角); 去重
+      const idx = cur.findIndex(e => e.ip === ip)
+      if (idx >= 0) {                                              // 已有: 累加来源(去重)
+        const s = cur[idx].sources
+        if (!s.includes(source)) fams[fi].entries[idx].sources = [...s, source]
+        return
+      }
+      if (cur.length >= 4) return                                 // 每族最多 4 张(顶 + 露 3 角)
       const ei = cur.length
-      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '' }]
-      reveal(fams[fi].fam + ':' + ip)                              // 排程入场动画(下一帧落入叠堆)
+      fams[fi].entries = [...cur, { ip, enriching: true, info: null, holder: '', sources: [source] }]
+      reveal(fams[fi].fam + ':' + ip)                             // 排程入场动画(下一帧落入叠堆)
       probeIp(ip).then((info) => {
         fams[fi].entries[ei].info = info; fams[fi].entries[ei].enriching = false
-        // IP 所属组织(RDAP, 异步独立填充, 失败静默): 与 origin ASN(运营商)不同
         const px = info && info.prefix
         if (px) holderOrg(px).then(h => { if (h) fams[fi].entries[ei].holder = h })
       }).catch(() => { fams[fi].entries[ei].enriching = false })
-    })
-    probing = false                 // 所有端点结束
-    defaultIp = r.defaultIp          // 用最终票数确定活跃(浏览器主用)协议栈的高亮
+    }
+    // HTTP 多端点 + WebRTC/STUN 泄漏 并行; 两者都用同一 onSource 汇入(STUN 能暴露 HTTP 看不到的泄漏 IP)。
+    const [r] = await Promise.all([probeEgressIps(onSource), probeStun(onSource)])
+    probing = false                 // HTTP + STUN 全部结束
+    defaultIp = r.defaultIp          // 用 HTTP 票数确定活跃(浏览器主用)协议栈的高亮
     maybeSettle()                    // probe 全完: 若飞入也已派发完, 排定结算(展成露角叠堆)
   })
 
@@ -199,6 +208,10 @@
            onkeydown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { stop(ev); ev.preventDefault(); onpick(e.ip) } }}>{e.ip}</a>
       {/if}
       {#if showBadge}<span class="ipmore">+{fams[fi].entries.length - 1} IP</span>{/if}
+      <!-- 展开详情: IP 后面挂"来源"(经哪个站点/服务看到的); 多来源再跟一个 +N -->
+      {#if expanded && e.sources?.length}
+        <span class="ipmore src">{e.sources[0]}</span>{#if e.sources.length > 1}<span class="ipmore">+{e.sources.length - 1}</span>{/if}
+      {/if}
     </div>
     {#if e.enriching}
       <span class="sub muted">{t('sp_analyzing')}</span>
@@ -301,6 +314,12 @@
     font: 700 10px var(--sans); letter-spacing: .03em; line-height: 1;
     color: var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--ac) 34%, transparent); border-radius: 999px; padding: 3px 7px; white-space: nowrap;
+  }
+  /* 来源名徽标: 用中性灰(区别于 family 色的计数徽标), 字重略轻 */
+  .ipmore.src {
+    color: var(--muted); font-weight: 600;
+    background: color-mix(in srgb, var(--muted) 12%, transparent);
+    border-color: color-mix(in srgb, var(--muted) 28%, transparent);
   }
 
   .kv { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

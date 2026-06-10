@@ -292,7 +292,8 @@
     {/each}
   </div>
 
-  {#if !probing && expanded && entryCount > 0}
+  {#if expanded}
+    <!-- 摊开态总是给收起钮(即便 probe 未完/还没卡): 刚进 /probe 就想退也能退 -->
     <div class="dealrow">
       <button class="dealbtn up" onclick={toggleExpand}
               title={t('sp_collapse')} aria-label={t('sp_collapse')}>

@@ -353,7 +353,7 @@
 
   /* IP 行: 行内流式(非 flex) —— IP 折行时 [+N IP] 角标紧跟最后一行之后, 而非独立成块靠右。
      line-height 给徽标留竖向空间; vertical-align:middle 让徽标与 IP 文字竖向居中(等价 align-items:center)。 */
-  .iprow { padding-right: 30px; line-height: 1.65; }
+  .iprow { padding-right: 20px; line-height: 1.65; }
   .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
   a.ip:hover { color: var(--ac); text-decoration: none; }
   .ip.masked { user-select: none; color: var(--muted); opacity: .7; letter-spacing: .03em; }   /* 无自定 cursor: 跟随卡片手型(点它也切换显隐) */
@@ -361,7 +361,7 @@
   .muted { color: var(--muted); font-family: var(--sans); }
 
   .ipmore {
-    display: inline-block; vertical-align: middle; margin-left: 8px;
+    display: inline-block; vertical-align: middle; margin-left: 3px;
     font: 700 10px var(--sans); letter-spacing: .03em; line-height: 1;
     color: var(--ac); background: color-mix(in srgb, var(--ac) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--ac) 34%, transparent); border-radius: 999px; padding: 3px 7px; white-space: nowrap;

@@ -56,6 +56,12 @@
     hide[fi] = !hide[fi]
     try { localStorage.setItem(HIDE_KEY, (hide[0] ? '1' : '0') + ',' + (hide[1] ? '1' : '0')) } catch (e) { /* 隐私模式忽略 */ }
   }
+  // 摊开态点卡片空白处: 两个协议栈一起切换(有任一在显示 → 全隐藏; 全隐藏 → 全显示)。
+  function toggleHideAll() {
+    const v = !hide[0] || !hide[1]
+    hide[0] = v; hide[1] = v
+    try { localStorage.setItem(HIDE_KEY, (hide[0] ? '1' : '0') + ',' + (hide[1] ? '1' : '0')) } catch (e) { /* 隐私模式忽略 */ }
+  }
 
   let probing = $state(true)
   let settled = $state(false)             // 叠堆是否已"结算"(全部 probe + 飞入都完): false=对齐一摞, true=微旋露右下角
@@ -276,10 +282,10 @@
   <div class="stage" bind:clientWidth={stageW} style="height:{stageH}px">
     {#each renderList as c (c.key)}
       {@const top = topVisible(c)}
-      <div class="card" class:clickable={!expanded && c.kind === 'ip'} class:flat={!expanded && c.ci !== 0}
+      <div class="card" class:clickable={c.kind === 'ip'} class:flat={!expanded && c.ci !== 0}
            data-t={c.fam} style="--ac:{c.accent}; --cw:{CARDW}px; --ch:{CARDH}px; {styleFor(c)}"
-           role={!expanded && c.kind === 'ip' ? 'button' : undefined}
-           onclick={() => { if (!expanded && c.kind === 'ip') openProbe() }}>
+           role={c.kind === 'ip' ? 'button' : undefined}
+           onclick={() => { if (c.kind !== 'ip') return; if (expanded) toggleHideAll(); else openProbe() }}>
         {@render body(c.fi, c.e, !expanded && top && fams[c.fi].entries.length > 1)}
         {#if expanded || top}<span class="famtag" class:act={c.fam === activeFam}>{c.label}</span>{/if}
       </div>
@@ -321,8 +327,7 @@
   /* 叠放时只让最底那张(最先到、压在最下面的 ci=0)带阴影投到地面(符合物理: 整叠的影子来自最底);
      其余各张去阴影, 避免层层叠加变重。 */
   .card.flat { box-shadow: none; }
-  .card.clickable { cursor: pointer; }
-  .sp.expanded .card { cursor: default; }
+  .card.clickable { cursor: pointer; }   /* 叠态点卡=进 IP 探测; 摊开态点卡空白=切换 IP 隐藏(均手型) */
 
   /* 右下角 family 色标(IPv4/IPv6, 仅第一张): 非活跃栈=灰; 活跃(浏览器主用)栈=淡橙(低对比度) */
   .famtag {
@@ -351,7 +356,7 @@
   .iprow { padding-right: 30px; line-height: 1.65; }
   .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
   a.ip:hover { color: var(--ac); text-decoration: none; }
-  .ip.masked { user-select: none; cursor: default; color: var(--muted); opacity: .7; letter-spacing: .03em; }
+  .ip.masked { user-select: none; color: var(--muted); opacity: .7; letter-spacing: .03em; }   /* 无自定 cursor: 跟随卡片手型(点它也切换显隐) */
   .sub { font-size: 12.5px; }
   .muted { color: var(--muted); font-family: var(--sans); }
 

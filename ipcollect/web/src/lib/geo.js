@@ -219,6 +219,58 @@ async function alicdnIp() {
   return (typeof ip === 'string' && ip) ? ip : null
 }
 
+// ── IP 规范化(去重前先格式化, 否则 IPv6 的 :: 压缩 vs 展开会被当成两个) ──
+// IPv4: 去各段前导零。非法原样返回。
+function canonV4(s) {
+  const p = String(s).trim().split('.')
+  if (p.length !== 4 || !p.every(x => /^\d{1,3}$/.test(x))) return s
+  const b = p.map(x => parseInt(x, 10))
+  if (b.some(x => x > 255)) return s
+  return b.join('.')
+}
+// IPv6: 展开成 8 组 → 去前导零 + 最长零段(≥2)压成 ::(小写, RFC 5952)。含内嵌 v4 / zone id 也处理。非法原样返回。
+function canonV6(s) {
+  let v = String(s).trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '')
+  if (v.indexOf(':') < 0) return s
+  let head, tail
+  if (v.includes('::')) {
+    const parts = v.split('::')
+    if (parts.length > 2) return s
+    head = parts[0] ? parts[0].split(':') : []
+    tail = parts[1] ? parts[1].split(':') : []
+  } else { head = v.split(':'); tail = [] }
+  const expandV4 = (arr) => {
+    if (arr.length && arr[arr.length - 1].includes('.')) {
+      const q = arr[arr.length - 1].split('.')
+      if (q.length !== 4) return null
+      const b = q.map(x => parseInt(x, 10))
+      if (b.some(x => isNaN(x) || x < 0 || x > 255)) return null
+      return arr.slice(0, -1).concat([((b[0] << 8) | b[1]).toString(16), ((b[2] << 8) | b[3]).toString(16)])
+    }
+    return arr
+  }
+  head = expandV4(head); tail = expandV4(tail)
+  if (!head || !tail) return s
+  const groups = head.slice()
+  if (v.includes('::')) { const miss = 8 - (head.length + tail.length); if (miss < 1) return s; for (let i = 0; i < miss; i++) groups.push('0') }
+  for (const g of tail) groups.push(g)
+  if (groups.length !== 8) return s
+  const nums = groups.map(g => parseInt(g || '0', 16))
+  if (nums.some(n => isNaN(n) || n < 0 || n > 0xffff)) return s
+  const hex = nums.map(n => n.toString(16))
+  let bs = -1, bl = 0, cs = -1, cl = 0
+  for (let i = 0; i < 8; i++) {
+    if (nums[i] === 0) { cs = cs < 0 ? i : cs; cl++; if (cl > bl) { bl = cl; bs = cs } }
+    else { cs = -1; cl = 0 }
+  }
+  if (bl >= 2) return hex.slice(0, bs).join(':') + '::' + hex.slice(bs + bl).join(':')
+  return hex.join(':')
+}
+function normalizeIp(ip) {
+  if (typeof ip !== 'string') return ip
+  return ip.includes(':') ? canonV6(ip) : canonV4(ip)
+}
+
 // onSource(ip, {name, host}): 每个端点每看到一次出口 IP 就回调一次(带来源品牌名 + 实际 host)。
 // 同一 IP 可被多个端点看到 → 组件据此建卡 + 累加来源(展开详情显示"来源 +N", host 走 tooltip)。
 // 不必等所有端点(含慢/超时的)跑完。返回值是全部端点跑完后的汇总(defaultIp = 被最多端点看到的)。
@@ -227,6 +279,7 @@ export async function probeEgressIps(onSource) {
   const hostOf = (u) => { try { return new URL(u).host } catch (e) { return u } }
   const report = (ip, name, host) => {
     if (!ip) return
+    ip = normalizeIp(ip)                 // 先规范化(IPv6 :: 压缩/展开归一)再计数/去重
     count.set(ip, (count.get(ip) || 0) + 1)
     if (onSource) { try { onSource(ip, { name, host }) } catch (e) { /* UI 回调异常不拖累探测 */ } }
   }
@@ -276,7 +329,7 @@ function stunOne({ name, server }, onSource, ms = 6000) {
       if (!addr) return
       addr = addr.replace(/[[\]]/g, '')
       if (addr.indexOf('.local') > -1) return                    // mDNS 主机名, 跳过
-      if (onSource) { try { onSource(addr, { name, host: server }) } catch (e) { /* */ } }
+      if (onSource) { try { onSource(normalizeIp(addr), { name, host: server }) } catch (e) { /* */ } }
     }
     try {
       pc.createDataChannel('ip')

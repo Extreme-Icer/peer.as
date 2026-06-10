@@ -354,6 +354,7 @@
   /* IP 行: 行内流式(非 flex) —— IP 折行时 [+N IP] 角标紧跟最后一行之后, 而非独立成块靠右。
      line-height 给徽标留竖向空间; vertical-align:middle 让徽标与 IP 文字竖向居中(等价 align-items:center)。 */
   .iprow { padding-right: 20px; line-height: 1.65; }
+  .sp.expanded .iprow { padding-right: 0; }   /* 摊开态无右上角隐藏钮, 不需右内距 */
   .ip { font: 600 15px var(--mono); color: var(--fg); letter-spacing: -.01em; cursor: pointer; word-break: break-all; text-decoration: none; vertical-align: middle; }
   a.ip:hover { color: var(--ac); text-decoration: none; }
   .ip.masked { user-select: none; color: var(--muted); opacity: .7; letter-spacing: .03em; }   /* 无自定 cursor: 跟随卡片手型(点它也切换显隐) */

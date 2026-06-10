@@ -111,7 +111,7 @@
     <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
   </div>
   <MobileBar />
-  <div class="scroll" class:center={!S.whois.kind && !S.probeExpanded}>
+  <div class="scroll" class:center={!S.whois.kind && !S.probeExpanded} class:probe={S.probeExpanded}>
     <div class="col" class:wide={S.probeExpanded}>
       <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
       <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
@@ -193,6 +193,8 @@
     transition: padding-top .5s ease, padding-bottom .5s ease;
   }
   .scroll.center { padding-top: 28vh; }                /* 让「字标 + 查询框」这一组落在页面视觉中心(示例/接入卡在其下, 可滚动) */
+  /* 摊开「IP 探测」: PC 端把(查询框 + 卡片网格)整组垂直居中于视觉中心; safe = 内容过高时退回顶对齐, 不裁顶部。 */
+  .scroll.probe { display: flex; flex-direction: column; justify-content: safe center; padding-top: 24px; padding-bottom: 48px; }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
@@ -392,6 +394,7 @@
   @media (max-width: 820px) {
     .scroll { padding: 14px 8px 36px; }
     .scroll.center { padding-top: 20vh; }                /* 移动端首页(未摊开)居中略上提, 不占太多上方空白 */
+    .scroll.probe { display: block; padding-top: 14px; }  /* 移动端摊开: 顶对齐(单列可能很高, 不强制居中) */
     /* 移动端: spwrap 常显(露出 SelfProbe 里的「摊开」按钮); 卡堆默认隐藏由 SelfProbe 内部(.stage)控制。 */
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }

@@ -392,9 +392,7 @@
   @media (max-width: 820px) {
     .scroll { padding: 14px 8px 36px; }
     .scroll.center { padding-top: 20vh; }                /* 移动端首页(未摊开)居中略上提, 不占太多上方空白 */
-    /* 移动端首页默认不展示「你的接入」卡堆(保持简洁); 但从「IP 探测」入口摊开时显示。 */
-    .spwrap { display: none; }
-    .spwrap.expanded { display: block; }
+    /* 移动端: spwrap 常显(露出 SelfProbe 里的「摊开」按钮); 卡堆默认隐藏由 SelfProbe 内部(.stage)控制。 */
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }
     .cmd { order: 2; flex: 1 1 auto; min-width: 0; height: 34px; line-height: 34px; font-size: 16px; }  /* 与 ▸ 同行, 填满本行剩余宽度 */

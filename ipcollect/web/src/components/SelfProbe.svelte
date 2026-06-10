@@ -277,7 +277,7 @@
     {#each renderList as c (c.key)}
       {@const top = topVisible(c)}
       <div class="card" class:clickable={!expanded && c.kind === 'ip'} class:flat={!expanded && c.ci !== 0}
-           data-t={c.fam} style="--ac:{c.accent}; {styleFor(c)}"
+           data-t={c.fam} style="--ac:{c.accent}; --cw:{CARDW}px; --ch:{CARDH}px; {styleFor(c)}"
            role={!expanded && c.kind === 'ip' ? 'button' : undefined}
            onclick={() => { if (!expanded && c.kind === 'ip') openProbe() }}>
         {@render body(c.fi, c.e, !expanded && top && fams[c.fi].entries.length > 1)}
@@ -294,6 +294,15 @@
       </button>
     </div>
   {/if}
+
+  <!-- 移动端首页: 卡堆默认不显(.stage 隐藏), 给一个"摊开"按钮进 IP 探测; 桌面隐藏(桌面直接点卡堆)。 -->
+  {#if !expanded}
+    <div class="dealrow mdeal">
+      <button class="dealbtn down" onclick={openProbe} title={t('sp_dealout')} aria-label={t('sp_dealout')}>
+        <Fa icon={iChevD} /> <span>{t('sp_dealout')}</span>
+      </button>
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -302,7 +311,7 @@
   .stage { position: relative; width: 100%; transition: height .55s cubic-bezier(.2, .8, .25, 1); }
 
   .card {
-    position: absolute; top: 0; left: 50%; width: 300px; height: 150px;
+    position: absolute; top: 0; left: 50%; width: var(--cw, 300px); height: var(--ch, 150px);
     display: flex; flex-direction: column; overflow: hidden; border-radius: 16px;
     background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--bg)));
     border: 1px solid var(--line); transform-origin: 50% 50%; will-change: transform, opacity;
@@ -398,6 +407,10 @@
   .dealbtn.up:hover { transform: translateY(-1px); }
   .dealbtn :global(svg) { width: 14px; transition: transform .45s cubic-bezier(.16,1,.3,1); }
   .dealbtn.up :global(svg) { transform: rotate(180deg); }
+  /* 移动端首页「摊开」按钮(带文字): 桌面隐藏, 仅窄屏显示。 */
+  .mdeal { display: none; }
+  .dealbtn.down { width: auto; gap: 8px; padding: 0 18px; height: 34px; font: 600 12.5px var(--sans); }
+  .dealbtn.down :global(svg) { width: 12px; }
 
   @media (max-width: 820px) {
     /* 移动端「IP 探测」: 卡片近整宽、更扁、内距更紧凑(去掉桌面的大留白)。 */
@@ -408,5 +421,7 @@
     .ip { font-size: 15px; }
     .loc { padding-right: 8px; }
     .dealrow { margin-top: 10px; }
+    .mdeal { display: flex; }                       /* 移动端显示「摊开」按钮 */
+    .sp:not(.expanded) .stage { display: none; }    /* 移动端首页: 卡堆不默认显示, 只留按钮 */
   }
 </style>

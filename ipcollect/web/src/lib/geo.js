@@ -140,8 +140,9 @@ const EGRESS_TRACE = [
 ]
 const EGRESS_UPYUN = 'https://pubstatic.b0.upaiyun.com/?_upnode'
 // 字面 IPv6 端点(不走 DNS, 直连 v6): 即便 AAAA 被污染/屏蔽也能拿到真实 v6 出口 → 暴露"AAAA 被屏蔽"的情况。
-// 返回 JSON { ip: <客户端看到的地址>, ... }。
-const EGRESS_V6_LITERAL = 'https://[2604:a880:800:10::e6:b001]/api/full'
+// = 我们 CN 站(Caddy)自建: respond "{client_ip}" 纯文本 + CORS *; LE shortlived IP 证书自动续。
+// 地址 = VPS 的 SLAAC 全局 v6(若 VPS 换地址需同步改这里与 Caddyfile 的站点块)。
+const EGRESS_V6_LITERAL = 'https://[2605:52c0:2:1d:be24:11ff:fe22:251b]/'
 
 // 单端点 fetch + 超时(AbortController): 慢端点不拖垮整体, 失败一律 resolve(null)。
 async function fetchWithTimeout(url, ms = 7000) {
@@ -171,13 +172,13 @@ async function upyunIp(url) {
   } catch (e) { return null }
 }
 
-// 取 JSON 里的 .ip(字面 v6 /api/full 等); 失败/超时 → null。
-async function jsonIp(url, ms = 8000) {
+// 取纯文本响应体里的 IP(我们字面 v6 端点 respond "{client_ip}"); 非 IP / 失败 / 超时 → null。
+async function textIp(url, ms = 8000) {
   const r = await fetchWithTimeout(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), ms)
   if (!r || !r.ok) return null
   try {
-    const j = await r.json()
-    return (typeof j.ip === 'string' && j.ip) ? j.ip : null
+    const t = (await r.text()).trim()
+    return (t.length >= 3 && t.length <= 45 && /^[0-9a-fA-F:.]+$/.test(t)) ? t : null
   } catch (e) { return null }
 }
 
@@ -194,7 +195,7 @@ export async function probeEgressIps(onSource) {
   await Promise.all([
     ...EGRESS_TRACE.map(s => traceIp(s.url).then(ip => report(ip, s.name))),
     upyunIp(EGRESS_UPYUN).then(ip => report(ip, 'Upyun')),
-    jsonIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连')),
+    textIp(EGRESS_V6_LITERAL).then(ip => report(ip, 'IPv6 直连')),
   ])
   const v4 = [], v6 = []
   for (const [ip, n] of count) (ip.includes(':') ? v6 : v4).push({ ip, n })

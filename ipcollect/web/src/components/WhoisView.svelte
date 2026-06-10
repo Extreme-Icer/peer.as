@@ -111,7 +111,7 @@
     <Doodle origin={dgOrigin} route={dgRoute} loading={dgLoading} onpick={(qq) => pick(qq)} onpointer={updateWord} />
   </div>
   <MobileBar />
-  <div class="scroll" class:center={!S.whois.kind && !S.probeExpanded} class:probe={S.probeExpanded}>
+  <div class="scroll">
     <div class="col" class:wide={S.probeExpanded}>
       <!-- PEER.AS 字标: 查询框正上方, 与查询框作为一组纵向居中; 出结果时折叠淡出 -->
       <div class="wordmark" class:in={bgShown} class:gone={S.whois.kind || S.probeExpanded} class:booting aria-hidden="true">
@@ -188,13 +188,13 @@
       var(--bg);
   }
   /* 用 padding-top 近似居中(可过渡), 不用 justify-content(切换不可动画 → 搜索框瞬移) */
+  /* 始终 flex 纵向 + 垂直居中(safe): 所有状态(首页/「IP 探测」摊开/查询结果)用同一套布局,
+     状态互切时不换 display、不换 justify → 收起/摊开/查询全靠子项(字标/卡堆/卡片)的高度与 transform
+     连续过渡, flex 每帧重新居中, 不会瞬移跳顶。safe = 内容超高时自动退回顶对齐, 不裁顶部、仍可滚动。 */
   .scroll {
-    position: relative; z-index: 1; flex: 1; overflow: auto; padding: 48px 22px 60px;
-    transition: padding-top .5s ease, padding-bottom .5s ease;
+    position: relative; z-index: 1; flex: 1; overflow: auto; padding: 28px 22px 48px;
+    display: flex; flex-direction: column; align-items: center; justify-content: safe center;
   }
-  .scroll.center { padding-top: 28vh; }                /* 让「字标 + 查询框」这一组落在页面视觉中心(示例/接入卡在其下, 可滚动) */
-  /* 摊开「IP 探测」: PC 端把(查询框 + 卡片网格)整组垂直居中于视觉中心; safe = 内容过高时退回顶对齐, 不裁顶部。 */
-  .scroll.probe { display: flex; flex-direction: column; justify-content: safe center; padding-top: 24px; padding-bottom: 48px; }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }
   /* 「你的接入」摊牌时, 列放开到整个 scroll 横向空间(让发牌网格能横铺), 但搜索框/示例仍居中收窄 */
   .col.wide { max-width: none; }
@@ -202,7 +202,7 @@
   .col.wide .console { max-width: 820px; margin-left: auto; margin-right: auto; }
 
   /* ── PEER.AS 字标(查询框正上方) ── 3D 叠层立体字 + 鼠标视差; 入场淡入 / 出结果折叠淡出 ──
-     宽度 ≈ 查询框(820)的 70%; 与查询框作为一组, 由 .scroll.center 的 padding 纵向居中。 */
+     宽度 ≈ 查询框(820)的 70%; 与查询框作为一组, 由 .scroll 的 flex safe-center 纵向居中。 */
   .wordmark {
     display: flex; justify-content: center; perspective: 900px;
     margin: 0 auto 24px; max-height: 220px; overflow: visible;
@@ -274,8 +274,9 @@
     transition: max-height .5s ease, opacity .4s ease, transform .5s ease, margin .5s ease;
   }
   .spwrap.gone { max-height: 0; opacity: 0; transform: translateY(16px); margin: 0; pointer-events: none; }
-  /* 摊开成网格: 解除折叠用的高度上界 + 裁切, 让多行卡片完整展开、发牌飞入不被切顶 */
-  .spwrap.expanded { max-height: none; overflow: visible; }
+  /* 摊开成网格: 放大高度上界(留足余量, 但不用 none —— none↔480 无法过渡会瞬跳)+ 取消裁切,
+     让多行卡片完整展开、发牌飞入不被切顶; 收起时 max-height 2400→480 可平滑过渡(卡片同时缩回叠堆)。 */
+  .spwrap.expanded { max-height: 2400px; overflow: visible; }
   .spwrap.booting { transition: none; }
 
   /* ── 命令行输入 ── */
@@ -393,8 +394,7 @@
 
   @media (max-width: 820px) {
     .scroll { padding: 14px 8px 36px; }
-    .scroll.center { padding-top: 20vh; }                /* 移动端首页(未摊开)居中略上提, 不占太多上方空白 */
-    .scroll.probe { display: block; padding-top: 14px; }  /* 移动端摊开: 顶对齐(单列可能很高, 不强制居中) */
+    /* 居中沿用桌面同一套(.scroll 的 safe center): 卡少时居中, 单列过高自动退回顶对齐。 */
     /* 移动端: spwrap 常显(露出 SelfProbe 里的「摊开」按钮); 卡堆默认隐藏由 SelfProbe 内部(.stage)控制。 */
     .console { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px 10px; }
     .prompt { order: 1; }

@@ -12,8 +12,14 @@
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations, toGpLocation } from '../lib/trace-probes.js'
+  import { setGeoSource, setGeoToken } from '../lib/geo-resolve.js'
   import MobileBar from './MobileBar.svelte'
   import TraceGlobe from './TraceGlobe.svelte'
+
+  // ── 设置持久化(localStorage, 自动保存) ──
+  const SETKEY = 'ipc-trace-settings'
+  function loadSettings() { try { return JSON.parse(localStorage.getItem(SETKEY) || '{}') || {} } catch { return {} } }
+  const _set = loadSettings()
 
   // ── 本地态 ──
   let box = $state(S.trace?.target || '')
@@ -22,8 +28,20 @@
   let probesOpen = $state(false)        // 监测点选择是否展开
   let settingsOpen = $state(false)      // MTR 设置(协议/端口/包数)是否展开
   let probeQuery = $state('')           // 监测点选择里的搜索词
-  let mtr = $state({ type: 'mtr', infinite: false, family: 'auto', proto: 'icmp', port: 443, packets: 3 })
+  let mtr = $state({
+    type: _set.type ?? 'mtr', infinite: _set.infinite ?? false, family: _set.family ?? 'auto',
+    proto: _set.proto ?? 'icmp', port: _set.port ?? 443, packets: _set.packets ?? 3,
+  })
+  let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源(默认 NextTrace, 无 token 回退本项目)
+  let geoToken = $state(_set.geoToken ?? '')              // NextTrace API token
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
+  // 应用 + 自动保存全部设置(MTR 选项 + GeoIP 源/token)
+  $effect(() => { setGeoSource(geoSource) })
+  $effect(() => { setGeoToken(geoToken) })
+  $effect(() => {
+    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, geoToken }
+    try { localStorage.setItem(SETKEY, JSON.stringify(data)) } catch { /* 隐私模式忽略 */ }
+  })
 
   // ── 监测点(globalping /v1/probes, 异步加载, 按城市聚合)──
   let allLocations = $state([])         // [{ id, city, cc, country, lat, lon, count, networks:[{asn,name,n}] }]
@@ -304,6 +322,21 @@
               <span>{t('rt_packets')}</span>
               <input type="text" inputmode="numeric" maxlength="2" bind:value={mtr.packets} />
             </label>
+            <label class="field">
+              <span>{t('rt_source')}</span>
+              <select class="srcsel" bind:value={geoSource}>
+                <option value="nexttrace">NextTrace</option>
+                <option value="duckdb">{t('rt_source_builtin')}</option>
+              </select>
+            </label>
+            {#if geoSource === 'nexttrace'}
+              <label class="field tokenf">
+                <span>{t('rt_token')}</span>
+                <input type="password" bind:value={geoToken} placeholder={t('rt_token_ph')}
+                       spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
+                       data-1p-ignore data-lpignore="true" />
+              </label>
+            {/if}
           </div>
         {/if}
       </div>
@@ -578,6 +611,19 @@
   .field input { width: 54px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--inbg); color: var(--fg); font: 500 13px var(--mono); padding: 0 8px; outline: none; transition: border-color .12s; }
   .field input:focus { border-color: var(--accent); }
   .field.off { opacity: .4; }
+  /* GeoIP 数据源选择 + token 输入(settings 内) */
+  .srcsel {
+    height: 28px; padding: 0 22px 0 8px; border-radius: 7px; border: 1px solid var(--line);
+    background-color: var(--inbg); color: var(--fg); font: 600 11.5px var(--sans); cursor: pointer;
+    appearance: none; -webkit-appearance: none; outline: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 12px) center, calc(100% - 8px) center; background-size: 4px 4px; background-repeat: no-repeat;
+    transition: border-color .12s;
+  }
+  .srcsel:hover, .srcsel:focus-visible { border-color: var(--accent); }
+  .tokenf { flex: 1 1 100%; }
+  .tokenf input { flex: 1 1 auto; width: auto; min-width: 0; font-size: 11.5px; }
+  .tokenf input::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); }
 
   /* 监测点选择(搜索框 + 网格) */
   .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }
@@ -643,11 +689,8 @@
   .lp-cc { font: 600 10px var(--mono); letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
   .lp-cnt { flex: 0 0 auto; font: 700 12px var(--mono); color: var(--accent); }
   .lp-list { max-height: 248px; overflow: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
-  .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; background: transparent; border: 0; cursor: pointer; text-align: left; transition: background .1s; }
-  .lp-item:hover { background: var(--alt); }
-  .lp-item.on { background: var(--accent-dim); }
+  .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; }
   .lp-net { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .lp-item.on .lp-net { color: var(--accent); }
   .lp-asn { font: 500 11px var(--mono); color: var(--muted); white-space: nowrap; }
   .lp-asn .lp-x { font-style: normal; margin-left: 4px; opacity: .7; }
   /* 取样数步进器 */

@@ -163,7 +163,13 @@ export function createTraceGlobe(canvas, opts = {}) {
     if (!t) return
     pointer.x = t.clientX - r.left; pointer.y = t.clientY - r.top; pointer.inside = true
   }
-  const onMove = e => setPointer(e)
+  // 指针在 window 上跟踪(不绑在命中层 surf 上): HUD 浮窗盖在地球之上且与之重叠, 鼠标移到浮窗后
+  // surf 既收不到 mousemove、也不会触发 mouseleave(指针几何上仍在 surf 框内)→ pointer 冻结在旧坐标,
+  // 悬停命中/tooltip 卡在原地不动、地球还停转。故只在「最顶层命中元素正是 surf」时才算 inside。
+  const onMove = e => {
+    if (e.target === surf) setPointer(e)
+    else { pointer.inside = false; pointer.x = pointer.y = -1 }
+  }
   const onLeave = () => { pointer.inside = false; pointer.x = pointer.y = -1 }
   const onDown = e => { drag.active = true; drag.moved = 0; drag.lx = e.clientX; drag.ly = e.clientY; surf.classList.add('grabbing'); e.preventDefault() }
   const onWinMove = e => {
@@ -207,7 +213,7 @@ export function createTraceGlobe(canvas, opts = {}) {
     else if (h.kind === 'target' && target?.ip) onpick(target.ip)
     else if (h.kind === 'probe') onpick('AS' + h.probe.asn)
   }
-  surf.addEventListener('mousemove', onMove); surf.addEventListener('mouseleave', onLeave)
+  window.addEventListener('mousemove', onMove); surf.addEventListener('mouseleave', onLeave)
   surf.addEventListener('mousedown', onDown)
   window.addEventListener('mousemove', onWinMove); window.addEventListener('mouseup', onWinUp)
   surf.addEventListener('touchstart', onTStart, { passive: true }); surf.addEventListener('touchmove', onTMove, { passive: true }); surf.addEventListener('touchend', onTEnd)
@@ -583,7 +589,7 @@ export function createTraceGlobe(canvas, opts = {}) {
     setData, setLocations, setHold, focus, recenter,
     destroy() {
       cancelAnimationFrame(raf); ro.disconnect()
-      surf.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)
+      window.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)
       window.removeEventListener('mousemove', onWinMove); window.removeEventListener('mouseup', onWinUp)
       surf.removeEventListener('touchstart', onTStart); surf.removeEventListener('touchmove', onTMove); surf.removeEventListener('touchend', onTEnd)
       surf.removeEventListener('wheel', onWheel); surf.removeEventListener('click', onClick)

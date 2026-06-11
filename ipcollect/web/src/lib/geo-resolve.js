@@ -13,6 +13,8 @@
 
 import { ccLatLon } from './geo.js'
 import { geoEnrich } from './queries.js'
+import { S } from './store.svelte.js'
+import { placeLabel } from './bgp.js'
 
 // (cc, city) -> {lat,lon} | null。由 trace-probes 用真实 globalping 探测点坐标填充(城市级)。
 let cityCoordFn = null
@@ -30,7 +32,7 @@ async function duckdbResolve(ip) {
   let lat = null, lon = null, source = 'none'
   if (cc && m.city && cityCoordFn) { const c = cityCoordFn(cc, m.city); if (c) { lat = c.lat; lon = c.lon; source = 'city' } }
   if (lat == null && cc) { const c = ccLatLon(cc); lat = c.lat; lon = c.lon; source = 'centroid' }
-  return { ip, cc, city: m.city || '', province: m.province || '', asn: m.asn ?? null, prefix: m.prefix ?? null, lat, lon, source }
+  return { ip, cc, city: m.city || '', province: m.province || '', asn: m.asn ?? null, prefix: m.prefix ?? null, lat, lon, source, place: placeLabel(m.province, m.city, cc) || '' }
 }
 
 // ── 数据源 2: NextTrace API v4 GeoIP(逐 IP 精确经纬度, 需 token)──────────────
@@ -52,18 +54,23 @@ async function nexttraceLookup(ip) {
     const lon = typeof j.lng === 'number' ? j.lng : parseFloat(j.lng)
     if (!isFinite(lat) || !isFinite(lon)) return null
     const asn = j.asnumber ? parseInt(String(j.asnumber).replace(/^AS/i, ''), 10) : null
+    // 地名按当前界面语言取(NextTrace 同时返回中文与 *_en 英文); zh 优先中文, 否则英文。
+    const zh = S?.lang === 'zh'
+    const pick = (z, e) => (zh ? (z || e) : (e || z)) || ''
     return {
       ip, lat, lon, asn: isFinite(asn) ? asn : null, prefix: j.prefix || null,
-      country: j.country_en || j.country || '', prov: j.prov_en || j.prov || '', city: j.city_en || j.city || '',
+      country: pick(j.country, j.country_en), prov: pick(j.prov, j.prov_en), city: pick(j.city, j.city_en),
     }
   } catch { return null } finally { clearTimeout(tm) }
 }
 async function nexttraceResolve(ip) {
   const nt = await nexttraceLookup(ip)
   if (nt) {
+    const parts = []
+    for (const x of [nt.city, nt.prov, nt.country]) { const v = (x || '').trim(); if (v && !parts.includes(v)) parts.push(v) }
     return {
       ip, cc: '', city: nt.city || nt.prov || nt.country, province: nt.prov || '',
-      asn: nt.asn, prefix: nt.prefix, lat: nt.lat, lon: nt.lon, source: 'nexttrace',
+      asn: nt.asn, prefix: nt.prefix, lat: nt.lat, lon: nt.lon, source: 'nexttrace', place: parts.join(' · '),
     }
   }
   return duckdbResolve(ip)   // 无 token / 失败 / 无坐标: 回退本项目数据(地球仍可画)
@@ -80,10 +87,15 @@ export function getGeoSource() { return activeSource }
 let customResolver = null
 export function setGeoResolver(fn) { customResolver = fn || null; cache.clear() }
 
-// 解析一个 IP 的地理(经缓存)。GeoResult = { ip, cc, city, province, asn, prefix, lat, lon, source }
+// 只对 IP 字面量查 geo; 域名直接返回 null(后端不解析域名, 调用方 as-is 处理, 不浪费请求)。
+function isIpLiteral(s) {
+  if (s.includes(':')) return /^[0-9a-fA-F:.]+$/.test(s)   // IPv6
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(s)                 // IPv4
+}
+// 解析一个 IP 的地理(经缓存)。GeoResult = { ip, cc, city, province, asn, prefix, lat, lon, source, place }
 export function resolveGeo(ip) {
   const key = (ip || '').trim()
-  if (!key) return Promise.resolve(null)
+  if (!key || !isIpLiteral(key)) return Promise.resolve(null)
   if (cache.has(key)) return cache.get(key)
   const fn = customResolver || SOURCES[activeSource] || duckdbResolve
   const p = Promise.resolve(fn(key)).catch(() => null)

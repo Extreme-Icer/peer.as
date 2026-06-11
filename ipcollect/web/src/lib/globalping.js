@@ -200,8 +200,8 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
       probes.forEach((_, i) => { sent[i] = { n: 0, done: false } })
       onInit && onInit({
         target: tg && tg.lat != null
-          ? { ip: targetIp, label: target, lat: tg.lat, lon: tg.lon, cc: tg.cc, city: tg.city || ccLabel(tg.cc) || '' }
-          : { ip: targetIp, label: target, lat: 0, lon: 0, cc: '', city: '' },
+          ? { ip: targetIp, label: target, lat: tg.lat, lon: tg.lon, cc: tg.cc, city: tg.city || ccLabel(tg.cc) || '', loc: tg.place || tg.city || ccLabel(tg.cc) || '' }
+          : { ip: targetIp, label: target, lat: 0, lon: 0, cc: '', city: '', loc: '' },
         probes,
       })
       inited = true

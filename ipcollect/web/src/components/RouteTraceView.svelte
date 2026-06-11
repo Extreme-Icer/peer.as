@@ -9,7 +9,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { loadInsightFor } from '../lib/queries.js'
-  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet } from '../lib/icons.js'
+  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
   import { setGeoSource, setGeoToken } from '../lib/geo-resolve.js'
@@ -487,8 +487,17 @@
                 <button class="rtarget" onclick={() => trace.target?.ip && pick(trace.target.ip)}>{trace.target?.label || box}</button>
                 <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
               </span>
-              <span class="rmeta">{doneCount}/{trace.probes.length} · {trace.target?.ip || ''}</span>
+              <span class="rmeta">{doneCount}/{trace.probes.length}</span>
             </div>
+            <!-- 目标解析到的 IP + 归属地(域名无解析/无地理则只见上面的目标, as-is) -->
+            {#if (trace.target?.ip && trace.target.ip !== trace.target.label) || trace.target?.loc}
+              <div class="rsub">
+                {#if trace.target?.ip && trace.target.ip !== trace.target.label}
+                  <button class="rip" onclick={() => pick(trace.target.ip)} title={trace.target.ip}>{trace.target.ip}</button>
+                {/if}
+                {#if trace.target?.loc}<span class="rloc"><Fa icon={iLoc} />{trace.target.loc}</span>{/if}
+              </div>
+            {/if}
             <div class="plist">
               {#each trace.probes as p (p.id)}
                 {@const hops = p.hops}
@@ -845,6 +854,12 @@
   .rclear:hover { color: var(--fg); }
   .rclear :global(svg) { width: 11px; }
   .rmeta { flex: 0 0 auto; }
+  /* 目标解析 IP + 归属地 */
+  .rsub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: -2px; }
+  .rip { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 12px var(--mono); }
+  .rip:hover { text-decoration: underline; }
+  .rloc { display: inline-flex; align-items: center; gap: 4px; font: 500 11.5px var(--sans); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rloc :global(svg) { width: 9px; flex: 0 0 auto; }
 
   .plist { display: flex; flex-direction: column; gap: 5px; }
   .pcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: color-mix(in srgb, var(--panel) 50%, transparent); transition: border-color .15s, box-shadow .15s; }

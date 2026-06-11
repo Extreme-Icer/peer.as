@@ -1,5 +1,6 @@
 // 集中 re-export 用到的 Font Awesome 图标 (tree-shakeable)。
 export {
+  faPlus as iPlus,
   faMagnifyingGlass as iSearch,
   faEarthAsia as iCountry,
   faGlobe as iGlobal,

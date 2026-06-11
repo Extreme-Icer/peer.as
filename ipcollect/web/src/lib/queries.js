@@ -408,7 +408,7 @@ export async function showInsight(pid, prefix) {
   S.detailKind = 'prefix'
   S.asnView = null
   S.selectedPid = pid
-  go('/' + prefix)
+  if (S.view !== 'trace') go('/' + prefix)   // trace 视图里 insight 走浮窗, 不动 URL(也使浮窗内部链接自洽)
   S.insight = { loading: true, prefix }   // prefix 先填上, 让页标题/历史项立刻可辨识(查询返回前)
   const v6 = (prefix || '').includes(':')
   // 用 prefix 串的 [start,end] 裁剪 prefixes 文件(该 pid 的行 ip_start 落在此区间内, 只读相交文件)。
@@ -491,7 +491,7 @@ export async function showAsn(asn) {
   S.selectedPid = null
   S.insight = null
   S.asnView = { asn, name: asnName(asn), loading: true }
-  go('/' + asn)
+  if (S.view !== 'trace') go('/' + asn)      // trace 视图里走浮窗, 不动 URL
   if (!S.ready) { return }
   try {
     const psAll = pathsearchFilesForOrigin(asn)
@@ -698,6 +698,27 @@ export async function openInRouting(input) {
   else if (probe.kind === 'ipv4' || probe.kind === 'ipv6') await openPrefixByString(s)
 }
 
+// 在「浮窗」里加载 insight(供 trace 视图点 IP/ASN 用): 不切视图、不改 URL。
+// 先即时置 loading 态(让浮窗带 spinner 弹出), 再 ensureEngine + 加载。ASN→ASN 详情; IP/前缀→找覆盖前缀开 prefix 详情。
+export async function loadInsightFor(query) {
+  const s = String(query || '').trim()
+  if (!s) return
+  const probe = classifyQuery(s)
+  if (probe.kind === 'asn') { S.detailKind = 'asn'; S.insight = null; S.selectedPid = null; S.asnView = { asn: probe.asn, name: asnName(probe.asn), loading: true } }
+  else if (probe.kind === 'ipv4' || probe.kind === 'ipv6') { S.detailKind = 'prefix'; S.asnView = null; S.insight = { loading: true } }
+  else return
+  try { await ensureEngine() } catch { S.insight = { error: t('query_failed') }; return }
+  if (!S.ready) return
+  if (probe.kind === 'asn') { showAsn(probe.asn); return }
+  const v6 = probe.kind === 'ipv6'
+  let m
+  try { m = await enrichIp(s, v6) } catch { m = null }
+  if (m && m.pid != null) showInsight(m.pid, m.prefix)
+  else S.insight = { error: t('no_cover') }
+}
+// 仅清空详情状态(不动 URL): 供 trace 浮窗的关闭钮用。
+export function clearDetail() { closeDetailState() }
+
 // 点 LOGO 回首页。peeras: WHOIS 首页(/); dn42(无 whoisView): 路由分析干净落地页(/)。均清详情/筛选/结果。
 export function goHome() {
   closeDetailState()
@@ -723,6 +744,15 @@ export function openProbe() {
 export function collapseProbe() {
   S.probeExpanded = false
   if (S.view === 'whois' && !S.whois.kind) go('/')
+}
+
+// ── 全球路由跟踪视图 ───────────────────────────────────────────────
+// 侧栏/移动菜单入口: 切到 trace 视图(保留上次目标, 有则同时还原 URL)。
+export function openTrace() { setView('trace') }
+// RouteTraceView 发起一次跟踪时回写 URL(可深链/前进后退); S.trace.target 由组件先设好。
+export function setTraceUrl(target) {
+  const tg = (target || '').trim()
+  go(tg ? '/trace/' + encodeURIComponent(tg) : '/trace')
 }
 
 // ── 结果表分页 + 导出 ─────────────────────────────────────────────
@@ -790,6 +820,10 @@ export function setView(v) {
     S.view = 'whois'
     const inp = (S.whois?.input || '').trim()
     go(inp ? '/whois/' + encodeURIComponent(inp) : '/')   // 首页 = /
+  } else if (v === 'trace') {
+    S.view = 'trace'                                       // 全球路由跟踪(不依赖 DuckDB 引擎)
+    const tg = (S.trace?.target || '').trim()
+    go(tg ? '/trace/' + encodeURIComponent(tg) : '/trace')
   } else {
     if (v === S.view) return
     S.view = 'routing'
@@ -865,6 +899,13 @@ export async function applyRoute({ initial = false } = {}) {
       S.loading = false
       runWhois(path.startsWith('whois/') ? decodeURIComponent(path.slice(6)) : '')
       S.probeExpanded = (path === 'probe')   // /probe -> 直接进「IP 探测」摊开态(runWhois 已先置 false)
+      return
+    }
+    // /trace[/<target>] -> 全球路由跟踪(纯前端 MTR 可视化, 不碰 DuckDB 引擎)。
+    if (features.routeTrace && (path === 'trace' || path.startsWith('trace/'))) {
+      S.loading = false
+      S.view = 'trace'
+      S.trace = { target: path.startsWith('trace/') ? decodeURIComponent(path.slice(6)) : '' }
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。

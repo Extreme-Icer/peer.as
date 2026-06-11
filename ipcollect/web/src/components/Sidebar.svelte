@@ -3,9 +3,9 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { setView, goHome, openProbe } from '../lib/queries.js'
+  import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose } from '../lib/icons.js'
+  import { iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iClose, iSatellite } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
@@ -35,6 +35,12 @@
         onclick={() => { S.side = false; openProbe() }}>
         <Fa icon={iProbe} /> <span>{t('nav_probe')}</span>
       </button>
+      {#if features.routeTrace}
+        <button class="vitem" class:on={S.view === 'trace'} aria-current={S.view === 'trace'}
+          onclick={() => { S.side = false; openTrace() }}>
+          <Fa icon={iSatellite} /> <span>{t('nav_trace')}</span>
+        </button>
+      {/if}
       <button class="vitem" class:on={S.view === 'routing'} aria-current={S.view === 'routing'}
         onclick={() => { S.side = false; setView('routing') }}>
         <Fa icon={iNodes} /> <span>{t('nav_routing')}</span>

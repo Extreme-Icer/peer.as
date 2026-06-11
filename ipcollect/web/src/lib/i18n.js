@@ -104,6 +104,16 @@ export const STRINGS = {
     dns_no_prefix: '库内无覆盖', dns_src: 'DNS over HTTPS · Cloudflare（1.1.1.1）',
     whois_root_note: '子域名 · WHOIS 查询根域名',
     w_ldhname: '域名', w_ns: '名称服务器', w_dnssec: 'DNSSEC',
+    // ── 全球路由跟踪(globalping MTR + 自有 IP 库)──
+    nav_trace: '全球路由跟踪',
+    rt_title: '全球路由跟踪', rt_sub: 'globalping × peer.as',
+    rt_ph: '目标 IP 或域名，如 1.1.1.1、github.com',
+    rt_go: '跟踪', rt_stop: '停止', rt_probes: '监测点', rt_examples: '试试', rt_results: '结果',
+    rt_idle: '输入目标，从全球监测点发起路由跟踪', rt_running: '探测中…', rt_hops: '跳', rt_demo: '演示数据', rt_resize: '拖动缩放窗口',
+    rt_infinite: '无尽', rt_infinite_hint: '持续探测（实时刷新延迟）', rt_settings: '设置',
+    rt_proto: '协议', rt_port: '端口', rt_packets: '每跳包数', rt_family: '地址族（自动 / IPv4 / IPv6，点击轮换）',
+    rt_type: '测量类型（Ping / Trace / MTR）', rt_probe_search: '搜索监测点…', rt_clear: '清除结果',
+    rt_click_add: '点击添加', rt_selected: '已选', rt_probes_n: '个监测点',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -205,6 +215,16 @@ export const STRINGS = {
     dns_no_prefix: 'not in DB', dns_src: 'DNS over HTTPS · Cloudflare (1.1.1.1)',
     whois_root_note: 'Subdomain · WHOIS for registrable domain',
     w_ldhname: 'Domain', w_ns: 'Nameserver', w_dnssec: 'DNSSEC',
+    // ── Global route trace (globalping MTR + our IP DB) ──
+    nav_trace: 'Route Trace',
+    rt_title: 'Global Route Trace', rt_sub: 'globalping × peer.as',
+    rt_ph: 'Target IP or domain, e.g. 1.1.1.1, github.com',
+    rt_go: 'Trace', rt_stop: 'Stop', rt_probes: 'probes', rt_examples: 'Try', rt_results: 'Results',
+    rt_idle: 'Enter a target to trace routes from probes around the globe', rt_running: 'Tracing…', rt_hops: 'hops', rt_demo: 'mock data', rt_resize: 'Drag to resize',
+    rt_infinite: 'Infinite', rt_infinite_hint: 'Keep probing continuously (live latency refresh)', rt_settings: 'Settings',
+    rt_proto: 'Protocol', rt_port: 'Port', rt_packets: 'Packets/hop', rt_family: 'IP family (Auto / IPv4 / IPv6 — click to cycle)',
+    rt_type: 'Measurement type (Ping / Trace / MTR)', rt_probe_search: 'Search probes…', rt_clear: 'Clear results',
+    rt_click_add: 'click to add', rt_selected: 'selected', rt_probes_n: 'probes',
   },
 }
 

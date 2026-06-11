@@ -11,10 +11,13 @@ export const S = $state({
   fatal: '',               // 致命错误文案(meta.json / DuckDB 引擎加载失败); 仅路由分析视图显示, 不阻断 WHOIS 视图
   msg: '',
   rows: [],                // 当前结果行
-  // 顶层视图: 'routing'(BGP 路由分析: 主查询页 + 详情面板) | 'whois'(WHOIS·RDAP 独立查询视图)。
-  // 侧栏/移动菜单切换; URL /whois[/<q>] 进入 whois, 其余路由回 routing(见 queries.applyRoute)。
-  // dn42 站经 features.whoisView=false 关掉整条视图(no-op), 此字段恒为 'routing'。
+  // 顶层视图: 'routing'(BGP 路由分析: 主查询页 + 详情面板) | 'whois'(WHOIS·RDAP 独立查询视图)
+  // | 'trace'(全球路由跟踪: globalping MTR + 自有 IP 库, 3D 地球可视化)。
+  // 侧栏/移动菜单切换; URL /whois[/<q>] 进 whois, /trace[/<target>] 进 trace, 其余回 routing(见 queries.applyRoute)。
+  // dn42 站经 features.whoisView=false / features.routeTrace=false 关掉整条视图(no-op), 此字段恒为 'routing'。
   view: 'routing',
+  // 全球路由跟踪视图载荷: target=当前跟踪目标(IP/域名)。实际 MTR 模型在 RouteTraceView 本地态(从流式事件重建)。
+  trace: { target: '' },
   // WHOIS·RDAP 独立视图载荷: input=用户原始输入串; kind/key=解析后传给 Whois 组件
   // (kind: 'autnum'|'ip'|'domain'; key=ASN号/IP·前缀串/可注册域名); err=识别失败的 i18n 键(空=正常)。
   whois: { input: '', kind: null, key: null, err: '' },

@@ -1,0 +1,660 @@
+<script>
+  // 全球路由跟踪视图(顶层 view==='trace', features.routeTrace 门控)。
+  // 右侧: 大半个倾斜地球(TraceGlobe, 露 ~4/5, 南极在可见区外, 缓慢自转)。
+  // 左侧: 极简「指挥台」HUD —— 默认只有目标输入框 + 跟踪/监测点/展开几个按钮; 可展开看监测点选择 + 实时逐跳结果。
+  // 数据为 DEMO 静态 mock(trace-mock.js), 形状对齐 globalping + 库内 geo 富集, 随时可换 live。
+  import Fa from 'svelte-fa'
+  import { onMount } from 'svelte'
+  import { fade } from 'svelte/transition'
+  import { S } from '../lib/store.svelte.js'
+  import { t } from '../lib/i18n.js'
+  import { setTraceUrl, loadInsightFor } from '../lib/queries.js'
+  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear } from '../lib/icons.js'
+  import { PROBE_LOCATIONS, defaultProbeSelection, sampleProbes, probeById, streamTrace } from '../lib/trace-mock.js'
+  import MobileBar from './MobileBar.svelte'
+  import TraceGlobe from './TraceGlobe.svelte'
+
+  // ── 本地态 ──
+  let box = $state(S.trace?.target || '')
+  let booting = $state(true)            // 首帧不放入场动画(URL 直达时直接就位)
+  let shown = $state(false)             // 入场淡入开关
+  let probesOpen = $state(false)        // 监测点选择是否展开
+  let settingsOpen = $state(false)      // MTR 设置(协议/端口/包数)是否展开
+  let probeQuery = $state('')           // 监测点选择里的搜索词
+  let mtr = $state({ type: 'mtr', infinite: false, family: 'auto', proto: 'icmp', port: 443, packets: 3 })
+  let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
+
+  // 悬停地球光点 → 交互式 popup(列出该位置全部 probe, 可滚动逐个勾选添加)
+  let hoverLoc = $state(null)
+  let popX = $state(0), popY = $state(0), popBelow = $state(false)
+  let popPinned = false, popTimer = 0
+  let popProbes = $derived.by(() => hoverLoc ? Array.from({ length: hoverLoc.count }, (_, i) => probeById(hoverLoc.id + '-' + i)) : [])
+  function onLocHover(loc, sx, sy) {
+    clearTimeout(popTimer)
+    if (loc) { hoverLoc = loc; popX = sx; popY = sy; popBelow = sy < 300 }
+    else { popTimer = setTimeout(() => { if (!popPinned) hoverLoc = null }, 130) }   // 留点时间让鼠标移到 popup 上
+  }
+  function toggleProbeId(id) { const s = new Set(selected); s.has(id) ? s.delete(id) : s.add(id); selected = s }
+  function cycleFam() { mtr.family = mtr.family === 'auto' ? '4' : mtr.family === '4' ? '6' : 'auto' }  // 自动→IPv4→IPv6→…
+  const LOC = Object.fromEntries(PROBE_LOCATIONS.map(L => [L.id, L]))
+  const locIdOf = (probeId) => probeId.slice(0, probeId.lastIndexOf('-'))
+  function selCountAt(locId) { let n = 0; for (const id of selected) if (id.startsWith(locId + '-')) n++; return n }
+  // 监测点位置按搜索词过滤(城市/国家/cc)
+  let filteredLocations = $derived.by(() => {
+    const q = probeQuery.trim().toLowerCase()
+    if (!q) return PROBE_LOCATIONS
+    return PROBE_LOCATIONS.filter(L => `${L.city} ${L.country} ${L.cc}`.toLowerCase().includes(q))
+  })
+  // 传给地球的光点: 全部位置 + 各自已选 probe 数(选中高亮)
+  let locInfo = $derived.by(() => {
+    const c = {}; for (const id of selected) { const lid = locIdOf(id); c[lid] = (c[lid] || 0) + 1 }
+    return PROBE_LOCATIONS.map(L => ({ ...L, sel: c[L.id] || 0 }))
+  })
+  // 一轮结果的光谱色: 蓝(最优/低延迟)→绿→黄→红(高延迟)
+  function roundColor(rtt) {
+    const f = Math.max(0, Math.min(1, (rtt - 15) / 285))
+    return `hsl(${(220 * (1 - f)).toFixed(0)}, 72%, 56%)`
+  }
+  const sampleRtt = (base) => Math.max(.2, Math.round((base + (Math.random() - .5) * (base * 0.16 + 2)) * 10) / 10)
+  let selected = $state(new Set(defaultProbeSelection()))
+  let trace = $state({ target: null, probes: [] })   // 引擎 + 列表的单一数据源(从事件流重建, 等同消费 live API)
+  let running = $state(false)
+  let focusId = $state(null)            // hover 某监测点 → 地球上高亮它的路径
+  let openRows = $state(new Set())      // 展开查看逐跳的监测点
+  let inputEl
+  let ctl = null                        // 当前 streamTrace 控制器
+  let ranFor = ''                       // 最近发起的 target(防 effect 重复触发)
+
+  // ── 历史记录(localStorage)+ 输入框下拉自动匹配 ──
+  const HKEY = 'ipc-trace-history'
+  let history = $state(loadHistory())
+  let dropOpen = $state(false)
+  let hi = $state(-1)                    // 下拉里高亮项的下标
+  let dropRect = $state({ left: 0, top: 0, width: 0 })
+  function loadHistory() { try { return JSON.parse(localStorage.getItem(HKEY) || '[]').filter(x => typeof x === 'string') } catch { return [] } }
+  function saveHistory() { try { localStorage.setItem(HKEY, JSON.stringify(history.slice(0, 16))) } catch { /* 隐私模式忽略 */ } }
+  function addHistory(tg) { history = [tg, ...history.filter(x => x !== tg)].slice(0, 16); saveHistory() }
+  function removeHistory(tg) { history = history.filter(x => x !== tg); saveHistory() }
+  let matches = $derived.by(() => {
+    const qq = box.trim().toLowerCase()
+    return history.filter(h => { const l = h.toLowerCase(); return qq ? (l.includes(qq) && l !== qq) : true }).slice(0, 8)
+  })
+  function measureDrop() { if (inputEl) { const r = inputEl.getBoundingClientRect(); dropRect = { left: r.left, top: r.bottom + 6, width: r.width } } }
+  function openDrop() { measureDrop(); dropOpen = true; hi = -1 }
+  function onKey(e) {
+    if (e.key === 'Enter') { e.preventDefault(); if (dropOpen && hi >= 0 && matches[hi]) pickHistory(matches[hi]); else submit(e); return }
+    if (e.key === 'ArrowDown') { e.preventDefault(); measureDrop(); dropOpen = true; hi = Math.min(hi + 1, matches.length - 1) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, -1) }
+    else if (e.key === 'Escape') { dropOpen = false; hi = -1 }
+  }
+  function pickHistory(tg) { box = tg; dropOpen = false; hi = -1; launch(tg) }
+
+  // 监测点芯片文案: 列出已选位置(城市), 放不下用 +N 收尾
+  let probeChip = $derived.by(() => {
+    const cs = [...new Set([...selected].map(locIdOf))].map(lid => LOC[lid]?.city).filter(Boolean)
+    const head = []; let len = 0
+    for (const c of cs) { if (head.length && len + c.length > 26) break; head.push(c); len += c.length + 3 }
+    return { text: head.join(' · ') || '—', more: cs.length - head.length }
+  })
+
+  // ── 浮窗: 拖标题移动 + 拖右下角缩放(边框角即缩放手柄, 暗示窗口可拉伸)──
+  let panelEl
+  let win = $state({ x: 50, y: 60, w: 410, h: null })   // 初始左上角(避开 sidetoggle); h=null 自适应, 拖角后变定值
+  let winDrag = $state(false)
+  let gesture = null
+  const clampN = (v, a, b) => v < a ? a : v > b ? b : v
+  function startMove(e) {
+    if (e.button != null && e.button !== 0) return
+    // 整块面板可拖, 但放过交互区域(输入/按钮/结果列表/监测点网格/缩放角)
+    if (e.target.closest && e.target.closest('input, button, textarea, a, select, .console, .results, .probesel, .settings, .grip')) return
+    winDrag = true; dropOpen = false                      // 拖窗时收起历史下拉(否则会停在旧位置)
+    gesture = { mode: 'move', sx: e.clientX, sy: e.clientY, ox: win.x, oy: win.y }
+    window.addEventListener('pointermove', onGesture); window.addEventListener('pointerup', endGesture)
+    e.preventDefault()
+  }
+  function startResize(e) {
+    const r = panelEl.getBoundingClientRect()
+    winDrag = true; win.w = r.width; win.h = r.height; dropOpen = false   // 起手先固定当前尺寸
+    gesture = { mode: 'resize', sx: e.clientX, sy: e.clientY, ow: r.width, oh: r.height }
+    window.addEventListener('pointermove', onGesture); window.addEventListener('pointerup', endGesture)
+    e.preventDefault(); e.stopPropagation()
+  }
+  function onGesture(e) {
+    if (!gesture) return
+    const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy
+    if (gesture.mode === 'move') {
+      win.x = clampN(gesture.ox + dx, 6, window.innerWidth - 90)
+      win.y = clampN(gesture.oy + dy, 6, window.innerHeight - 56)
+    } else {
+      win.w = clampN(gesture.ow + dx, 220, Math.min(760, window.innerWidth - win.x - 8))
+      win.h = clampN(gesture.oh + dy, 220, window.innerHeight - win.y - 8)
+    }
+  }
+  function endGesture() { winDrag = false; gesture = null; window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
+
+  onMount(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      booting = false; shown = true
+      if (window.innerWidth <= 680) { win.x = 12; win.y = 75; win.w = window.innerWidth - 24 }   // 手机: 避开顶部 side, 左右等边距
+      else { win.x = 50; win.y = 60; win.w = Math.min(410, window.innerWidth - 100) }
+    }))
+    if (!S.trace?.target) inputEl?.focus()   // 有目标(URL 直达)时交给下面的 $effect 自动发起, 避免重复
+    return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
+  })
+  // 外部(侧栏/URL)改了 S.trace.target → 同步并发起
+  $effect(() => {
+    const tg = S.trace?.target
+    if (tg && tg !== ranFor) { box = tg; launch(tg) }
+  })
+
+  function launch(tg) {
+    const target = (tg ?? box).trim()
+    if (!target || !selected.size) return
+    box = target; ranFor = target; addHistory(target)
+    S.trace.target = target
+    setTraceUrl(target)
+    ctl?.cancel()
+    dropOpen = false; running = true; focusId = null
+    trace = { target: null, probes: [] }
+    ctl = streamTrace(target, [...selected], {
+      onInit(skel) {
+        // 自建模型(各 probe 起始 hops 为空), 之后只从事件追加 —— 与消费真实流式 API 完全一致
+        trace = { target: skel.target, probes: skel.probes.map(p => ({
+          id: p.id, color: p.color, colorHex: p.colorHex, city: p.city, cc: p.cc, country: p.country,
+          network: p.network, asn: p.asn, lat: p.lat, lon: p.lon, status: 'probing', hops: [], rounds: [],
+        })) }
+      },
+      onHop(id, hop) {
+        const p = trace.probes.find(x => x.id === id); if (!p) return
+        p.hops = [...p.hops, hop]
+        trace = { target: trace.target, probes: [...trace.probes] }   // 触发地球 + 列表更新
+      },
+      onProbeDone(id) {
+        const p = trace.probes.find(x => x.id === id); if (!p) return
+        p.status = 'done'
+        const tgt = p.hops[p.hops.length - 1]                // 完成: 按「每跳包数」生成若干轮目标延迟样本(=小点)
+        if (tgt) { const n = Math.max(1, Math.min(10, parseInt(mtr.packets) || 3)); p.rounds = Array.from({ length: n }, () => sampleRtt(tgt.rtt)) }
+        trace = { target: trace.target, probes: [...trace.probes] }
+      },
+      onUpdate(id, hops) {                                  // 无尽模式: 原地刷新逐跳延迟 + 追加一轮样本(小点)
+        const p = trace.probes.find(x => x.id === id); if (!p) return
+        p.hops = hops
+        const tgt = hops[hops.length - 1]
+        if (tgt) p.rounds = [...(p.rounds || []), tgt.rtt].slice(-28)
+        trace = { target: trace.target, probes: [...trace.probes] }
+      },
+      onDone() { running = false },
+    }, { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.proto === 'icmp' ? null : mtr.port, packets: mtr.packets })
+  }
+  function stop() { ctl?.cancel(); running = false }
+  // 清除地球 + panel 上的全部结果(保留输入/选点, 可直接重跑)
+  function clearResults() {
+    ctl?.cancel(); running = false
+    trace = { target: null, probes: [] }
+    focusId = null; openRows = new Set(); ranFor = ''; S.trace.target = ''
+  }
+  function submit(e) { e?.preventDefault(); launch() }
+  function clearBox() { box = ''; inputEl?.focus() }
+  // 点击某位置: 已选 → 取消该位置全部 probe; 否则随机加 ≤5 个该位置的 probe
+  function addProbesFrom(locId) {
+    if (selCountAt(locId) > 0) selected = new Set([...selected].filter(id => !id.startsWith(locId + '-')))
+    else { const add = sampleProbes(locId, selected, 5); if (add.length) selected = new Set([...selected, ...add]) }
+  }
+  function toggleRow(id) { const s = new Set(openRows); s.has(id) ? s.delete(id) : s.add(id); openRows = s }
+
+  let doneCount = $derived(trace.probes.filter(p => p.status === 'done').length)
+  function pick(q) { loadInsightFor(q) }   // 点结果/地球里的 IP/ASN → 浮窗显示 insight(不离开本视图)
+</script>
+
+<main class="rtv">
+  <!-- 地球(占满视图、偏右); 在球上按下也收起历史下拉(拖地球时不留残影) -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="globe-stage" class:in={shown} class:booting onpointerdown={() => { dropOpen = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur() }}>
+    <TraceGlobe model={trace} locations={locInfo} {focusId} hold={!!hoverLoc} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} />
+  </div>
+
+  <MobileBar />
+
+  <!-- 左侧指挥台 HUD: 可自由拖动 / 右下角缩放的浮窗 -->
+  <div class="hud" class:in={shown} class:booting>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="panel" class:dragging={winDrag} bind:this={panelEl} onpointerdown={startMove}
+         style:left="{win.x}px" style:top="{win.y}px" style:width="{win.w}px" style:height={trace.probes.length && win.h != null ? win.h + 'px' : null}>
+      <!-- 顶部两道浅色横杠: 拖动示意(整块面板非交互区域均可拖动) -->
+      <div class="draghandle" aria-hidden="true"><span></span><span></span></div>
+
+      <form class="console" onsubmit={submit} autocomplete="off">
+        <button type="button" class="fam" class:act={mtr.family !== 'auto'} onclick={cycleFam}
+                title={t('rt_family')} aria-label={t('rt_family')}>{famLabel}</button>
+        <input
+          bind:this={inputEl} class="cmd" name="target" bind:value={box}
+          placeholder={t('rt_ph')} spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
+          data-1p-ignore data-lpignore="true" aria-label={t('rt_title')}
+          role="combobox" aria-controls="rt-hist" aria-expanded={dropOpen && matches.length > 0} aria-autocomplete="list"
+          onfocus={() => { if (!booting) openDrop() }} oninput={() => { measureDrop(); dropOpen = true; hi = -1 }}
+          onblur={() => setTimeout(() => (dropOpen = false), 140)} onkeydown={onKey} />
+        {#if box}<button type="button" class="icon clr" onclick={clearBox} aria-label={t('clear')} title={t('clear')}><Fa icon={iClose} /></button>{/if}
+        {#if running}
+          <button type="button" class="go stop" onclick={stop} aria-label={t('rt_stop')} title={t('rt_stop')}><Fa icon={iStop} /></button>
+        {:else}
+          <button type="submit" class="go" aria-label={t('rt_go')} title={t('rt_go')}><Fa icon={iPlay} /></button>
+        {/if}
+      </form>
+
+      <!-- 工具区: 第一行 监测点城市 + 无尽 + 设置齿轮; 齿轮展开第二行 MTR 设置 -->
+      <div class="tools">
+        <div class="trow">
+          <button class="chip" class:on={probesOpen} onclick={() => (probesOpen = !probesOpen)} title={t('rt_probes')}>
+            <Fa icon={iProbe} />
+            <span class="cities">{probeChip.text}</span>{#if probeChip.more}<span class="more">+{probeChip.more}</span>{/if}
+          </button>
+          <select class="typesel" bind:value={mtr.type} title={t('rt_type')} aria-label={t('rt_type')}>
+            <option value="ping">Ping</option>
+            <option value="traceroute">Trace</option>
+            <option value="mtr">MTR</option>
+          </select>
+          <button class="iconchip sq" class:on={mtr.infinite} onclick={() => (mtr.infinite = !mtr.infinite)}
+                  aria-pressed={mtr.infinite} aria-label={t('rt_infinite')} title={t('rt_infinite_hint')}>
+            <Fa icon={iInfinity} />
+          </button>
+          <button class="iconchip sq" class:on={settingsOpen} onclick={() => (settingsOpen = !settingsOpen)}
+                  aria-expanded={settingsOpen} aria-label={t('rt_settings')} title={t('rt_settings')}>
+            <Fa icon={iGear} />
+          </button>
+        </div>
+        {#if settingsOpen}
+          <div class="settings">
+            <div class="seg" role="group" aria-label={t('rt_proto')}>
+              {#each ['icmp', 'udp', 'tcp'] as p}
+                <button class:on={mtr.proto === p} onclick={() => (mtr.proto = p)}>{p.toUpperCase()}</button>
+              {/each}
+            </div>
+            <label class="field" class:off={mtr.proto === 'icmp'}>
+              <span>{t('rt_port')}</span>
+              <input type="text" inputmode="numeric" maxlength="5" bind:value={mtr.port} disabled={mtr.proto === 'icmp'} />
+            </label>
+            <label class="field">
+              <span>{t('rt_packets')}</span>
+              <input type="text" inputmode="numeric" maxlength="2" bind:value={mtr.packets} />
+            </label>
+          </div>
+        {/if}
+      </div>
+
+      <!-- 监测点选择(可展开, 带搜索) -->
+      {#if probesOpen}
+        <div class="probewrap">
+          <div class="probesearch">
+            <Fa icon={iSearch} />
+            <input type="text" bind:value={probeQuery} placeholder={t('rt_probe_search')}
+                   spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+          </div>
+          <div class="probesel">
+            {#each filteredLocations as L (L.id)}
+              {@const sel = selCountAt(L.id)}
+              <button class="psel" class:on={sel > 0} onclick={() => addProbesFrom(L.id)} title={L.country}>
+                <span class="pcc">{L.cc}</span>
+                <span class="pcity">{L.city}</span>
+                <span class="pasn">{sel ? sel + '/' : ''}{L.count}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <!-- 实时逐跳结果(开始跟踪后自动展开) -->
+      {#if trace.probes.length}
+        <div class="results">
+            <div class="rhead">
+              <span class="rhl">
+                <button class="rtarget" onclick={() => trace.target?.ip && pick(trace.target.ip)}>{trace.target?.label || box}</button>
+                <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
+              </span>
+              <span class="rmeta">{doneCount}/{trace.probes.length} · {trace.target?.ip || ''}</span>
+            </div>
+            <div class="plist">
+              {#each trace.probes as p (p.id)}
+                {@const hops = p.hops}
+                {@const last = hops[hops.length - 1]}
+                <div class="pcard" class:focus={focusId === p.id}
+                     onmouseenter={() => (focusId = p.id)} onmouseleave={() => (focusId = null)} role="presentation">
+                  <button class="prow" style:--pc={p.colorHex} onclick={() => toggleRow(p.id)}>
+                    <span class="pdot" style:background={p.colorHex}></span>
+                    <span class="pname">{p.city}<i class="asn">AS{p.asn}</i></span>
+                    <!-- 中间: 每个小点 = 一轮结果, 按延迟光谱蓝→绿→黄→红着色 -->
+                    <span class="rounds">{#each p.rounds || [] as r}<i style:background={roundColor(r)}></i>{/each}</span>
+                    <span class="pstat" class:run={p.status === 'probing'}>
+                      {#if p.status === 'done'}{last?.rtt ?? '—'}<u>ms</u>
+                      {:else}<span class="spin"></span>{hops.length}{/if}
+                    </span>
+                    <Fa icon={openRows.has(p.id) ? iChevD : iChevR} />
+                  </button>
+                  {#if openRows.has(p.id)}
+                    <ol class="hops">
+                      {#each hops as h (h.idx)}
+                        <li class:tgt={h.isTarget}>
+                          <span class="hn">{h.idx}</span>
+                          <span class="hip">
+                            <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
+                            {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
+                          </span>
+                          <span class="hgeo">{h.city || h.cc || ''}</span>
+                          <span class="hrtt">{h.rtt}<u>ms</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
+                        </li>
+                      {/each}
+                    </ol>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+        </div>
+      {/if}
+
+      <!-- 右下角缩放手柄: 仅在有结果时出现(无结果时缩放只会拉出空白) -->
+      {#if trace.probes.length}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="grip" onpointerdown={startResize} title={t('rt_resize')} aria-hidden="true"></div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- 历史下拉(渲染在面板外, 避开浮窗 overflow/backdrop-filter 裁切; 位置由输入框实时测得) -->
+  {#if dropOpen && matches.length}
+    <ul class="hist" id="rt-hist" style:left="{dropRect.left}px" style:top="{dropRect.top}px" style:width="{dropRect.width}px">
+      {#each matches as h, i (h)}
+        <li class="histrow" class:hl={i === hi}>
+          <button type="button" class="histmain" onmousedown={(e) => { e.preventDefault(); pickHistory(h) }} onmouseenter={() => (hi = i)}>
+            <Fa icon={iClock} /> <span>{h}</span>
+          </button>
+          <button type="button" class="histdel" tabindex="-1" aria-label={t('clear')} onmousedown={(e) => { e.preventDefault(); e.stopPropagation(); removeHistory(h) }}><Fa icon={iClose} /></button>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  <!-- 探测点光点交互 popup: 悬停光点弹出, 鼠标移上去可滚动浏览、逐个点击添加(已选打勾) -->
+  {#if hoverLoc}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="locpop" class:below={popBelow} style:left="{popX}px" style:top="{popY}px"
+         transition:fade={{ duration: 120 }}
+         onmouseenter={() => { popPinned = true }}
+         onmouseleave={() => { popPinned = false; hoverLoc = null }}>
+      <div class="lp-head">
+        <span class="lp-city">{hoverLoc.city}<i class="lp-cc">{hoverLoc.cc}</i></span>
+        <span class="lp-cnt">{selCountAt(hoverLoc.id)}/{hoverLoc.count}</span>
+      </div>
+      <div class="lp-list">
+        {#each popProbes as p (p.id)}
+          <button class="lp-item" class:on={selected.has(p.id)} onclick={() => toggleProbeId(p.id)}>
+            <span class="lp-net">{p.network}</span>
+            <span class="lp-asn">AS{p.asn}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+</main>
+
+<style>
+  /* 视图: 深空底 + 点阵网格 + 顶部 accent 辉光(同 WhoisView 约定) */
+  .rtv {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 100vh;
+    position: relative; overflow: hidden; container-type: inline-size;
+    background:
+      radial-gradient(1200px 520px at 76% -160px, var(--accent-dim), transparent 70%),
+      radial-gradient(rgba(125,200,190,.05) 1px, transparent 1px) 0 0 / 22px 22px,
+      var(--bg);
+  }
+
+  /* ── 地球 stage ── 占满整个视图(球心偏右、半径盖住视口 → 看不到圆盘边, 无背景割裂);
+     球的偏移/大小在引擎(traceglobe.js resize)里定。 ── */
+  .globe-stage {
+    position: absolute; inset: 0; z-index: 1;
+    transform: scale(1); opacity: 1; transform-origin: 57% 50%;
+    transition: transform 1.1s cubic-bezier(.22,.61,.36,1), opacity .9s ease;
+    will-change: transform, opacity;
+  }
+  .globe-stage :global(.tglobe) { width: 100%; height: 100%; }
+  /* 命中层不裁切: 整个视图都可拖动/缩放地球(像谷歌地球); HUD 空白处 pointer-events:none 穿透到此层,
+     仅浮窗面板/下拉拦截事件 → 其余随处可拖。 */
+  /* 入场前: 略放大 + 透明 → 加 .in 收回就位淡入(始终盖住视口, 不闪出球缘) */
+  .globe-stage:not(.in) { transform: scale(1.08); opacity: 0; }
+  .globe-stage.booting { transition: none; }
+
+  /* ── 左侧指挥台 HUD ── 可自由拖动 / 右下角缩放的玻璃浮窗; 入场从左滑入淡入 ── */
+  .hud {
+    position: absolute; inset: 0; z-index: 3; pointer-events: none;   /* 仅面板接事件; 留白处穿透到地球(随处可拖) */
+    opacity: 0; transform: translateX(-18px); transition: opacity .7s ease .15s, transform .7s cubic-bezier(.22,.61,.36,1) .15s;
+  }
+  .hud.in { opacity: 1; transform: none; }
+  .hud.booting { transition: none; }
+  .hud .panel { pointer-events: auto; }
+
+  .panel {
+    position: absolute;                          /* left/top/width/height 由 win 状态驱动 */
+    background: color-mix(in srgb, var(--panel) 82%, transparent);
+    border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: 0 30px 70px -36px rgba(0,0,0,.7), inset 0 1px 0 color-mix(in srgb, #fff 6%, transparent);
+    backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    padding: 8px 18px 18px; display: flex; flex-direction: column; gap: 12px;
+    max-height: calc(100vh - 24px); overflow: hidden; will-change: left, top, width, height;
+  }
+  .panel.dragging { user-select: none; }
+
+  /* 右下角缩放手柄: 命中区扩到整个角(含 padding), 视觉刻线只画在内侧 → 点到 padding 也能缩放 */
+  .grip {
+    position: absolute; right: 0; bottom: 0; width: 28px; height: 28px; z-index: 3;
+    cursor: nwse-resize; touch-action: none;
+  }
+  .grip::after {
+    content: ''; position: absolute; right: 7px; bottom: 7px; width: 13px; height: 13px;
+    border-right: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 0 0 6px 0; opacity: .5; transition: opacity .14s;
+  }
+  .grip:hover::after { opacity: 1; }
+
+  /* 顶部拖动示意: 两道浅色横杠(整块面板非交互区域均可拖动) */
+  .draghandle { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 0 1px; cursor: move; touch-action: none; }
+  .draghandle span { width: 30px; height: 2px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 40%, transparent); transition: background .15s; }
+  .panel:hover .draghandle span { background: color-mix(in srgb, var(--muted) 65%, transparent); }
+
+  /* 命令行输入(同首页 console 约定: 高 54, 圆角 13) */
+  .console {
+    flex: 0 0 auto;                       /* 固定 54 高, 永不被 flex 挤压变矮 */
+    display: flex; align-items: center; gap: 8px; padding: 0 7px; height: 54px;
+    background: var(--inbg); border: 1px solid var(--line); border-radius: 13px;
+    box-shadow: 0 12px 34px -22px rgba(0,0,0,.6); transition: border-color .15s, box-shadow .15s;
+  }
+  .console:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-dim), 0 12px 34px -22px rgba(0,0,0,.6); }
+  /* 左侧地址族切换: 正方形, 点击轮换 自动/IPv4/IPv6, 字距紧凑 */
+  .fam {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; padding: 0; border-radius: 9px; cursor: pointer;
+    background: var(--alt); border: 1px solid var(--line); color: var(--muted);
+    font: 800 10.5px var(--mono); letter-spacing: -.04em; transition: all .14s;
+  }
+  .fam:hover { color: var(--fg); border-color: var(--accent); }
+  .fam.act { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--accent); }
+  .fam:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-dim); }
+  .cmd { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 500 16px var(--mono); color: var(--fg); letter-spacing: -.005em; height: 24px; }
+  .cmd::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); font-size: 14px; }
+  .go {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0;
+    background: var(--accent); color: var(--accent-fg); border: 0; border-radius: 10px;
+    cursor: pointer; box-shadow: 0 2px 14px var(--accent-dim); transition: filter .12s, transform .05s;
+  }
+  .go:hover { filter: brightness(1.08); } .go:active { transform: translateY(1px); }
+  .go :global(svg) { width: 12px; }
+  .go.stop { background: color-mix(in srgb, var(--signal) 90%, #000); color: #1a1206; box-shadow: 0 2px 14px color-mix(in srgb, var(--signal) 30%, transparent); }
+  .icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; background: transparent; color: var(--muted); border: 1px solid transparent; transition: all .12s; }
+  .icon:hover { color: var(--fg); background: var(--alt); border-color: var(--line); }
+  .icon :global(svg) { width: 12px; }
+
+  /* 工具区: 第一行(城市/无尽/齿轮) + 可展开的第二行(MTR 设置) */
+  .tools { flex: 0 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .trow { display: flex; align-items: center; gap: 8px; }
+  .chip, .iconchip {
+    display: inline-flex; align-items: center; height: 34px;
+    background: var(--alt); border: 1px solid var(--line); border-radius: 9px; color: var(--fg);
+    font: 600 12.5px var(--sans); cursor: pointer; transition: all .14s;
+  }
+  .chip { flex: 1 1 auto; min-width: 0; gap: 8px; padding: 0 12px; }     /* 城市芯片占满本行剩余宽度 */
+  .iconchip { flex: 0 0 auto; gap: 6px; padding: 0 11px; font-size: 12px; }
+  .iconchip.sq { width: 34px; padding: 0; justify-content: center; }
+  .chip :global(svg), .iconchip :global(svg) { width: 12px; color: var(--muted); flex: 0 0 auto; }
+  .chip:hover, .iconchip:hover { border-color: var(--accent); }
+  .chip.on, .iconchip.on { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 38%, transparent); color: var(--accent); }
+  .chip.on :global(svg), .iconchip.on :global(svg) { color: var(--accent); }
+  .chip .cities { flex: 1 1 auto; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip .more { flex: 0 0 auto; font: 700 11px var(--mono); color: var(--muted); }
+  .chip.on .more { color: var(--accent); }
+  /* 测量类型下拉(Ping/Trace/MTR): 原生 select(下拉不被面板裁切), 外观对齐 chip + 自绘 ▾ */
+  .typesel {
+    flex: 0 0 auto; height: 34px; padding: 0 23px 0 10px; border-radius: 9px;
+    background-color: var(--alt); border: 1px solid var(--line); color: var(--fg);
+    font: 700 12px var(--mono); letter-spacing: .02em; cursor: pointer; appearance: none; -webkit-appearance: none; outline: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 13px) center, calc(100% - 9px) center; background-size: 4px 4px; background-repeat: no-repeat;
+    transition: border-color .14s;
+  }
+  .typesel:hover { border-color: var(--accent); }
+  .typesel:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+
+  /* MTR 设置行 */
+  .settings { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--alt) 60%, transparent); animation: drop .16s ease; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--inbg); }
+  .seg button { background: transparent; border: 0; padding: 6px 11px; font: 700 11.5px var(--mono); letter-spacing: .05em; color: var(--muted); cursor: pointer; transition: all .12s; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button:hover { color: var(--fg); }
+  .seg button.on { background: var(--accent); color: var(--accent-fg); }
+  .field { display: inline-flex; align-items: center; gap: 6px; font: 600 11.5px var(--sans); color: var(--muted); }
+  .field span { white-space: nowrap; }
+  .field input { width: 54px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--inbg); color: var(--fg); font: 500 13px var(--mono); padding: 0 8px; outline: none; transition: border-color .12s; }
+  .field input:focus { border-color: var(--accent); }
+  .field.off { opacity: .4; }
+
+  /* 监测点选择(搜索框 + 网格) */
+  .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }
+  .probesearch { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; background: var(--inbg); border: 1px solid var(--line); border-radius: 8px; }
+  .probesearch :global(svg) { width: 11px; color: var(--muted); flex: 0 0 auto; }
+  .probesearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: 500 13px var(--mono); }
+  .probesearch input::placeholder { color: var(--muted); font-family: var(--sans); font-size: 12.5px; }
+  .probesel {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 200px; overflow: auto; padding: 1px 2px;
+  }
+  @keyframes drop { from { opacity: 0; transform: translateY(-6px); } }
+  .psel {
+    display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; text-align: left;
+    background: var(--alt); border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; cursor: pointer; transition: all .12s;
+  }
+  .psel:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  .psel.on { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+  .psel .pcc { font: 700 10.5px var(--mono); letter-spacing: .04em; color: var(--accent-fg); background: var(--accent); border-radius: 4px; padding: 2px 4px; opacity: .85; }
+  .psel.on .pcc { opacity: 1; }
+  .psel .pcity { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .psel .pasn { font: 500 11px var(--mono); color: var(--muted); }
+
+  /* 结果区 */
+  .results { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow: auto; padding-right: 2px; animation: drop .2s ease; }
+
+  /* 历史下拉(渲染在面板外 → 绝对定位于 .rtv, 不被浮窗 overflow/backdrop-filter 裁切) */
+  .hist {
+    position: absolute; z-index: 6; margin: 0; padding: 5px; list-style: none; max-height: 282px; overflow: auto;
+    background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 11px;
+    box-shadow: 0 22px 50px -20px rgba(0,0,0,.6); backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+    animation: drop .14s ease;
+  }
+  .histrow { display: flex; align-items: center; border-radius: 8px; }
+  .histrow.hl { background: var(--accent-dim); }
+  .histmain {
+    flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 9px; text-align: left;
+    background: transparent; border: 0; cursor: pointer; padding: 8px 9px; color: var(--fg); font: 500 13.5px var(--mono);
+  }
+  .histmain :global(svg) { width: 11px; color: var(--muted); flex: 0 0 auto; }
+  .histmain span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .histrow.hl .histmain :global(svg) { color: var(--accent); }
+  .histdel {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    margin-right: 3px; border-radius: 7px; cursor: pointer; background: transparent; border: 0; color: var(--muted);
+    opacity: 0; transition: opacity .12s, color .12s, background .12s;
+  }
+  .histrow:hover .histdel, .histrow.hl .histdel { opacity: .7; }
+  .histdel:hover { color: var(--fg); background: var(--alt); opacity: 1; }
+  .histdel :global(svg) { width: 9px; }
+
+  /* 探测点光点交互 popup(渲染在面板外, 绝对定位于 .rtv 即视口) */
+  .locpop {
+    position: absolute; z-index: 7; width: 224px;
+    transform: translate(-50%, calc(-100% - 9px));       /* 默认浮在光点上方 */
+    background: color-mix(in srgb, var(--panel) 92%, transparent);
+    border: 1px solid var(--line); border-radius: 11px; overflow: hidden;
+    box-shadow: 0 22px 50px -20px rgba(0,0,0,.6);
+    backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  }
+  .locpop.below { transform: translate(-50%, 15px); }    /* 光点靠顶时改到下方 */
+  .lp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--line2); }
+  .lp-city { font: 700 13px var(--sans); color: var(--fg); display: inline-flex; align-items: center; gap: 6px; }
+  .lp-cc { font: 600 10px var(--mono); letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
+  .lp-cnt { flex: 0 0 auto; font: 700 12px var(--mono); color: var(--accent); }
+  .lp-list { max-height: 248px; overflow: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+  .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; background: transparent; border: 0; cursor: pointer; text-align: left; transition: background .1s; }
+  .lp-item:hover { background: var(--alt); }
+  .lp-item.on { background: var(--accent-dim); }
+  .lp-net { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-item.on .lp-net { color: var(--accent); }
+  .lp-asn { font: 500 11px var(--mono); color: var(--muted); }
+  .rhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font: 600 12px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line2); padding-bottom: 7px; }
+  .rhl { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .rtarget { min-width: 0; background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 600 12px var(--mono); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rtarget:hover { text-decoration: underline; }
+  .rclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: color .12s; }
+  .rclear:hover { color: var(--fg); }
+  .rclear :global(svg) { width: 11px; }
+  .rmeta { flex: 0 0 auto; }
+
+  .plist { display: flex; flex-direction: column; gap: 5px; }
+  .pcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: color-mix(in srgb, var(--panel) 50%, transparent); transition: border-color .15s, box-shadow .15s; }
+  .pcard.focus { border-color: var(--pc, var(--accent)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .prow {
+    width: 100%; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px;
+    background: transparent; border: 0; cursor: pointer; padding: 9px 11px; text-align: left; color: var(--fg);
+  }
+  .prow :global(svg) { width: 10px; color: var(--muted); }
+  .pdot { width: 9px; height: 9px; border-radius: 50%; }
+  .pname { font: 600 13px var(--sans); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .pname .asn { font: 600 10px var(--mono); letter-spacing: .03em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
+  /* 中间: 每轮结果小点(比 pdot 小, 不发光), 按光谱着色; 溢出时显示最新的(靠右) */
+  .rounds { display: flex; align-items: center; justify-content: flex-end; gap: 3px; min-width: 0; overflow: hidden; }
+  .rounds i { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; }
+  .pstat { font: 600 11.5px var(--mono); color: var(--accent); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .pstat u { color: var(--muted); text-decoration: none; font-size: 9.5px; margin-left: 1px; }
+  .pstat.run { color: var(--signal); }
+  .spin, .pstat .spin { width: 10px; height: 10px; border-radius: 50%; border: 1.6px solid color-mix(in srgb, var(--signal) 30%, transparent); border-top-color: var(--signal); display: inline-block; animation: sp .7s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+
+  .hops { list-style: none; margin: 0; padding: 2px 11px 10px; display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--line2); }
+  .hops li { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 2px 0; animation: hopin .25s ease; }
+  @keyframes hopin { from { opacity: 0; transform: translateX(-5px); } }
+  .hn { font: 600 11px var(--mono); color: var(--muted); text-align: right; }
+  /* IP 与 ASN 各自独立可点(分别导航到前缀 / ASN 详情) */
+  .hip { min-width: 0; display: inline-flex; align-items: baseline; gap: 6px; overflow: hidden; }
+  .hlink { background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left; font-family: var(--mono); }
+  .hlink:hover { text-decoration: underline; }
+  .hip-ip { flex: 0 1 auto; min-width: 0; font: 500 12px var(--mono); color: var(--link); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hip-asn { flex: 0 0 auto; font-size: 10.5px; color: var(--muted); }
+  .hip-asn:hover { color: var(--link); }
+  .hops li.tgt .hip-ip { color: var(--signal); }
+  .hgeo { font: 500 11px var(--sans); color: var(--muted); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 96px; justify-self: end; }
+  .hrtt { font: 600 11.5px var(--mono); color: var(--fg); text-align: right; white-space: nowrap; }
+  .hrtt u { color: var(--muted); text-decoration: none; font-size: 9.5px; margin-left: 1px; }
+  .hrtt .loss { color: #ef4444; margin-left: 5px; font-size: 10px; }
+
+  /* 窄屏: 浮窗背景更实, 地球退作背景 */
+  @container (max-width: 900px) {
+    .panel { background: color-mix(in srgb, var(--panel) 92%, transparent); }
+  }
+  @media (max-width: 680px) {
+    .probesel { grid-template-columns: 1fr; }
+  }
+</style>

@@ -5,7 +5,7 @@
   import { getData, configure, ensureEngine } from './lib/db.js'
   import { applyTheme, setLang } from './lib/ui.js'
   import { ccLabel } from './lib/bgp.js'
-  import { applyRoute, hardCloseDetail } from './lib/queries.js'
+  import { applyRoute, hardCloseDetail, clearDetail } from './lib/queries.js'
   import { t } from './lib/i18n.js'
   import { brand, features } from './lib/site.js'
   import { iSpinner, iMenu, iClose } from './lib/icons.js'
@@ -13,6 +13,7 @@
   import MobileBar from './components/MobileBar.svelte'
   import Topbar from './components/Topbar.svelte'
   import WhoisView from './components/WhoisView.svelte'
+  import RouteTraceView from './components/RouteTraceView.svelte'
   import Results from './components/Results.svelte'
   import DnsView from './components/DnsView.svelte'
   import AsSetView from './components/AsSetView.svelte'
@@ -83,7 +84,7 @@
 
     // 落地在 WHOIS 首页时, 引擎本不会加载。空闲时**静默后台预载**(ensureEngine 幂等), 这样之后切到「路由分析」无感秒开;
     // 不阻塞首屏/RDAP, 也不影响 WHOIS 视图(其忽略 S.loading)。meta 缺失则跳过(路由本就不可用)。
-    if (S.view === 'whois' && S.meta) {
+    if ((S.view === 'whois' || S.view === 'trace') && S.meta) {
       const idle = window.requestIdleCallback || (cb => setTimeout(cb, 1500))
       idle(() => ensureEngine().catch(() => {}))
     }
@@ -101,6 +102,11 @@
   {#if S.view === 'whois'}
     <!-- WHOIS·RDAP 独立视图(自带 MobileBar + 全宽 record, 无 Topbar 过滤器 / 无右侧详情面板) -->
     <WhoisView />
+  {:else if S.view === 'trace'}
+    <!-- 全球路由跟踪(globalping MTR + 自有 IP 库, 3D 地球; 自带 MobileBar) -->
+    <RouteTraceView />
+    <!-- 点击 trace 面板里的 IP/ASN -> 浮窗复用 InsightDrawer 展示 insight -->
+    <InsightDrawer floating onclose={clearDetail} />
   {:else}
     <main class="main">
       <MobileBar />

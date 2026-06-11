@@ -5,9 +5,9 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { cycleTheme, toggleLang } from '../lib/ui.js'
-  import { setView, goHome, openProbe } from '../lib/queries.js'
+  import { setView, goHome, openProbe, openTrace } from '../lib/queries.js'
   import { genAgo, genUtc } from '../lib/clock.svelte.js'
-  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe } from '../lib/icons.js'
+  import { iMenu, iClose, iPrefix, iPath, iGlobal, iClock, iTheme, iLang, iAbout, iRepo, iIssue, iChangelog, iNodes, iWhois, iProbe, iSatellite } from '../lib/icons.js'
   import { brand, features } from '../lib/site.js'
 
   let counts = $derived(S.meta?.counts || {})
@@ -36,6 +36,11 @@
         <button class="vitem" class:on={S.view === 'whois' && S.probeExpanded} onclick={() => { close(); openProbe() }}>
           <Fa icon={iProbe} /> {t('nav_probe')}
         </button>
+        {#if features.routeTrace}
+          <button class="vitem" class:on={S.view === 'trace'} onclick={() => { close(); openTrace() }}>
+            <Fa icon={iSatellite} /> {t('nav_trace')}
+          </button>
+        {/if}
         <button class="vitem" class:on={S.view === 'routing'} onclick={() => { close(); setView('routing') }}>
           <Fa icon={iNodes} /> {t('nav_routing')}
         </button>

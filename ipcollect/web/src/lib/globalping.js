@@ -6,9 +6,10 @@
 //   onInit({ target, probes })   probes:[{id,color,colorHex,city,cc,country,network,asn,lat,lon}]
 //   onHop(id, hop)               逐跳追加 hop:{idx,ip,asn,name,cc,city,lat,lon,rtt,loss,isTarget}
 //   onProbeDone(id, { rounds })  该探测点完成; rounds=到目标的逐包 RTT 样本(光谱小点)
-//   onUpdate(id, hops, rounds)   无尽模式: 重测后原地刷新逐跳 + 追加一轮样本
 //   onDone()                     全部完成
 //   onError(err)                 发起失败(配额/网络/校验)
+// 只创建 1 个 measurement, 反复 GET 同一 id 直到 finished(含无尽 ping: 单次发满 16 包流式回),
+// 绝不循环重建 measurement —— 避免快速耗尽 IP 配额。
 //
 // 每一跳 IP 经 geo-resolve.resolveGeo 富集 cc/city/坐标(异步; 默认 DuckDB+质心, 可换在线 geoip)。
 
@@ -57,17 +58,28 @@ async function getMeasurement(id) {
 }
 
 // ── 请求体构造 ────────────────────────────────────────────────────────────────
-// opts = { type:'ping'|'traceroute'|'mtr', proto:'icmp'|'udp'|'tcp', port, packets, family:'auto'|'4'|'6' }
+// opts = { type:'ping'|'traceroute'|'mtr', proto:'icmp'|'udp'|'tcp', port, packets, family:'auto'|'4'|'6', infinite }
+// 按 spec(api.globalping.io/v1/spec.yaml)各类型可用项:
+//   ping       : protocol ∈ {ICMP,TCP}; packets(1-16); port 仅 TCP
+//   traceroute : protocol ∈ {ICMP,TCP,UDP}; 无 packets; port 仅 TCP
+//   mtr        : protocol ∈ {ICMP,TCP,UDP}; packets(1-16); port ∈ TCP/UDP
+//   ipVersion 仅域名目标可设(IP 字面量已定栈, 否则 API 校验报错)
 function buildBody(target, locations, opts = {}) {
   const type = opts.type || 'mtr'
   const proto = (opts.proto || 'icmp').toUpperCase()
   const packets = Math.max(1, Math.min(16, parseInt(opts.packets, 10) || 3))
-  const port = Math.max(1, Math.min(65535, parseInt(opts.port, 10) || 443))
+  const port = Math.max(0, Math.min(65535, parseInt(opts.port, 10) || 80))
   const mo = {}
-  if (type === 'ping') mo.packets = packets
-  else if (type === 'traceroute') { mo.protocol = proto; if (proto !== 'ICMP') mo.port = port }
-  else { mo.protocol = proto; mo.packets = packets; if (proto !== 'ICMP') mo.port = port }   // mtr
-  // ipVersion 仅当目标是域名时允许(IP 字面量本身已定栈; API 会校验报错)。
+  if (type === 'ping') {
+    mo.packets = opts.infinite ? 16 : packets        // 无尽 ping: 单次发满 16 包(逐包样本流式回, 不重建 measurement)
+    if (proto === 'TCP') { mo.protocol = 'TCP'; mo.port = port } else mo.protocol = 'ICMP'
+  } else if (type === 'traceroute') {
+    mo.protocol = proto
+    if (proto === 'TCP') mo.port = port
+  } else {                                            // mtr
+    mo.protocol = proto; mo.packets = packets
+    if (proto === 'TCP' || proto === 'UDP') mo.port = port
+  }
   if (isDomain(target)) {
     if (opts.family === '4') mo.ipVersion = 4
     else if (opts.family === '6') mo.ipVersion = 6
@@ -151,7 +163,7 @@ function roundsOf(res, type) {
 // ── 流式跟踪(POST + 轮询)─────────────────────────────────────────────────────
 const POLL_MS = 500
 export function streamTrace(target, locations, handlers = {}, opts = {}) {
-  const { onInit, onHop, onProbeDone, onUpdate, onDone, onError } = handlers
+  const { onInit, onHop, onProbeDone, onDone, onError } = handlers
   let cancelled = false, timer = null
   let inited = false
   const sent = []     // 每个 probe 已下发的 hop 数 + 是否已 onProbeDone
@@ -160,10 +172,12 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
   const schedule = (fn, ms) => { timer = setTimeout(() => { if (!cancelled) fn() }, ms) }
 
   // 摄取一次 API 快照: 首次建骨架(onInit), 之后逐跳追加 / 完成回调。
-  async function ingest(d, isRerun) {
+  // 只创建 1 个 measurement, 反复 GET 同一 id(inProgressUpdates 流式回数据)直到 finished ——
+  // 不重建 measurement(避免快速耗尽 IP 配额, 匿名仅 250 测试/小时·每探测点计 1)。
+  async function ingest(d) {
     const results = d.results || []
     if (!results.length) return
-    if (!inited && !isRerun) {
+    if (!inited) {
       // 目标坐标: 取首个解析出地址的 probe(anycast/GeoDNS 下各 probe 可能不同, 取其一画靶标)。
       targetIp = results.find(r => r.result?.resolvedAddress)?.result.resolvedAddress || target
       const tg = await resolveGeo(targetIp)
@@ -181,10 +195,6 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
       const res = results[i], st = res.result?.status
       const hops = await buildHops(res, opts.type, targetIp)
       const id = 'p' + i
-      if (isRerun) {                                   // 无尽模式: 原地刷新整条
-        onUpdate && onUpdate(id, hops, roundsOf(res, opts.type))
-        continue
-      }
       const s = sent[i] || (sent[i] = { n: 0, done: false })
       for (let k = s.n; k < hops.length; k++) onHop && onHop(id, hops[k])
       s.n = hops.length
@@ -193,7 +203,7 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
     }
   }
 
-  async function runOnce(isRerun) {
+  ;(async () => {
     let mid
     try { const m = await createMeasurement(buildBody(target, locations, opts)); mid = m.id }
     catch (e) { onError && onError(e); return }
@@ -202,18 +212,13 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
       let d
       try { d = await getMeasurement(mid) } catch { schedule(poll, POLL_MS * 2); return }
       if (cancelled) return
-      try { await ingest(d, isRerun) } catch { /* 单次摄取失败不杀轮询 */ }
+      try { await ingest(d) } catch { /* 单次摄取失败不杀轮询 */ }
       if (cancelled) return
-      if (d.status === 'finished') {
-        // 无尽: 隔会儿重测。匿名配额仅 250 测试/小时·IP(每探测点计 1), 故间隔放缓, 配额耗尽时
-        // 由 onError('rate-limited') 自然停下(带 token 可提额)。
-        if (opts.infinite) schedule(() => runOnce(true), 5000)
-        else onDone && onDone()
-      } else schedule(poll, POLL_MS)
+      if (d.status === 'finished') onDone && onDone()
+      else schedule(poll, POLL_MS)
     }
     poll()
-  }
+  })()
 
-  runOnce(false)
   return { cancel() { cancelled = true; clearTimeout(timer) } }
 }

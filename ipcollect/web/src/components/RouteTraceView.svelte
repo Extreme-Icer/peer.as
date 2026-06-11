@@ -35,6 +35,14 @@
   let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源(默认 NextTrace, 无 token 回退本项目)
   let geoToken = $state(_set.geoToken ?? '')              // NextTrace API token
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
+  // 各类型可用项(对齐 globalping spec): ping 协议仅 ICMP/TCP; trace/mtr 加 UDP。
+  // port 仅在该协议会用到端口时可填(ping/trace 仅 TCP; mtr 为 TCP/UDP)。packets 仅 ping/mtr。无尽仅 ping。
+  let protoOpts = $derived(mtr.type === 'ping' ? ['icmp', 'tcp'] : ['icmp', 'udp', 'tcp'])
+  let portOn = $derived(mtr.type === 'mtr' ? (mtr.proto === 'tcp' || mtr.proto === 'udp') : mtr.proto === 'tcp')
+  let packetsOn = $derived(mtr.type === 'ping' || mtr.type === 'mtr')
+  // 切到 ping 时若当前协议是 UDP(ping 不支持)矫正回 ICMP; 非 ping 时无尽无意义, 关掉。
+  $effect(() => { if (mtr.type === 'ping' && mtr.proto === 'udp') mtr.proto = 'icmp' })
+  $effect(() => { if (mtr.type !== 'ping' && mtr.infinite) mtr.infinite = false })
   // 应用 + 自动保存全部设置(MTR 选项 + GeoIP 源/token)
   $effect(() => { setGeoSource(geoSource) })
   $effect(() => { setGeoToken(geoToken) })
@@ -224,15 +232,9 @@
         p.rounds = (info?.rounds || []).slice(0, 12)         // 到目标的真实逐包 RTT 样本(光谱小点)
         trace = { target: trace.target, probes: [...trace.probes] }
       },
-      onUpdate(id, hops, rounds) {                          // 无尽模式: 原地刷新逐跳 + 追加一轮样本(小点)
-        const p = trace.probes.find(x => x.id === id); if (!p) return
-        p.hops = hops; p.status = 'done'
-        if (rounds && rounds.length) p.rounds = [...(p.rounds || []), ...rounds].slice(-28)
-        trace = { target: trace.target, probes: [...trace.probes] }
-      },
       onDone() { running = false },
       onError(e) { running = false; errMsg = e?.message === 'rate-limited' ? t('rt_err_rate') : `${t('rt_err')}: ${e?.message || ''}` },
-    }, { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.proto === 'icmp' ? null : mtr.port, packets: mtr.packets })
+    }, { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets })
   }
   function stop() { ctl?.cancel(); running = false }
   // 清除地球 + panel 上的全部结果(保留输入/选点, 可直接重跑)
@@ -298,10 +300,12 @@
             <option value="traceroute">Trace</option>
             <option value="mtr">MTR</option>
           </select>
-          <button class="iconchip sq" class:on={mtr.infinite} onclick={() => (mtr.infinite = !mtr.infinite)}
-                  aria-pressed={mtr.infinite} aria-label={t('rt_infinite')} title={t('rt_infinite_hint')}>
-            <Fa icon={iInfinity} />
-          </button>
+          {#if mtr.type === 'ping'}
+            <button class="iconchip sq" class:on={mtr.infinite} onclick={() => (mtr.infinite = !mtr.infinite)}
+                    aria-pressed={mtr.infinite} aria-label={t('rt_infinite')} title={t('rt_infinite_hint')}>
+              <Fa icon={iInfinity} />
+            </button>
+          {/if}
           <button class="iconchip sq" class:on={settingsOpen} onclick={() => (settingsOpen = !settingsOpen)}
                   aria-expanded={settingsOpen} aria-label={t('rt_settings')} title={t('rt_settings')}>
             <Fa icon={iGear} />
@@ -310,18 +314,20 @@
         {#if settingsOpen}
           <div class="settings">
             <div class="seg" role="group" aria-label={t('rt_proto')}>
-              {#each ['icmp', 'udp', 'tcp'] as p}
+              {#each protoOpts as p}
                 <button class:on={mtr.proto === p} onclick={() => (mtr.proto = p)}>{p.toUpperCase()}</button>
               {/each}
             </div>
-            <label class="field" class:off={mtr.proto === 'icmp'}>
+            <label class="field" class:off={!portOn}>
               <span>{t('rt_port')}</span>
-              <input type="text" inputmode="numeric" maxlength="5" bind:value={mtr.port} disabled={mtr.proto === 'icmp'} />
+              <input type="text" inputmode="numeric" maxlength="5" bind:value={mtr.port} disabled={!portOn} />
             </label>
-            <label class="field">
-              <span>{t('rt_packets')}</span>
-              <input type="text" inputmode="numeric" maxlength="2" bind:value={mtr.packets} />
-            </label>
+            {#if packetsOn}
+              <label class="field">
+                <span>{t('rt_packets')}</span>
+                <input type="text" inputmode="numeric" maxlength="2" bind:value={mtr.packets} />
+              </label>
+            {/if}
             <label class="field">
               <span>{t('rt_source')}</span>
               <select class="srcsel" bind:value={geoSource}>
@@ -602,13 +608,13 @@
   /* MTR 设置行 */
   .settings { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--alt) 60%, transparent); animation: drop .16s ease; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--inbg); }
-  .seg button { background: transparent; border: 0; padding: 6px 11px; font: 700 11.5px var(--mono); letter-spacing: .05em; color: var(--muted); cursor: pointer; transition: all .12s; }
+  .seg button { background: transparent; border: 0; padding: 6px; font: 700 11.5px var(--mono); letter-spacing: .05em; color: var(--muted); cursor: pointer; transition: all .12s; }
   .seg button + button { border-left: 1px solid var(--line); }
   .seg button:hover { color: var(--fg); }
   .seg button.on { background: var(--accent); color: var(--accent-fg); }
   .field { display: inline-flex; align-items: center; gap: 6px; font: 600 11.5px var(--sans); color: var(--muted); }
   .field span { white-space: nowrap; }
-  .field input { width: 54px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--inbg); color: var(--fg); font: 500 13px var(--mono); padding: 0 8px; outline: none; transition: border-color .12s; }
+  .field input { width: 56px; height: 28px; border: 1px solid var(--line); border-radius: 7px; background: var(--inbg); color: var(--fg); font: 500 13px var(--mono); padding: 0 8px; outline: none; transition: border-color .12s; }
   .field input:focus { border-color: var(--accent); }
   .field.off { opacity: .4; }
   /* GeoIP 数据源选择 + token 输入(settings 内) */
@@ -621,8 +627,7 @@
     transition: border-color .12s;
   }
   .srcsel:hover, .srcsel:focus-visible { border-color: var(--accent); }
-  .tokenf { flex: 1 1 100%; }
-  .tokenf input { flex: 1 1 auto; width: auto; min-width: 0; font-size: 11.5px; }
+  .tokenf input { width: 140px; min-width: 0; font-size: 11.5px; }
   .tokenf input::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); }
 
   /* 监测点选择(搜索框 + 网格) */

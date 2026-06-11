@@ -224,7 +224,11 @@ export function createTraceGlobe(canvas, opts = {}) {
   function arcPoint(a, b, t) {
     const pa = projectLL(a.la, a.lo), pb = projectLL(b.la, b.lo)
     let dot = pa.x * pb.x + pa.y * pb.y + pa.z * pb.z; dot = clamp(dot, -1, 1)
-    const om = Math.acos(dot), so = Math.sin(om) || 1e-6
+    const om = Math.acos(dot)
+    // 两端几乎重合(相邻跳落在同一城市/国家质心 → 坐标相同): slerp 的 sin 比值会塌成 0,
+    // 把点甩到屏幕中心 (cx,cy) 卡住不动。退化为该点本身。
+    if (om < 1e-4) return { sx: cx + pa.x * R * LIFT, sy: cy - pa.y * R * LIFT, vz: pa.z }
+    const so = Math.sin(om)
     const s0 = Math.sin((1 - t) * om) / so, s1 = Math.sin(t * om) / so
     const vx = pa.x * s0 + pb.x * s1, vy = pa.y * s0 + pb.y * s1, vz = pa.z * s0 + pb.z * s1
     return { sx: cx + vx * R * LIFT, sy: cy - vy * R * LIFT, vz }
@@ -232,7 +236,8 @@ export function createTraceGlobe(canvas, opts = {}) {
   function drawArc(a, b, rgb, grow, alpha, width) {
     const pa = projectLL(a.la, a.lo), pb = projectLL(b.la, b.lo)
     let dot = clamp(pa.x * pb.x + pa.y * pb.y + pa.z * pb.z, -1, 1)
-    const om = Math.acos(dot), so = Math.sin(om) || 1e-6
+    const om = Math.acos(dot); if (om < 1e-4) return   // 两端重合: 零长弧, 无可画(否则画到屏幕中心)
+    const so = Math.sin(om)
     const steps = Math.max(2, Math.min(40, Math.round(om / .09)))
     ctx.strokeStyle = `rgba(${rgb},${alpha})`; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.lineCap = 'round'
     ctx.beginPath(); let pen = false

@@ -117,8 +117,8 @@ export const STRINGS = {
     rt_count: '个探测点', rt_loading_probes: '加载监测点…', rt_no_probes: '监测点加载失败',
     rt_err: '发起跟踪失败', rt_err_rate: '请求过于频繁（已达 globalping 匿名配额，稍后再试）',
     rt_pick_probes: '先在地图或列表里选几个监测点', rt_live: 'globalping 实时',
-    rt_source: 'GeoIP 源', rt_source_builtin: '本项目 (DuckDB)', rt_token: 'Token',
-    rt_token_ph: 'NextTrace API token（精确逐 IP 定位，可留空回退本项目）',
+    rt_source: 'GeoIP 源', rt_source_builtin: '内置', rt_token: 'Token',
+    rt_token_ph: 'NextTrace API token',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -233,8 +233,8 @@ export const STRINGS = {
     rt_count: 'probes', rt_loading_probes: 'Loading probes…', rt_no_probes: 'Failed to load probes',
     rt_err: 'Trace failed', rt_err_rate: 'Rate limited (globalping anonymous quota reached, try later)',
     rt_pick_probes: 'Pick a few probes on the map or list first', rt_live: 'globalping live',
-    rt_source: 'GeoIP source', rt_source_builtin: 'Built-in (DuckDB)', rt_token: 'Token',
-    rt_token_ph: 'NextTrace API token (precise per-IP geo; blank falls back to built-in)',
+    rt_source: 'GeoIP source', rt_source_builtin: 'Built-in', rt_token: 'Token',
+    rt_token_ph: 'NextTrace API token',
   },
 }
 

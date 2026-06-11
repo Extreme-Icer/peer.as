@@ -400,6 +400,9 @@
                        spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
                        data-1p-ignore data-lpignore="true" />
               </label>
+              {#if !geoToken.trim()}
+                <div class="tokenhint">{t('rt_token_need')}<a href="https://api.nxtrace.org/v4/api-tokens" target="_blank" rel="noopener noreferrer">{t('rt_token_get')}</a></div>
+              {/if}
             {/if}
           </div>
         {/if}
@@ -482,22 +485,16 @@
       <!-- 实时逐跳结果(开始跟踪后自动展开) -->
       {#if trace.probes.length}
         <div class="results">
+            <!-- 头部一行: 目标 + 解析 IP + 归属地 + 进度 + 清除(域名无解析/无地理则 as-is, 只见目标) -->
             <div class="rhead">
-              <span class="rhl">
-                <button class="rtarget" onclick={() => trace.target?.ip && pick(trace.target.ip)}>{trace.target?.label || box}</button>
-                <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
-              </span>
-              <span class="rmeta">{doneCount}/{trace.probes.length}</span>
+              <button class="rtarget" onclick={() => trace.target?.ip && pick(trace.target.ip)}>{trace.target?.label || box}</button>
+              {#if trace.target?.ip && trace.target.ip !== trace.target.label}
+                <button class="rip" onclick={() => pick(trace.target.ip)} title={trace.target.ip}>{trace.target.ip}</button>
+              {/if}
+              {#if trace.target?.loc}<span class="rloc" title={trace.target.loc}><Fa icon={iLoc} />{trace.target.loc}</span>{/if}
+              <span class="rcount">{doneCount}/{trace.probes.length}</span>
+              <button class="rclear" onclick={clearResults} title={t('rt_clear')} aria-label={t('rt_clear')}><Fa icon={iClear} /></button>
             </div>
-            <!-- 目标解析到的 IP + 归属地(域名无解析/无地理则只见上面的目标, as-is) -->
-            {#if (trace.target?.ip && trace.target.ip !== trace.target.label) || trace.target?.loc}
-              <div class="rsub">
-                {#if trace.target?.ip && trace.target.ip !== trace.target.label}
-                  <button class="rip" onclick={() => pick(trace.target.ip)} title={trace.target.ip}>{trace.target.ip}</button>
-                {/if}
-                {#if trace.target?.loc}<span class="rloc"><Fa icon={iLoc} />{trace.target.loc}</span>{/if}
-              </div>
-            {/if}
             <div class="plist">
               {#each trace.probes as p (p.id)}
                 {@const hops = p.hops}
@@ -739,6 +736,10 @@
   .srcsel:hover, .srcsel:focus-visible { border-color: var(--accent); }
   .tokenf input { width: 140px; min-width: 0; font-size: 11.5px; }
   .tokenf input::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); }
+  /* 选了 NextTrace 但没填 token 的提示 */
+  .tokenhint { flex: 1 1 100%; font: 500 11.5px var(--sans); color: var(--muted); line-height: 1.5; }
+  .tokenhint a { color: var(--link); text-decoration: none; }
+  .tokenhint a:hover { text-decoration: underline; }
 
   /* 监测点选择(搜索框 + 网格) */
   .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }
@@ -846,20 +847,18 @@
   .probemsg.err { color: #ef4444; }
   /* 发起失败提示条 */
   .rterr { flex: 0 0 auto; padding: 9px 12px; border: 1px solid color-mix(in srgb, #ef4444 40%, var(--line)); border-radius: 9px; background: color-mix(in srgb, #ef4444 10%, transparent); color: #ef4444; font: 500 12.5px var(--sans); animation: drop .16s ease; }
-  .rhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font: 600 12px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line2); padding-bottom: 7px; }
-  .rhl { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  .rtarget { min-width: 0; background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 600 12px var(--mono); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 头部一行: 目标 / 解析 IP / 归属地 / 进度 / 清除 —— 全在 rhead 内, 不换行 */
+  .rhead { display: flex; align-items: center; gap: 8px; font: 600 12px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line2); padding-bottom: 7px; }
+  .rtarget { flex: 0 1 auto; min-width: 32px; background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 600 12px var(--mono); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rtarget:hover { text-decoration: underline; }
+  .rip { flex: 0 1 auto; min-width: 0; background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rip:hover { text-decoration: underline; }
+  .rloc { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; font: 500 11.5px var(--sans); color: var(--muted); overflow: hidden; white-space: nowrap; }
+  .rloc :global(svg) { width: 9px; flex: 0 0 auto; }
+  .rcount { flex: 0 0 auto; margin-left: auto; }
   .rclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; background: transparent; border: 0; color: var(--muted); cursor: pointer; transition: color .12s; }
   .rclear:hover { color: var(--fg); }
   .rclear :global(svg) { width: 11px; }
-  .rmeta { flex: 0 0 auto; }
-  /* 目标解析 IP + 归属地 */
-  .rsub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-top: -2px; }
-  .rip { background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 500 12px var(--mono); }
-  .rip:hover { text-decoration: underline; }
-  .rloc { display: inline-flex; align-items: center; gap: 4px; font: 500 11.5px var(--sans); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .rloc :global(svg) { width: 9px; flex: 0 0 auto; }
 
   .plist { display: flex; flex-direction: column; gap: 5px; }
   .pcard { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: color-mix(in srgb, var(--panel) 50%, transparent); transition: border-color .15s, box-shadow .15s; }

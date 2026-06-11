@@ -120,6 +120,7 @@ export const STRINGS = {
     rt_source: 'GeoIP 源', rt_source_builtin: '内置', rt_token: 'Token',
     rt_token_ph: 'NextTrace API token',
     rt_clear_sel: '清空所有选择', rt_hist_clear: '清空历史记录',
+    rt_token_need: '需要 token 才能精确逐 IP 定位，', rt_token_get: '点此获取',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -237,6 +238,7 @@ export const STRINGS = {
     rt_source: 'GeoIP source', rt_source_builtin: 'Built-in', rt_token: 'Token',
     rt_token_ph: 'NextTrace API token',
     rt_clear_sel: 'Clear all selections', rt_hist_clear: 'Clear history',
+    rt_token_need: 'A token is required for precise per-IP geolocation. ', rt_token_get: 'Get one',
   },
 }
 

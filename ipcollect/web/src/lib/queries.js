@@ -219,6 +219,18 @@ async function enrichIp(ip, v6) {
   return { ip }
 }
 
+// 全球路由跟踪用: 给定一个 IP, 用库内 geo 数据集富集 cc/city/province + origin ASN/前缀。
+// 引擎未就绪先 ensureEngine(trace 视图本不加载引擎); 库内无覆盖 / 失败 -> 仅回 {ip}。
+// 这是 geo-resolve.js 默认解析器的 DuckDB 数据源(坐标另由 geo.js 质心补; 外部 geoip API 走可插拔接口)。
+export async function geoEnrich(ip) {
+  const s = (ip || '').trim()
+  if (!s) return null
+  const v6 = s.includes(':')
+  try { await ensureEngine() } catch { return { ip: s } }
+  if (!S.ready) return { ip: s }
+  try { return await enrichIp(s, v6) } catch { return { ip: s } }
+}
+
 // 只读: 给定 IP/前缀, 算出其去重路径经过的 Tier-1 路由图(供首页地球 doodle "画路由图")。
 //   asns    = 路径里出现过的全部 Tier-1
 //   entries = 各路径最上游(收集器侧)的第一个 Tier-1 —— 用户起点连向它们

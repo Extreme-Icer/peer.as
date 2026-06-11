@@ -2,7 +2,7 @@
   // 全球路由跟踪视图(顶层 view==='trace', features.routeTrace 门控)。
   // 右侧: 大半个倾斜地球(TraceGlobe, 露 ~4/5, 南极在可见区外, 缓慢自转)。
   // 左侧: 极简「指挥台」HUD —— 默认只有目标输入框 + 跟踪/监测点/展开几个按钮; 可展开看监测点选择 + 实时逐跳结果。
-  // 数据为 DEMO 静态 mock(trace-mock.js), 形状对齐 globalping + 库内 geo 富集, 随时可换 live。
+  // 数据为 live: globalping(/v1/measurements 真实 MTR/traceroute/ping)+ 库内 geo 富集逐跳坐标。
   import Fa from 'svelte-fa'
   import { onMount } from 'svelte'
   import { fade } from 'svelte/transition'
@@ -10,7 +10,8 @@
   import { t } from '../lib/i18n.js'
   import { setTraceUrl, loadInsightFor } from '../lib/queries.js'
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear } from '../lib/icons.js'
-  import { PROBE_LOCATIONS, defaultProbeSelection, sampleProbes, probeById, streamTrace } from '../lib/trace-mock.js'
+  import { streamTrace } from '../lib/globalping.js'
+  import { loadProbeLocations, toGpLocation } from '../lib/trace-probes.js'
   import MobileBar from './MobileBar.svelte'
   import TraceGlobe from './TraceGlobe.svelte'
 
@@ -24,41 +25,62 @@
   let mtr = $state({ type: 'mtr', infinite: false, family: 'auto', proto: 'icmp', port: 443, packets: 3 })
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
 
-  // 悬停地球光点 → 交互式 popup(列出该位置全部 probe, 可滚动逐个勾选添加)
+  // ── 监测点(globalping /v1/probes, 异步加载, 按城市聚合)──
+  let allLocations = $state([])         // [{ id, city, cc, country, lat, lon, count, networks:[{asn,name,n}] }]
+  let locLoading = $state(true)
+  let locError = $state('')
+  // 选择: locId → 取样探测点数(globalping 按城市过滤随机派 N 个 probe)
+  let sel = $state({})
+  const DEF_COUNT = 1
+  const DEFAULT_CITIES = ['Frankfurt', 'Ashburn', 'Tokyo', 'Singapore', 'São Paulo', 'London', 'Los Angeles', 'Sydney']
+  function applyDefaultSelection(locs) {
+    const next = {}
+    for (const name of DEFAULT_CITIES) { if (Object.keys(next).length >= 5) break; const L = locs.find(x => x.city === name); if (L) next[L.id] = 1 }
+    if (!Object.keys(next).length) for (const L of locs.slice(0, 5)) next[L.id] = 1
+    sel = next
+  }
+  let LOCBY = $derived.by(() => Object.fromEntries(allLocations.map(L => [L.id, L])))
+  function selCountAt(id) { return sel[id] || 0 }
+  let selCities = $derived(Object.keys(sel))
+  let totalProbes = $derived(Object.values(sel).reduce((a, b) => a + b, 0))
+  function setCount(id, n) {
+    const max = LOCBY[id]?.count || 50
+    n = Math.max(0, Math.min(max, n))
+    const next = { ...sel }; if (n <= 0) delete next[id]; else next[id] = n; sel = next
+  }
+  function toggleLoc(id) { selCountAt(id) > 0 ? setCount(id, 0) : setCount(id, DEF_COUNT) }
+
+  // 悬停地球光点 → 交互式 popup(显示该城市可用探测点数 / 托管网络, 步进选择取样数)
   let hoverLoc = $state(null)
   let popX = $state(0), popY = $state(0), popBelow = $state(false)
   let popPinned = false, popTimer = 0
-  let popProbes = $derived.by(() => hoverLoc ? Array.from({ length: hoverLoc.count }, (_, i) => probeById(hoverLoc.id + '-' + i)) : [])
   function onLocHover(loc, sx, sy) {
     clearTimeout(popTimer)
     if (loc) { hoverLoc = loc; popX = sx; popY = sy; popBelow = sy < 300 }
     else { popTimer = setTimeout(() => { if (!popPinned) hoverLoc = null }, 130) }   // 留点时间让鼠标移到 popup 上
   }
-  function toggleProbeId(id) { const s = new Set(selected); s.has(id) ? s.delete(id) : s.add(id); selected = s }
   function cycleFam() { mtr.family = mtr.family === 'auto' ? '4' : mtr.family === '4' ? '6' : 'auto' }  // 自动→IPv4→IPv6→…
-  const LOC = Object.fromEntries(PROBE_LOCATIONS.map(L => [L.id, L]))
-  const locIdOf = (probeId) => probeId.slice(0, probeId.lastIndexOf('-'))
-  function selCountAt(locId) { let n = 0; for (const id of selected) if (id.startsWith(locId + '-')) n++; return n }
-  // 监测点位置按搜索词过滤(城市/国家/cc)
+  // 监测点位置按搜索词过滤(城市/国家/cc); 列表渲染上限避免一次铺近千条
   let filteredLocations = $derived.by(() => {
     const q = probeQuery.trim().toLowerCase()
-    if (!q) return PROBE_LOCATIONS
-    return PROBE_LOCATIONS.filter(L => `${L.city} ${L.country} ${L.cc}`.toLowerCase().includes(q))
+    const base = q ? allLocations.filter(L => `${L.city} ${L.country} ${L.cc}`.toLowerCase().includes(q)) : allLocations
+    return base.slice(0, 300)
   })
-  // 传给地球的光点: 全部位置 + 各自已选 probe 数(选中高亮)
+  // 传给地球的光点: 取 count 最高的 ~110 个 + 已选(不在前列的)补上; 各带已选取样数
   let locInfo = $derived.by(() => {
-    const c = {}; for (const id of selected) { const lid = locIdOf(id); c[lid] = (c[lid] || 0) + 1 }
-    return PROBE_LOCATIONS.map(L => ({ ...L, sel: c[L.id] || 0 }))
+    const top = allLocations.slice(0, 110)
+    const ids = new Set(top.map(L => L.id))
+    const extra = allLocations.filter(L => sel[L.id] && !ids.has(L.id))
+    return [...top, ...extra].map(L => ({ ...L, sel: sel[L.id] || 0 }))
   })
   // 一轮结果的光谱色: 蓝(最优/低延迟)→绿→黄→红(高延迟)
   function roundColor(rtt) {
     const f = Math.max(0, Math.min(1, (rtt - 15) / 285))
     return `hsl(${(220 * (1 - f)).toFixed(0)}, 72%, 56%)`
   }
-  const sampleRtt = (base) => Math.max(.2, Math.round((base + (Math.random() - .5) * (base * 0.16 + 2)) * 10) / 10)
-  let selected = $state(new Set(defaultProbeSelection()))
-  let trace = $state({ target: null, probes: [] })   // 引擎 + 列表的单一数据源(从事件流重建, 等同消费 live API)
+  let trace = $state({ target: null, probes: [] })   // 引擎 + 列表的单一数据源(从 globalping 事件流重建)
   let running = $state(false)
+  let errMsg = $state('')               // 发起失败(配额/网络)文案
   let focusId = $state(null)            // hover 某监测点 → 地球上高亮它的路径
   let openRows = $state(new Set())      // 展开查看逐跳的监测点
   let inputEl
@@ -91,7 +113,7 @@
 
   // 监测点芯片文案: 列出已选位置(城市), 放不下用 +N 收尾
   let probeChip = $derived.by(() => {
-    const cs = [...new Set([...selected].map(locIdOf))].map(lid => LOC[lid]?.city).filter(Boolean)
+    const cs = selCities.map(id => LOCBY[id]?.city).filter(Boolean)
     const head = []; let len = 0
     for (const c of cs) { if (head.length && len + c.length > 26) break; head.push(c); len += c.length + 3 }
     return { text: head.join(' · ') || '—', more: cs.length - head.length }
@@ -138,25 +160,34 @@
       if (window.innerWidth <= 680) { win.x = 12; win.y = 75; win.w = window.innerWidth - 24 }   // 手机: 避开顶部 side, 左右等边距
       else { win.x = 50; win.y = 60; win.w = Math.min(410, window.innerWidth - 100) }
     }))
-    if (!S.trace?.target) inputEl?.focus()   // 有目标(URL 直达)时交给下面的 $effect 自动发起, 避免重复
+    // 异步加载 globalping 监测点清单 → 铺光点 + 默认选点; 完成后若 URL 直达带目标则发起
+    loadProbeLocations().then(locs => {
+      allLocations = locs; locLoading = false
+      if (!selCities.length) applyDefaultSelection(locs)
+      const tg = (S.trace?.target || '').trim()
+      if (tg && tg !== ranFor) { box = tg; launch(tg) }
+    }).catch(e => { locLoading = false; locError = e?.message || 'load failed' })
+    if (!S.trace?.target) inputEl?.focus()   // 有目标(URL 直达)时由上面 load 完成后发起
     return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
   })
-  // 外部(侧栏/URL)改了 S.trace.target → 同步并发起
+  // 外部(侧栏/URL)改了 S.trace.target → 同步并发起(监测点已加载时直接跑; 未加载则由 load 完成后跑)
   $effect(() => {
     const tg = S.trace?.target
-    if (tg && tg !== ranFor) { box = tg; launch(tg) }
+    if (tg && tg !== ranFor && allLocations.length) { box = tg; launch(tg) }
   })
 
   function launch(tg) {
     const target = (tg ?? box).trim()
-    if (!target || !selected.size) return
+    if (!target) return
+    if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
     box = target; ranFor = target; addHistory(target)
     S.trace.target = target
     setTraceUrl(target)
     ctl?.cancel()
-    dropOpen = false; running = true; focusId = null
+    dropOpen = false; running = true; focusId = null; errMsg = ''
     trace = { target: null, probes: [] }
-    ctl = streamTrace(target, [...selected], {
+    const locations = selCities.map(id => LOCBY[id] && toGpLocation(LOCBY[id], sel[id])).filter(Boolean)
+    ctl = streamTrace(target, locations, {
       onInit(skel) {
         // 自建模型(各 probe 起始 hops 为空), 之后只从事件追加 —— 与消费真实流式 API 完全一致
         trace = { target: skel.target, probes: skel.probes.map(p => ({
@@ -169,21 +200,20 @@
         p.hops = [...p.hops, hop]
         trace = { target: trace.target, probes: [...trace.probes] }   // 触发地球 + 列表更新
       },
-      onProbeDone(id) {
+      onProbeDone(id, info) {
         const p = trace.probes.find(x => x.id === id); if (!p) return
         p.status = 'done'
-        const tgt = p.hops[p.hops.length - 1]                // 完成: 按「每跳包数」生成若干轮目标延迟样本(=小点)
-        if (tgt) { const n = Math.max(1, Math.min(10, parseInt(mtr.packets) || 3)); p.rounds = Array.from({ length: n }, () => sampleRtt(tgt.rtt)) }
+        p.rounds = (info?.rounds || []).slice(0, 12)         // 到目标的真实逐包 RTT 样本(光谱小点)
         trace = { target: trace.target, probes: [...trace.probes] }
       },
-      onUpdate(id, hops) {                                  // 无尽模式: 原地刷新逐跳延迟 + 追加一轮样本(小点)
+      onUpdate(id, hops, rounds) {                          // 无尽模式: 原地刷新逐跳 + 追加一轮样本(小点)
         const p = trace.probes.find(x => x.id === id); if (!p) return
-        p.hops = hops
-        const tgt = hops[hops.length - 1]
-        if (tgt) p.rounds = [...(p.rounds || []), tgt.rtt].slice(-28)
+        p.hops = hops; p.status = 'done'
+        if (rounds && rounds.length) p.rounds = [...(p.rounds || []), ...rounds].slice(-28)
         trace = { target: trace.target, probes: [...trace.probes] }
       },
       onDone() { running = false },
+      onError(e) { running = false; errMsg = e?.message === 'rate-limited' ? t('rt_err_rate') : `${t('rt_err')}: ${e?.message || ''}` },
     }, { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.proto === 'icmp' ? null : mtr.port, packets: mtr.packets })
   }
   function stop() { ctl?.cancel(); running = false }
@@ -191,15 +221,12 @@
   function clearResults() {
     ctl?.cancel(); running = false
     trace = { target: null, probes: [] }
-    focusId = null; openRows = new Set(); ranFor = ''; S.trace.target = ''
+    focusId = null; openRows = new Set(); ranFor = ''; S.trace.target = ''; errMsg = ''
   }
   function submit(e) { e?.preventDefault(); launch() }
   function clearBox() { box = ''; inputEl?.focus() }
-  // 点击某位置: 已选 → 取消该位置全部 probe; 否则随机加 ≤5 个该位置的 probe
-  function addProbesFrom(locId) {
-    if (selCountAt(locId) > 0) selected = new Set([...selected].filter(id => !id.startsWith(locId + '-')))
-    else { const add = sampleProbes(locId, selected, 5); if (add.length) selected = new Set([...selected, ...add]) }
-  }
+  // 点击某位置: 已选 → 取消; 否则加默认取样数(popup 步进可加减)
+  function addProbesFrom(locId) { toggleLoc(locId) }
   function toggleRow(id) { const s = new Set(openRows); s.has(id) ? s.delete(id) : s.add(id); openRows = s }
 
   let doneCount = $derived(trace.probes.filter(p => p.status === 'done').length)
@@ -289,17 +316,28 @@
             <input type="text" bind:value={probeQuery} placeholder={t('rt_probe_search')}
                    spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
           </div>
-          <div class="probesel">
-            {#each filteredLocations as L (L.id)}
-              {@const sel = selCountAt(L.id)}
-              <button class="psel" class:on={sel > 0} onclick={() => addProbesFrom(L.id)} title={L.country}>
-                <span class="pcc">{L.cc}</span>
-                <span class="pcity">{L.city}</span>
-                <span class="pasn">{sel ? sel + '/' : ''}{L.count}</span>
-              </button>
-            {/each}
-          </div>
+          {#if locLoading}
+            <div class="probemsg"><span class="spin"></span>{t('rt_loading_probes')}</div>
+          {:else if locError}
+            <div class="probemsg err">{t('rt_no_probes')}</div>
+          {:else}
+            <div class="probesel">
+              {#each filteredLocations as L (L.id)}
+                {@const n = selCountAt(L.id)}
+                <button class="psel" class:on={n > 0} onclick={() => addProbesFrom(L.id)} title={L.country}>
+                  <span class="pcc">{L.cc}</span>
+                  <span class="pcity">{L.city}</span>
+                  <span class="pasn">{n ? n + '/' : ''}{L.count}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
+      {/if}
+
+      <!-- 发起失败提示(配额/网络/未选点) -->
+      {#if errMsg && !trace.probes.length}
+        <div class="rterr">{errMsg}</div>
       {/if}
 
       <!-- 实时逐跳结果(开始跟踪后自动展开) -->
@@ -339,7 +377,7 @@
                             {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
                           </span>
                           <span class="hgeo">{h.city || h.cc || ''}</span>
-                          <span class="hrtt">{h.rtt}<u>ms</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
+                          <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
                         </li>
                       {/each}
                     </ol>
@@ -372,7 +410,7 @@
     </ul>
   {/if}
 
-  <!-- 探测点光点交互 popup: 悬停光点弹出, 鼠标移上去可滚动浏览、逐个点击添加(已选打勾) -->
+  <!-- 探测点光点交互 popup: 悬停光点弹出, 步进选取该城市取样的探测点数 + 看托管网络分布 -->
   {#if hoverLoc}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="locpop" class:below={popBelow} style:left="{popX}px" style:top="{popY}px"
@@ -383,14 +421,21 @@
         <span class="lp-city">{hoverLoc.city}<i class="lp-cc">{hoverLoc.cc}</i></span>
         <span class="lp-cnt">{selCountAt(hoverLoc.id)}/{hoverLoc.count}</span>
       </div>
-      <div class="lp-list">
-        {#each popProbes as p (p.id)}
-          <button class="lp-item" class:on={selected.has(p.id)} onclick={() => toggleProbeId(p.id)}>
-            <span class="lp-net">{p.network}</span>
-            <span class="lp-asn">AS{p.asn}</span>
-          </button>
-        {/each}
+      <div class="lp-step">
+        <button class="lp-pm" onclick={() => setCount(hoverLoc.id, selCountAt(hoverLoc.id) - 1)} disabled={!selCountAt(hoverLoc.id)} aria-label="−">−</button>
+        <span class="lp-n">{selCountAt(hoverLoc.id)} {t('rt_count')}</span>
+        <button class="lp-pm" onclick={() => setCount(hoverLoc.id, selCountAt(hoverLoc.id) + 1)} disabled={selCountAt(hoverLoc.id) >= hoverLoc.count} aria-label="+">+</button>
       </div>
+      {#if hoverLoc.networks?.length}
+        <div class="lp-list">
+          {#each hoverLoc.networks as nw (nw.name)}
+            <div class="lp-item">
+              <span class="lp-net" title={nw.name}>{nw.name}</span>
+              <span class="lp-asn">AS{nw.asn}<i class="lp-x">×{nw.n}</i></span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
 </main>
@@ -603,7 +648,19 @@
   .lp-item.on { background: var(--accent-dim); }
   .lp-net { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .lp-item.on .lp-net { color: var(--accent); }
-  .lp-asn { font: 500 11px var(--mono); color: var(--muted); }
+  .lp-asn { font: 500 11px var(--mono); color: var(--muted); white-space: nowrap; }
+  .lp-asn .lp-x { font-style: normal; margin-left: 4px; opacity: .7; }
+  /* 取样数步进器 */
+  .lp-step { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 11px; border-bottom: 1px solid var(--line2); }
+  .lp-pm { width: 26px; height: 26px; border-radius: 7px; border: 1px solid var(--line); background: var(--alt); color: var(--fg); font: 700 15px var(--sans); cursor: pointer; line-height: 1; transition: all .12s; }
+  .lp-pm:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .lp-pm:disabled { opacity: .35; cursor: default; }
+  .lp-n { min-width: 70px; text-align: center; font: 600 12px var(--sans); color: var(--fg); }
+  /* 监测点加载 / 失败提示 */
+  .probemsg { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px 0; font: 500 12.5px var(--sans); color: var(--muted); }
+  .probemsg.err { color: #ef4444; }
+  /* 发起失败提示条 */
+  .rterr { flex: 0 0 auto; padding: 9px 12px; border: 1px solid color-mix(in srgb, #ef4444 40%, var(--line)); border-radius: 9px; background: color-mix(in srgb, #ef4444 10%, transparent); color: #ef4444; font: 500 12.5px var(--sans); animation: drop .16s ease; }
   .rhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font: 600 12px var(--mono); color: var(--muted); border-bottom: 1px solid var(--line2); padding-bottom: 7px; }
   .rhl { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
   .rtarget { min-width: 0; background: transparent; border: 0; padding: 0; cursor: pointer; color: var(--link); font: 600 12px var(--mono); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

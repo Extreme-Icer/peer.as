@@ -9,7 +9,7 @@
 //
 // createTraceGlobe(canvas, { tip, hit, onpick, onhover }) ->
 //   { setData(model), focus(probeId|null), recenter(), destroy() }
-//   model 形状见 trace-mock.js(target + probes[].hops[])。
+//   model 形状见 globalping.js streamTrace 注释(target + probes[].hops[])。
 import worldLand from './world-land.js'
 import { geoOrthographic, geoPath, geoArea } from 'd3-geo'
 

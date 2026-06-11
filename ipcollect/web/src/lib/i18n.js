@@ -114,6 +114,9 @@ export const STRINGS = {
     rt_proto: '协议', rt_port: '端口', rt_packets: '每跳包数', rt_family: '地址族（自动 / IPv4 / IPv6，点击轮换）',
     rt_type: '测量类型（Ping / Trace / MTR）', rt_probe_search: '搜索监测点…', rt_clear: '清除结果',
     rt_click_add: '点击添加', rt_selected: '已选', rt_probes_n: '个监测点',
+    rt_count: '个探测点', rt_loading_probes: '加载监测点…', rt_no_probes: '监测点加载失败',
+    rt_err: '发起跟踪失败', rt_err_rate: '请求过于频繁（已达 globalping 匿名配额，稍后再试）',
+    rt_pick_probes: '先在地图或列表里选几个监测点', rt_live: 'globalping 实时',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -225,6 +228,9 @@ export const STRINGS = {
     rt_proto: 'Protocol', rt_port: 'Port', rt_packets: 'Packets/hop', rt_family: 'IP family (Auto / IPv4 / IPv6 — click to cycle)',
     rt_type: 'Measurement type (Ping / Trace / MTR)', rt_probe_search: 'Search probes…', rt_clear: 'Clear results',
     rt_click_add: 'click to add', rt_selected: 'selected', rt_probes_n: 'probes',
+    rt_count: 'probes', rt_loading_probes: 'Loading probes…', rt_no_probes: 'Failed to load probes',
+    rt_err: 'Trace failed', rt_err_rate: 'Rate limited (globalping anonymous quota reached, try later)',
+    rt_pick_probes: 'Pick a few probes on the map or list first', rt_live: 'globalping live',
   },
 }
 

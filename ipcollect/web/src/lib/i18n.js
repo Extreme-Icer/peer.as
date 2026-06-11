@@ -119,6 +119,7 @@ export const STRINGS = {
     rt_pick_probes: '先在地图或列表里选几个监测点', rt_live: 'globalping 实时',
     rt_source: 'GeoIP 源', rt_source_builtin: '内置', rt_token: 'Token',
     rt_token_ph: 'NextTrace API token',
+    rt_clear_sel: '清空所有选择', rt_hist_clear: '清空历史记录',
   },
   en: {
     page_title: 'PEER.AS — BGP, IP & ASN Insights',
@@ -235,6 +236,7 @@ export const STRINGS = {
     rt_pick_probes: 'Pick a few probes on the map or list first', rt_live: 'globalping live',
     rt_source: 'GeoIP source', rt_source_builtin: 'Built-in', rt_token: 'Token',
     rt_token_ph: 'NextTrace API token',
+    rt_clear_sel: 'Clear all selections', rt_hist_clear: 'Clear history',
   },
 }
 

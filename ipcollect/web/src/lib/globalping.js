@@ -93,6 +93,20 @@ function isDomain(t) {
   if (s.includes(':')) return false                 // IPv6 字面量
   return !/^\d{1,3}(\.\d{1,3}){3}$/.test(s)          // 非 IPv4 点分 = 域名
 }
+// 私网 / LAN / 保留地址(无公网地理意义): 这些跳一律当作不存在, 直接连接前后两个有地理的跳。
+function isPrivate(ip) {
+  if (!ip) return true
+  if (ip.includes(':')) {
+    const s = ip.toLowerCase()
+    return s === '::1' || s.startsWith('fe8') || s.startsWith('fe9') || s.startsWith('fea') || s.startsWith('feb')
+      || s.startsWith('fc') || s.startsWith('fd')   // ULA fc00::/7; link-local fe80::/10
+  }
+  const m = ip.split('.').map(Number)
+  if (m.length !== 4 || m.some(x => isNaN(x))) return true
+  const [a, b] = m
+  return a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127)   // CGNAT 100.64/10
+}
 
 // ── API 结果 → 模型 ──────────────────────────────────────────────────────────
 function probeMeta(res, i) {
@@ -130,9 +144,9 @@ async function buildHops(res, type, targetIp) {
   for (let i = 0; i < hops.length; i++) {
     const h = hops[i]
     const ip = h.resolvedAddress
-    if (!ip) continue                                  // * * * 超时跳: 跳过(无坐标)
+    if (!ip || isPrivate(ip)) continue                 // * * * 超时跳 / LAN·私网: 当作不存在, 连前后有地理的跳
     const g = await resolveGeo(ip)
-    if (!g || g.lat == null) continue                  // 无法定位: 跳过几何(由在线 geoip 接入后补全)
+    if (!g || g.lat == null) continue                  // 地区不明: 同样跳过(连前后); 在线 geoip 接入后可补全
     const asn = (h.asn && h.asn.length ? h.asn[0] : null) ?? g.asn ?? 0
     out.push(mkHop(++idx, ip, g, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn) || h.resolvedHostname || '', asn))
   }

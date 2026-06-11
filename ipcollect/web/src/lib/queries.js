@@ -759,13 +759,9 @@ export function collapseProbe() {
 }
 
 // ── 全球路由跟踪视图 ───────────────────────────────────────────────
-// 侧栏/移动菜单入口: 切到 trace 视图(保留上次目标, 有则同时还原 URL)。
+// 侧栏/移动菜单入口: 切到 trace 视图。trace 只有 /trace 这一个路径 —— 目标不进 URL、
+// 也不从 URL 带参发起(深链/前进后退不携带 IP)。
 export function openTrace() { setView('trace') }
-// RouteTraceView 发起一次跟踪时回写 URL(可深链/前进后退); S.trace.target 由组件先设好。
-export function setTraceUrl(target) {
-  const tg = (target || '').trim()
-  go(tg ? '/trace/' + encodeURIComponent(tg) : '/trace')
-}
 
 // ── 结果表分页 + 导出 ─────────────────────────────────────────────
 // 翻页: 调 runSearch(true) 保留 S.page; OFFSET=page*limit 重查(复用整套搜索逻辑与 _best/排序后处理)。
@@ -833,9 +829,8 @@ export function setView(v) {
     const inp = (S.whois?.input || '').trim()
     go(inp ? '/whois/' + encodeURIComponent(inp) : '/')   // 首页 = /
   } else if (v === 'trace') {
-    S.view = 'trace'                                       // 全球路由跟踪(不依赖 DuckDB 引擎)
-    const tg = (S.trace?.target || '').trim()
-    go(tg ? '/trace/' + encodeURIComponent(tg) : '/trace')
+    S.view = 'trace'                                       // 全球路由跟踪(不依赖 DuckDB 引擎); 只有 /trace 一个路径
+    go('/trace')
   } else {
     if (v === S.view) return
     S.view = 'routing'
@@ -913,11 +908,13 @@ export async function applyRoute({ initial = false } = {}) {
       S.probeExpanded = (path === 'probe')   // /probe -> 直接进「IP 探测」摊开态(runWhois 已先置 false)
       return
     }
-    // /trace[/<target>] -> 全球路由跟踪(纯前端 MTR 可视化, 不碰 DuckDB 引擎)。
+    // /trace -> 全球路由跟踪(纯前端 MTR 可视化, 不碰 DuckDB 引擎)。
+    // 只认 /trace 这一个路径: 任何 /trace/<...> 深链都不带参发起, 一律落到干净的 /trace。
     if (features.routeTrace && (path === 'trace' || path.startsWith('trace/'))) {
       S.loading = false
       S.view = 'trace'
-      S.trace = { target: path.startsWith('trace/') ? decodeURIComponent(path.slice(6)) : '' }
+      S.trace = { target: '' }
+      if (path !== 'trace') go('/trace')   // 规范化掉 URL 里的目标段
       return
     }
     // 路由分析需 DuckDB 引擎: 懒加载(首次), 就绪后再跑下面的 runSearch/runDns/runAsSet。失败则 S.fatal 已置, 直接退出。

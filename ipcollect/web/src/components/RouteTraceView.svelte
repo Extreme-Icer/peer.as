@@ -8,7 +8,7 @@
   import { fade } from 'svelte/transition'
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
-  import { setTraceUrl, loadInsightFor } from '../lib/queries.js'
+  import { loadInsightFor } from '../lib/queries.js'
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations, toGpLocation } from '../lib/trace-probes.js'
@@ -55,8 +55,13 @@
   let allLocations = $state([])         // [{ id, city, cc, country, lat, lon, count, networks:[{asn,name,n}] }]
   let locLoading = $state(true)
   let locError = $state('')
-  // 选择: locId → 取样探测点数(globalping 按城市过滤随机派 N 个 probe)
-  let sel = $state({})
+  // 选择(持久化, 记住已选城市): sel[locId]=随机取样数(globalping 按城市随机派 N 个 probe);
+  // selNets[locId]=[asn,…] 指定网络(magic "城市+ASxxx" 精确发起)。两者并存, 合计即该城市发起数。
+  const SELKEY = 'ipc-trace-sel'
+  function loadSel() { try { const j = JSON.parse(localStorage.getItem(SELKEY) || '{}') || {}; return { sel: j.sel || {}, selNets: j.selNets || {} } } catch { return { sel: {}, selNets: {} } } }
+  const _sel0 = loadSel()
+  let sel = $state(_sel0.sel)
+  let selNets = $state(_sel0.selNets)
   const DEF_COUNT = 1
   const DEFAULT_CITIES = ['Frankfurt', 'Ashburn', 'Tokyo', 'Singapore', 'São Paulo', 'London', 'Los Angeles', 'Sydney']
   function applyDefaultSelection(locs) {
@@ -67,14 +72,25 @@
   }
   let LOCBY = $derived.by(() => Object.fromEntries(allLocations.map(L => [L.id, L])))
   function selCountAt(id) { return sel[id] || 0 }
-  let selCities = $derived(Object.keys(sel))
-  let totalProbes = $derived(Object.values(sel).reduce((a, b) => a + b, 0))
+  function selNetsAt(id) { return selNets[id] || [] }
+  function selTotalAt(id) { return (sel[id] || 0) + (selNets[id]?.length || 0) }   // 随机 + 指定网络
+  let selCities = $derived([...new Set([...Object.keys(sel), ...Object.keys(selNets).filter(k => selNets[k]?.length)])])
+  let totalProbes = $derived(
+    Object.values(sel).reduce((a, b) => a + b, 0) + Object.values(selNets).reduce((a, b) => a + (b?.length || 0), 0))
   function setCount(id, n) {
     const max = LOCBY[id]?.count || 50
     n = Math.max(0, Math.min(max, n))
     const next = { ...sel }; if (n <= 0) delete next[id]; else next[id] = n; sel = next
   }
-  function toggleLoc(id) { selCountAt(id) > 0 ? setCount(id, 0) : setCount(id, DEF_COUNT) }
+  function toggleNet(id, asn) {                                    // 切换某城市某网络(asn)的指定选择
+    const cur = selNets[id] || []
+    const arr = cur.includes(asn) ? cur.filter(a => a !== asn) : [...cur, asn]
+    const next = { ...selNets }; if (arr.length) next[id] = arr; else delete next[id]; selNets = next
+  }
+  function clearLoc(id) { const s = { ...sel }; delete s[id]; sel = s; const n = { ...selNets }; delete n[id]; selNets = n }
+  function toggleLoc(id) { selTotalAt(id) > 0 ? clearLoc(id) : setCount(id, DEF_COUNT) }
+  function clearAllSel() { sel = {}; selNets = {} }                // 一键清空全部选择
+  $effect(() => { try { localStorage.setItem(SELKEY, JSON.stringify({ sel, selNets })) } catch { /* 隐私模式忽略 */ } })
 
   // 悬停地球光点 → 交互式 popup(显示该城市可用探测点数 / 托管网络, 步进选择取样数)
   let hoverLoc = $state(null)
@@ -92,12 +108,12 @@
     const base = q ? allLocations.filter(L => `${L.city} ${L.country} ${L.cc}`.toLowerCase().includes(q)) : allLocations
     return base.slice(0, 300)
   })
-  // 传给地球的光点: 取 count 最高的 ~110 个 + 已选(不在前列的)补上; 各带已选取样数
+  // 传给地球的光点: 取 count 最高的 ~110 个 + 已选(不在前列的)补上; 各带已选取样数(随机+指定网络)
   let locInfo = $derived.by(() => {
     const top = allLocations.slice(0, 110)
     const ids = new Set(top.map(L => L.id))
-    const extra = allLocations.filter(L => sel[L.id] && !ids.has(L.id))
-    return [...top, ...extra].map(L => ({ ...L, sel: sel[L.id] || 0 }))
+    const extra = allLocations.filter(L => selTotalAt(L.id) && !ids.has(L.id))
+    return [...top, ...extra].map(L => ({ ...L, sel: selTotalAt(L.id) }))
   })
   // 一轮结果的光谱色: 蓝(最优/低延迟)→绿→黄→红(高延迟)
   function roundColor(rtt) {
@@ -123,6 +139,7 @@
   function saveHistory() { try { localStorage.setItem(HKEY, JSON.stringify(history.slice(0, 16))) } catch { /* 隐私模式忽略 */ } }
   function addHistory(tg) { history = [tg, ...history.filter(x => x !== tg)].slice(0, 16); saveHistory() }
   function removeHistory(tg) { history = history.filter(x => x !== tg); saveHistory() }
+  function clearAllHistory() { history = []; saveHistory(); dropOpen = false }
   let matches = $derived.by(() => {
     const qq = box.trim().toLowerCase()
     return history.filter(h => { const l = h.toLowerCase(); return qq ? (l.includes(qq) && l !== qq) : true }).slice(0, 8)
@@ -135,7 +152,7 @@
     else if (e.key === 'ArrowUp') { e.preventDefault(); hi = Math.max(hi - 1, -1) }
     else if (e.key === 'Escape') { dropOpen = false; hi = -1 }
   }
-  function pickHistory(tg) { box = tg; dropOpen = false; hi = -1; launch(tg) }
+  function pickHistory(tg) { box = tg; dropOpen = false; hi = -1; inputEl?.focus() }   // 仅填充, 不立即发起
 
   // 监测点芯片文案: 列出已选位置(城市), 放不下用 +N 收尾
   let probeChip = $derived.by(() => {
@@ -186,20 +203,13 @@
       if (window.innerWidth <= 680) { win.x = 12; win.y = 75; win.w = window.innerWidth - 24 }   // 手机: 避开顶部 side, 左右等边距
       else { win.x = 50; win.y = 60; win.w = Math.min(410, window.innerWidth - 100) }
     }))
-    // 异步加载 globalping 监测点清单 → 铺光点 + 默认选点; 完成后若 URL 直达带目标则发起
+    // 异步加载 globalping 监测点清单 → 铺光点; 无已记住的选择时才铺默认。不从 URL 带参发起。
     loadProbeLocations().then(locs => {
       allLocations = locs; locLoading = false
       if (!selCities.length) applyDefaultSelection(locs)
-      const tg = (S.trace?.target || '').trim()
-      if (tg && tg !== ranFor) { box = tg; launch(tg) }
     }).catch(e => { locLoading = false; locError = e?.message || 'load failed' })
-    if (!S.trace?.target) inputEl?.focus()   // 有目标(URL 直达)时由上面 load 完成后发起
+    inputEl?.focus()
     return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
-  })
-  // 外部(侧栏/URL)改了 S.trace.target → 同步并发起(监测点已加载时直接跑; 未加载则由 load 完成后跑)
-  $effect(() => {
-    const tg = S.trace?.target
-    if (tg && tg !== ranFor && allLocations.length) { box = tg; launch(tg) }
   })
 
   function launch(tg) {
@@ -207,12 +217,18 @@
     if (!target) return
     if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
     box = target; ranFor = target; addHistory(target)
-    S.trace.target = target
-    setTraceUrl(target)
     ctl?.cancel()
     dropOpen = false; running = true; focusId = null; errMsg = ''
     trace = { target: null, probes: [] }
-    const locations = selCities.map(id => LOCBY[id] && toGpLocation(LOCBY[id], sel[id])).filter(Boolean)
+    // 选点 → globalping locations: 随机数走 {city,country,limit}; 指定网络走 magic "城市+ASxxx"。
+    const locations = []
+    for (const id of selCities) {
+      const L = LOCBY[id]; if (!L) continue
+      const cnt = sel[id] || 0
+      if (cnt > 0) locations.push(toGpLocation(L, cnt))
+      for (const asn of (selNets[id] || [])) locations.push({ magic: `${L.city}+AS${asn}`, limit: 1 })
+    }
+    if (!locations.length) { running = false; errMsg = t('rt_pick_probes'); probesOpen = true; return }
     ctl = streamTrace(target, locations, {
       onInit(skel) {
         // 自建模型(各 probe 起始 hops 为空), 之后只从事件追加 —— 与消费真实流式 API 完全一致
@@ -350,10 +366,14 @@
       <!-- 监测点选择(可展开, 带搜索) -->
       {#if probesOpen}
         <div class="probewrap">
-          <div class="probesearch">
-            <Fa icon={iSearch} />
-            <input type="text" bind:value={probeQuery} placeholder={t('rt_probe_search')}
-                   spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+          <div class="psrow">
+            <div class="probesearch">
+              <Fa icon={iSearch} />
+              <input type="text" bind:value={probeQuery} placeholder={t('rt_probe_search')}
+                     spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off" />
+            </div>
+            <button class="psclear" onclick={clearAllSel} disabled={!totalProbes}
+                    title={t('rt_clear_sel')} aria-label={t('rt_clear_sel')}><Fa icon={iClear} /></button>
           </div>
           {#if locLoading}
             <div class="probemsg"><span class="spin"></span>{t('rt_loading_probes')}</div>
@@ -362,7 +382,7 @@
           {:else}
             <div class="probesel">
               {#each filteredLocations as L (L.id)}
-                {@const n = selCountAt(L.id)}
+                {@const n = selTotalAt(L.id)}
                 <button class="psel" class:on={n > 0} onclick={() => addProbesFrom(L.id)} title={L.country}>
                   <span class="pcc">{L.cc}</span>
                   <span class="pcity">{L.city}</span>
@@ -438,14 +458,19 @@
   <!-- 历史下拉(渲染在面板外, 避开浮窗 overflow/backdrop-filter 裁切; 位置由输入框实时测得) -->
   {#if dropOpen && matches.length}
     <ul class="hist" id="rt-hist" style:left="{dropRect.left}px" style:top="{dropRect.top}px" style:width="{dropRect.width}px">
-      {#each matches as h, i (h)}
-        <li class="histrow" class:hl={i === hi}>
-          <button type="button" class="histmain" onmousedown={(e) => { e.preventDefault(); pickHistory(h) }} onmouseenter={() => (hi = i)}>
-            <Fa icon={iClock} /> <span>{h}</span>
-          </button>
-          <button type="button" class="histdel" tabindex="-1" aria-label={t('clear')} onmousedown={(e) => { e.preventDefault(); e.stopPropagation(); removeHistory(h) }}><Fa icon={iClose} /></button>
-        </li>
-      {/each}
+      <div class="histscroll">
+        {#each matches as h, i (h)}
+          <li class="histrow" class:hl={i === hi}>
+            <button type="button" class="histmain" onmousedown={(e) => { e.preventDefault(); pickHistory(h) }} onmouseenter={() => (hi = i)}>
+              <Fa icon={iClock} /> <span>{h}</span>
+            </button>
+            <button type="button" class="histdel" tabindex="-1" aria-label={t('clear')} onmousedown={(e) => { e.preventDefault(); e.stopPropagation(); removeHistory(h) }}><Fa icon={iClose} /></button>
+          </li>
+        {/each}
+      </div>
+      <li class="histclear">
+        <button type="button" onmousedown={(e) => { e.preventDefault(); clearAllHistory() }}><Fa icon={iClear} /> {t('rt_hist_clear')}</button>
+      </li>
     </ul>
   {/if}
 
@@ -458,20 +483,22 @@
          onmouseleave={() => { popPinned = false; hoverLoc = null }}>
       <div class="lp-head">
         <span class="lp-city">{hoverLoc.city}<i class="lp-cc">{hoverLoc.cc}</i></span>
-        <span class="lp-cnt">{selCountAt(hoverLoc.id)}/{hoverLoc.count}</span>
+        <span class="lp-cnt">{selTotalAt(hoverLoc.id)}/{hoverLoc.count}</span>
       </div>
+      <!-- 随机取样数(步进): globalping 在该城市随机派 N 个探测点 -->
       <div class="lp-step">
         <button class="lp-pm" onclick={() => setCount(hoverLoc.id, selCountAt(hoverLoc.id) - 1)} disabled={!selCountAt(hoverLoc.id)} aria-label="−">−</button>
         <span class="lp-n">{selCountAt(hoverLoc.id)} {t('rt_count')}</span>
         <button class="lp-pm" onclick={() => setCount(hoverLoc.id, selCountAt(hoverLoc.id) + 1)} disabled={selCountAt(hoverLoc.id) >= hoverLoc.count} aria-label="+">+</button>
       </div>
+      <!-- 指定网络(点选即拼出 magic "城市+ASxxx", 精确从该供应商发起) -->
       {#if hoverLoc.networks?.length}
         <div class="lp-list">
-          {#each hoverLoc.networks as nw (nw.name)}
-            <div class="lp-item">
-              <span class="lp-net" title={nw.name}>{nw.name}</span>
+          {#each hoverLoc.networks as nw (nw.asn)}
+            <button class="lp-item" class:on={selNetsAt(hoverLoc.id).includes(nw.asn)} onclick={() => toggleNet(hoverLoc.id, nw.asn)} title={nw.name}>
+              <span class="lp-net">{nw.name}</span>
               <span class="lp-asn">AS{nw.asn}<i class="lp-x">×{nw.n}</i></span>
-            </div>
+            </button>
           {/each}
         </div>
       {/if}
@@ -632,6 +659,12 @@
 
   /* 监测点选择(搜索框 + 网格) */
   .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }
+  .psrow { display: flex; align-items: center; gap: 6px; }
+  .psrow .probesearch { flex: 1 1 auto; min-width: 0; }
+  .psclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--alt); border: 1px solid var(--line); color: var(--muted); cursor: pointer; transition: all .12s; }
+  .psclear:hover:not(:disabled) { color: #ef4444; border-color: color-mix(in srgb, #ef4444 45%, var(--line)); }
+  .psclear:disabled { opacity: .35; cursor: default; }
+  .psclear :global(svg) { width: 12px; }
   .probesearch { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; background: var(--inbg); border: 1px solid var(--line); border-radius: 8px; }
   .probesearch :global(svg) { width: 11px; color: var(--muted); flex: 0 0 auto; }
   .probesearch input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font: 500 13px var(--mono); }
@@ -656,11 +689,21 @@
 
   /* 历史下拉(渲染在面板外 → 绝对定位于 .rtv, 不被浮窗 overflow/backdrop-filter 裁切) */
   .hist {
-    position: absolute; z-index: 6; margin: 0; padding: 5px; list-style: none; max-height: 282px; overflow: auto;
+    position: absolute; z-index: 6; margin: 0; padding: 5px; list-style: none; overflow: hidden;
     background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 11px;
     box-shadow: 0 22px 50px -20px rgba(0,0,0,.6); backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
     animation: drop .14s ease;
   }
+  .histscroll { max-height: 240px; overflow: auto; }   /* 历史项滚动区, 高度有上限 */
+  /* 底部「清空历史」固定项 */
+  .histclear { margin-top: 4px; border-top: 1px solid var(--line2); padding-top: 4px; }
+  .histclear button {
+    width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    background: transparent; border: 0; cursor: pointer; padding: 7px 9px; border-radius: 8px;
+    color: var(--muted); font: 600 12px var(--sans); transition: all .12s;
+  }
+  .histclear button:hover { color: #ef4444; background: color-mix(in srgb, #ef4444 10%, transparent); }
+  .histclear :global(svg) { width: 11px; }
   .histrow { display: flex; align-items: center; border-radius: 8px; }
   .histrow.hl { background: var(--accent-dim); }
   .histmain {
@@ -694,8 +737,11 @@
   .lp-cc { font: 600 10px var(--mono); letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
   .lp-cnt { flex: 0 0 auto; font: 700 12px var(--mono); color: var(--accent); }
   .lp-list { max-height: 248px; overflow: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
-  .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; }
+  .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; background: transparent; border: 1px solid transparent; cursor: pointer; text-align: left; transition: background .1s, border-color .1s; }
+  .lp-item:hover { background: var(--alt); }
+  .lp-item.on { background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 38%, transparent); }
   .lp-net { font: 600 12.5px var(--sans); color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lp-item.on .lp-net { color: var(--accent); }
   .lp-asn { font: 500 11px var(--mono); color: var(--muted); white-space: nowrap; }
   .lp-asn .lp-x { font-style: normal; margin-left: 4px; opacity: .7; }
   /* 取样数步进器 */

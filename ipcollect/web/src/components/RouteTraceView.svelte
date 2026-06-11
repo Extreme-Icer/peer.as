@@ -66,8 +66,8 @@
   const DEF_COUNT = 1
   const DEFAULT_CITIES = ['Frankfurt', 'Ashburn', 'Tokyo', 'Singapore', 'São Paulo', 'London', 'Los Angeles', 'Sydney']
   let LOCBY = $derived.by(() => Object.fromEntries(allLocations.map(L => [L.id, L])))
-  const cityPick = (L) => ({ key: 'city:' + L.id, kind: 'city', id: L.id, city: L.city, country: L.country, label: L.city, count: DEF_COUNT })
-  const netPick = (L, nw) => ({ key: 'net:' + L.id + ':' + nw.asn, kind: 'net', id: L.id, city: L.city, country: L.country, asn: nw.asn, magic: `${L.city}+AS${nw.asn}`, label: `${L.city} · ${nw.name}`, count: DEF_COUNT })
+  const cityPick = (L) => ({ key: 'city:' + L.id, kind: 'city', id: L.id, city: L.city, cc: L.cc, label: L.city, count: DEF_COUNT })
+  const netPick = (L, nw) => ({ key: 'net:' + L.id + ':' + nw.asn, kind: 'net', id: L.id, city: L.city, cc: L.cc, asn: nw.asn, magic: `${L.city}+AS${nw.asn}`, label: `${L.city} · ${nw.name}`, count: DEF_COUNT })
   const magicPick = (m, label) => ({ key: 'magic:' + m, kind: 'magic', magic: m, label: label || m, count: DEF_COUNT })
   function applyDefaultSelection(locs) {
     const out = []
@@ -258,10 +258,13 @@
     ctl?.cancel()
     dropOpen = false; running = true; focusId = null; errMsg = ''
     trace = { target: null, probes: [] }
-    // 已选条件 → globalping locations: city 走 {city,country,limit}; net/magic 走 {magic,limit}。
-    const locations = picks.map(p => p.kind === 'city'
-      ? { city: p.city, country: p.country, limit: p.count || 1 }
-      : { magic: p.magic, limit: p.count || 1 })
+    // 已选条件 → globalping locations: city 走 {city,country(ISO cc),limit}; net/magic 走 {magic,limit}。
+    // country 必须是两位 ISO 码 —— 取 pick.cc, 兼容旧存档则回查 LOCBY; 仍无则退化成 city 名 magic。
+    const locations = picks.map(p => {
+      if (p.kind !== 'city') return { magic: p.magic, limit: p.count || 1 }
+      const cc = p.cc || LOCBY[p.id]?.cc
+      return cc ? { city: p.city, country: cc, limit: p.count || 1 } : { magic: p.city, limit: p.count || 1 }
+    })
     if (!locations.length) { running = false; errMsg = t('rt_pick_probes'); probesOpen = true; return }
     ctl = streamTrace(target, locations, {
       onInit(skel) {

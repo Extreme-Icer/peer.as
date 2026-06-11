@@ -72,7 +72,7 @@ function buildBody(target, locations, opts = {}) {
   const port = Math.max(0, Math.min(65535, parseInt(opts.port, 10) || 80))
   const mo = {}
   if (type === 'ping') {
-    mo.packets = opts.infinite ? 16 : packets        // 无尽 ping: 单次发满 16 包(逐包样本流式回, 不重建 measurement)
+    mo.packets = packets                              // 无尽 ping 也用配置的包数(默认 3, 每轮快速返回再滚下一轮)
     if (proto === 'TCP') { mo.protocol = 'TCP'; mo.port = port } else mo.protocol = 'ICMP'
   } else if (type === 'traceroute') {
     mo.protocol = proto

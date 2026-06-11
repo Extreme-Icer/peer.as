@@ -253,6 +253,7 @@
     const target = (tg ?? box).trim()
     if (!target) return
     if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
+    setGeoSource(geoSource); setGeoToken(geoToken)   // 发起前确保 GeoIP 源/token 已生效(防 HMR/时序导致未应用 → 误回退)
     box = target; ranFor = target; addHistory(target)
     ctl?.cancel()
     dropOpen = false; running = true; focusId = null; errMsg = ''
@@ -278,7 +279,14 @@
       onProbeDone(id, info) {
         const p = trace.probes.find(x => x.id === id); if (!p) return
         p.status = 'done'
-        p.rounds = (info?.rounds || []).slice(0, 12)         // 到目标的真实逐包 RTT 样本(光谱小点)
+        p.rounds = (info?.rounds || []).slice(-40)           // 到目标的真实逐包 RTT 样本(光谱小点)
+        trace = { target: trace.target, probes: [...trace.probes] }
+      },
+      onUpdate(id, hops, rounds) {                           // 无尽 ping 的后续轮: 刷新逐跳 + 累加该轮样本
+        const p = trace.probes.find(x => x.id === id); if (!p) return
+        if (hops && hops.length) p.hops = hops
+        p.status = 'done'
+        if (rounds && rounds.length) p.rounds = [...(p.rounds || []), ...rounds].slice(-40)
         trace = { target: trace.target, probes: [...trace.probes] }
       },
       onDone() { running = false },

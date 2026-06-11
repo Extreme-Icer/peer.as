@@ -36,7 +36,7 @@ async function duckdbResolve(ip) {
 // ── 数据源 2: NextTrace API v4 GeoIP(逐 IP 精确经纬度, 需 token)──────────────
 const NT_ENDPOINT = 'https://api.nxtrace.org/v4/ipGeo'
 let ntToken = ''
-export function setGeoToken(tk) { tk = tk || ''; if (tk !== ntToken) { ntToken = tk; cache.clear() } }
+export function setGeoToken(tk) { tk = (tk || '').trim(); if (tk !== ntToken) { ntToken = tk; cache.clear() } }
 export function getGeoToken() { return ntToken }
 
 // 单次 NextTrace 查询; 无 token / 非 2xx / 超时 / 无坐标 -> null(由 nexttraceResolve 回退 duckdb)。

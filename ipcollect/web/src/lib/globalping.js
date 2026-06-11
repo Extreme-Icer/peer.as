@@ -6,10 +6,11 @@
 //   onInit({ target, probes })   probes:[{id,color,colorHex,city,cc,country,network,asn,lat,lon}]
 //   onHop(id, hop)               逐跳追加 hop:{idx,ip,asn,name,cc,city,lat,lon,rtt,loss,isTarget}
 //   onProbeDone(id, { rounds })  该探测点完成; rounds=到目标的逐包 RTT 样本(光谱小点)
-//   onDone()                     全部完成
+//   onUpdate(id, hops, rounds)   无尽 ping 的后续轮: 整条刷新 + 累加该轮样本
+//   onDone()                     全部完成(非无尽)
 //   onError(err)                 发起失败(配额/网络/校验)
-// 只创建 1 个 measurement, 反复 GET 同一 id 直到 finished(含无尽 ping: 单次发满 16 包流式回),
-// 绝不循环重建 measurement —— 避免快速耗尽 IP 配额。
+// 普通: 建 1 个 measurement, 反复 GET 同一 id 直到 finished。
+// 无尽 ping: 每轮 finish 后用「首轮 id」当 locations 再发一轮(复用同批探测点), 直到 cancel。
 //
 // 每一跳 IP 经 geo-resolve.resolveGeo 富集 cc/city/坐标(异步; 默认 DuckDB+质心, 可换在线 geoip)。
 
@@ -177,18 +178,18 @@ function roundsOf(res, type) {
 // ── 流式跟踪(POST + 轮询)─────────────────────────────────────────────────────
 const POLL_MS = 500
 export function streamTrace(target, locations, handlers = {}, opts = {}) {
-  const { onInit, onHop, onProbeDone, onDone, onError } = handlers
+  const { onInit, onHop, onProbeDone, onUpdate, onDone, onError } = handlers
   let cancelled = false, timer = null
   let inited = false
-  const sent = []     // 每个 probe 已下发的 hop 数 + 是否已 onProbeDone
+  const sent = []     // 每个 probe 已下发的 hop 数 + 本轮是否已完结回调
   let targetIp = null
-
+  let firstId = null  // 首轮 measurement id; 无尽 ping 后续轮把它当 locations(字符串)复用同一批探测点
+  const infinite = !!opts.infinite && opts.type === 'ping'   // 无尽仅 ping
   const schedule = (fn, ms) => { timer = setTimeout(() => { if (!cancelled) fn() }, ms) }
 
-  // 摄取一次 API 快照: 首次建骨架(onInit), 之后逐跳追加 / 完成回调。
-  // 只创建 1 个 measurement, 反复 GET 同一 id(inProgressUpdates 流式回数据)直到 finished ——
-  // 不重建 measurement(避免快速耗尽 IP 配额, 匿名仅 250 测试/小时·每探测点计 1)。
-  async function ingest(d) {
+  // 摄取一次 API 快照: 首轮建骨架(onInit)+ 逐跳追加(onHop)+ 完成(onProbeDone);
+  // 无尽后续轮(isRerun): 每个 probe 完结时整条刷新 + 累加该轮样本(onUpdate)。
+  async function ingest(d, isRerun) {
     const results = d.results || []
     if (!results.length) return
     if (!inited) {
@@ -210,29 +211,37 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
       const hops = await buildHops(res, opts.type, targetIp)
       const id = 'p' + i
       const s = sent[i] || (sent[i] = { n: 0, done: false })
+      const fin = st === 'finished' || st === 'failed'     // failed=探测点离线/出错, 也算完结(否则卡片一直转圈)
+      if (isRerun) { if (fin && !s.done) { s.done = true; onUpdate && onUpdate(id, hops, roundsOf(res, opts.type)) }; continue }
       for (let k = s.n; k < hops.length; k++) onHop && onHop(id, hops[k])
       s.n = hops.length
-      // finished 或 failed(探测点离线/出错)都算完结, 否则该卡片会一直转圈。
-      if ((st === 'finished' || st === 'failed') && !s.done) { s.done = true; onProbeDone && onProbeDone(id, { rounds: roundsOf(res, opts.type) }) }
+      if (fin && !s.done) { s.done = true; onProbeDone && onProbeDone(id, { rounds: roundsOf(res, opts.type) }) }
     }
   }
 
-  ;(async () => {
+  // 跑一轮 measurement。首轮 roundLoc=locations 数组(选探测点); 无尽后续轮 roundLoc=firstId 串(复用同批探测点)。
+  async function runRound(roundLoc, isRerun) {
+    if (isRerun) for (const s of sent) if (s) s.done = false   // 重置本轮完结标记
     let mid
-    try { const m = await createMeasurement(buildBody(target, locations, opts)); mid = m.id }
+    try { const m = await createMeasurement(buildBody(target, roundLoc, opts)); mid = m.id }
     catch (e) { onError && onError(e); return }
+    if (!firstId) firstId = mid
     const poll = async () => {
       if (cancelled) return
       let d
       try { d = await getMeasurement(mid) } catch { schedule(poll, POLL_MS * 2); return }
       if (cancelled) return
-      try { await ingest(d) } catch { /* 单次摄取失败不杀轮询 */ }
+      try { await ingest(d, isRerun) } catch { /* 单次摄取失败不杀轮询 */ }
       if (cancelled) return
-      if (d.status === 'finished') onDone && onDone()
-      else schedule(poll, POLL_MS)
+      if (d.status === 'finished') {
+        // 无尽 ping: 本轮 finish 后, 用首轮 id 当 locations 再发一轮(复用同批探测点), 直到 cancel。
+        if (infinite) schedule(() => runRound(firstId, true), 400)
+        else onDone && onDone()
+      } else schedule(poll, POLL_MS)
     }
     poll()
-  })()
+  }
 
+  runRound(locations, false)
   return { cancel() { cancelled = true; clearTimeout(timer) } }
 }

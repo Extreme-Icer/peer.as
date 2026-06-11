@@ -245,7 +245,6 @@
       allLocations = locs; locLoading = false
       if (!picks.length) applyDefaultSelection(locs)
     }).catch(e => { locLoading = false; locError = e?.message || 'load failed' })
-    inputEl?.focus()
     return () => { ctl?.cancel(); window.removeEventListener('pointermove', onGesture); window.removeEventListener('pointerup', endGesture) }
   })
 
@@ -474,6 +473,7 @@
               {/each}
             </div>
           {/if}
+          <div class="poweredby">Powered by <a href="https://globalping.io" target="_blank" rel="noopener noreferrer">Globalping</a></div>
         </div>
       {/if}
 
@@ -743,6 +743,9 @@
 
   /* 监测点选择(搜索框 + 网格) */
   .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }
+  .poweredby { text-align: center; padding-top: 2px; font: 500 10.5px var(--sans); color: var(--muted); opacity: .8; }
+  .poweredby a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted color-mix(in srgb, var(--muted) 50%, transparent); }
+  .poweredby a:hover { color: var(--accent); border-bottom-color: var(--accent); }
   .psrow { display: flex; align-items: center; gap: 6px; }
   .psrow .probesearch { flex: 1 1 auto; min-width: 0; }
   .psclear { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: var(--alt); border: 1px solid var(--line); color: var(--muted); cursor: pointer; transition: all .12s; }

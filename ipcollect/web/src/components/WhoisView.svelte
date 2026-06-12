@@ -192,7 +192,7 @@
      状态互切时不换 display、不换 justify → 收起/摊开/查询全靠子项(字标/卡堆/卡片)的高度与 transform
      连续过渡, flex 每帧重新居中, 不会瞬移跳顶。safe = 内容超高时自动退回顶对齐, 不裁顶部、仍可滚动。 */
   .scroll {
-    position: relative; z-index: 1; flex: 1; overflow: auto; padding: 28px 22px 48px;
+    position: relative; z-index: 1; flex: 1; overflow: auto; padding: 28px 22px 0px;
     display: flex; flex-direction: column; align-items: center; justify-content: safe center;
   }
   .col { max-width: 820px; margin: 0 auto; width: 100%; }

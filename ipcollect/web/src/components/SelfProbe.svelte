@@ -415,7 +415,7 @@
   .dealbtn :global(svg) { width: 14px; transition: transform .45s cubic-bezier(.16,1,.3,1); }
   .dealbtn.up :global(svg) { transform: rotate(180deg); }
   /* 移动端首页「摊开」按钮(仅图标, 用 IP 探测同款图标): 桌面隐藏, 仅窄屏显示。 */
-  .mdeal { display: none; }
+  .mdeal { visibility: hidden; display: flex; }
   .dealbtn.down { width: 54px; height: 34px; }
   .dealbtn.down :global(svg) { width: 15px; }
 
@@ -428,7 +428,7 @@
     .ip { font-size: 15px; }
     .loc { padding-right: 8px; }
     .dealrow { margin-top: 10px; }
-    .mdeal { display: flex; }                       /* 移动端显示「摊开」按钮 */
+    .mdeal { visibility: visible; }                       /* 移动端显示「摊开」按钮 */
     .sp:not(.expanded) .stage { display: none; }    /* 移动端首页: 卡堆不默认显示, 只留按钮 */
   }
 </style>

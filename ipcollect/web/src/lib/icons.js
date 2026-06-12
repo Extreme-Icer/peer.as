@@ -8,6 +8,7 @@ export {
   faRoute as iPath,
   faServer as iOrigin,
   faLocationCrosshairs as iSubnet,
+  faCrosshairs as iRecenter,
   faListOl as iLimit,
   faEyeSlash as iLowvis,
   faEye as iVisible,

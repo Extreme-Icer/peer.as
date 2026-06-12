@@ -5,7 +5,7 @@
   import { createTraceGlobe } from '../lib/traceglobe.js'
   import { ccLatLon } from '../lib/geo.js'
 
-  let { model = null, locations = null, focusId = null, hold = false, onpick = null, onhover = null, onlochover = null } = $props()
+  let { model = null, locations = null, focusId = null, hold = false, mode2d = false, onpick = null, onhover = null, onlochover = null, onengine = null } = $props()
 
   let canvasEl, hitEl, tipEl, ctrl
   // 初始视角定位到用户所在国家/地区: Cloudflare trace(cf-ns.com)取 loc=国家码 → 国家质心经纬度。
@@ -16,9 +16,10 @@
     }).catch(() => { /* 定位失败: 保持默认初始朝向 */ })
   }
   onMount(() => {
-    ctrl = createTraceGlobe(canvasEl, { tip: tipEl, hit: hitEl, onpick, onhover, onlochover })
+    ctrl = createTraceGlobe(canvasEl, { tip: tipEl, hit: hitEl, mode2d, onpick, onhover, onlochover })
     if (locations) ctrl.setLocations(locations)   // 初帧即铺光点(不等首次 reactive)
     if (model) ctrl.setData(model)
+    onengine && onengine(ctrl)                    // 把引擎句柄交给父组件(供复位按钮调用)
     locateHome()
     return () => ctrl?.destroy()
   })
@@ -26,6 +27,7 @@
   $effect(() => { if (locations) ctrl?.setLocations(locations) })
   $effect(() => { ctrl?.setHold(hold) })
   $effect(() => { ctrl?.focus(focusId) })
+  $effect(() => { ctrl?.setMode(mode2d) })
 </script>
 
 <div class="tglobe">

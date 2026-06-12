@@ -9,7 +9,7 @@
   import { S } from '../lib/store.svelte.js'
   import { t } from '../lib/i18n.js'
   import { loadInsightFor } from '../lib/queries.js'
-  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc } from '../lib/icons.js'
+  import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
   import { setGeoSource, setGeoToken } from '../lib/geo-resolve.js'
@@ -34,6 +34,8 @@
   })
   let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源(默认 NextTrace, 无 token 回退本项目)
   let geoToken = $state(_set.geoToken ?? '')              // NextTrace API token
+  let map2d = $state(_set.map2d ?? false)                 // 2D(墨卡托)/3D 切换(右下角, 粒子形变转场)
+  let globeCtrl = null                                    // TraceGlobe 引擎句柄(复位按钮用)
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
   // 各类型可用项(对齐 globalping spec): ping 协议仅 ICMP/TCP; trace/mtr 加 UDP。
   // port 仅在该协议会用到端口时可填(ping/trace 仅 TCP; mtr 为 TCP/UDP)。packets 仅 ping/mtr。无尽仅 ping。
@@ -47,7 +49,7 @@
   $effect(() => { setGeoSource(geoSource) })
   $effect(() => { setGeoToken(geoToken) })
   $effect(() => {
-    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, geoToken }
+    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, geoToken, map2d }
     try { localStorage.setItem(SETKEY, JSON.stringify(data)) } catch { /* 隐私模式忽略 */ }
   })
 
@@ -88,6 +90,22 @@
     for (const p of picks) if (p.id) m[p.id] = (m[p.id] || 0) + (p.count || 1)
     return m
   })
+
+  // 地图 popup 上对某地点(城市)的快捷选择 —— 行为对齐 probewrap 里的 chip:
+  //   + 增一个(无则新建该城市 pick), − 减一个(到 0 移除), × 清空该地点全部选择(city + 其网络)。
+  //   任意添加都展开 probewrap, 让用户看到刚加进去的条件。
+  function locCityCount(id) { const p = picks.find(x => x.key === 'city:' + id); return p ? (p.count || 1) : 0 }
+  function locInc(L) {
+    const key = 'city:' + L.id, p = picks.find(x => x.key === key)
+    if (p) setPickCount(key, (p.count || 1) + 1); else addPick(cityPick(LOCBY[L.id] || L))
+    probesOpen = true
+  }
+  function locDec(L) {
+    const key = 'city:' + L.id, p = picks.find(x => x.key === key); if (!p) return
+    if ((p.count || 1) <= 1) removePick(key); else setPickCount(key, (p.count || 1) - 1)
+  }
+  function locClear(id) { picks = picks.filter(p => p.id !== id) }                 // 清空该地点全部(city + net)
+  function locAddNet(L, nw) { addPick(netPick(LOCBY[L.id] || L, nw)); probesOpen = true }
 
   // ── 筛选器 combobox(行为对齐 globalping 首页): 输入即返回匹配的城市/国家/网络建议;
   //    点建议 → 追加到已选; 也可纯手打 magic, 经 submit/回车 as-is 追加。无选中态, 纯 append。──
@@ -321,7 +339,16 @@
   <!-- 地球(占满视图、偏右); 在球上按下也收起历史下拉(拖地球时不留残影) -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="globe-stage" class:in={shown} class:booting onpointerdown={() => { dropOpen = false; if (document.activeElement && document.activeElement.blur) document.activeElement.blur() }}>
-    <TraceGlobe model={trace} locations={locInfo} {focusId} hold={!!hoverLoc} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} />
+    <TraceGlobe model={trace} locations={locInfo} {focusId} hold={!!hoverLoc} mode2d={map2d} onpick={pick} onlochover={onLocHover} onhover={(id) => (focusId = id)} onengine={(c) => (globeCtrl = c)} />
+  </div>
+
+  <!-- 右下角控制: 复位 + 2D/3D 投影切换(粒子形变转场) -->
+  <div class="projctl" class:in={shown}>
+    <button class="reset" onclick={() => globeCtrl?.reset()} title={t('rt_recenter')} aria-label={t('rt_recenter')}><Fa icon={iRecenter} /></button>
+    <div class="projsel" role="group" aria-label="3D / 2D">
+      <button class:on={!map2d} onclick={() => (map2d = false)} aria-pressed={!map2d} title={t('rt_proj3d')}>3D</button>
+      <button class:on={map2d} onclick={() => (map2d = true)} aria-pressed={map2d} title={t('rt_proj2d')}>2D</button>
+    </div>
   </div>
 
   <MobileBar />
@@ -591,15 +618,29 @@
          transition:fade={{ duration: 120 }}
          onmouseenter={() => { popPinned = true }}
          onmouseleave={() => { popPinned = false; hoverLoc = null }}>
-      <button class="lp-head lp-add" onclick={() => addPick(cityPick(LOCBY[hoverLoc.id] || hoverLoc))} title={t('rt_add')}>
+      <!-- 地点头: 点 + 加一个(无则新建); 已选则 −/数量/+ 步进; × 清空该地点全部选择(城市 + 其网络) -->
+      <div class="lp-head">
         <span class="lp-city">{hoverLoc.city}<i class="lp-cc">{hoverLoc.cc}</i></span>
-        <span class="lp-cnt"><Fa icon={iPlus} />{hoverLoc.count}</span>
-      </button>
+        {#if locCityCount(hoverLoc.id) > 0}
+          <span class="lp-steps">
+            <button class="lp-pm" onclick={() => locDec(hoverLoc)} aria-label="−">−</button>
+            <span class="lp-n">{locCityCount(hoverLoc.id)}</span>
+            <button class="lp-pm" onclick={() => locInc(hoverLoc)} aria-label="+">+</button>
+          </span>
+        {:else}
+          <button class="lp-addbtn" onclick={() => locInc(hoverLoc)} title={t('rt_add')}>
+            <Fa icon={iPlus} /><span class="lp-av">{hoverLoc.count}</span>
+          </button>
+        {/if}
+        {#if cityCount[hoverLoc.id]}
+          <button class="lp-clr" onclick={() => locClear(hoverLoc.id)} title={t('rt_clear_sel')} aria-label={t('rt_clear_sel')}><Fa icon={iClose} /></button>
+        {/if}
+      </div>
       <!-- 指定网络(点击即追加 magic "城市+ASxxx", 精确从该供应商发起) -->
       {#if hoverLoc.networks?.length}
         <div class="lp-list">
           {#each hoverLoc.networks as nw (nw.asn)}
-            <button class="lp-item" onclick={() => addPick(netPick(LOCBY[hoverLoc.id] || hoverLoc, nw))} title={nw.name}>
+            <button class="lp-item" onclick={() => locAddNet(hoverLoc, nw)} title={nw.name}>
               <span class="lp-net">{nw.name}</span>
               <span class="lp-asn">AS{nw.asn}<i class="lp-x">×{nw.n}</i></span>
             </button>
@@ -855,14 +896,24 @@
     backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2);
   }
   .locpop.below { transform: translate(-50%, 15px); }    /* 光点靠顶时改到下方 */
-  /* popup 头部 = 「追加该城市」按钮 */
-  .lp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--line2); }
-  .lp-add { width: 100%; background: transparent; border: 0; cursor: pointer; transition: background .1s; }
-  .lp-add:hover { background: var(--alt); }
-  .lp-city { font: 700 13px var(--sans); color: var(--fg); display: inline-flex; align-items: center; gap: 6px; }
-  .lp-cc { font: 600 10px var(--mono); letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
-  .lp-cnt { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font: 700 12px var(--mono); color: var(--accent); }
-  .lp-cnt :global(svg) { width: 9px; }
+  /* popup 头部 = 地点选择控件(−/数量/+ 步进 或 +添加; × 清空该地点全部选择) */
+  .lp-head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-bottom: 1px solid var(--line2); }
+  .lp-city { flex: 1 1 auto; min-width: 0; font: 700 13px var(--sans); color: var(--fg); display: inline-flex; align-items: center; gap: 6px; }
+  .lp-cc { flex: 0 0 auto; font: 600 10px var(--mono); letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; font-style: normal; }
+  /* 已选: −/数量/+ 步进(同 probewrap chip2) */
+  .lp-steps { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; }
+  .lp-pm { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; border: 0; background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); font: 700 14px var(--sans); line-height: 1; cursor: pointer; transition: background .1s; }
+  .lp-pm:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .lp-n { min-width: 14px; text-align: center; font: 700 12px var(--mono); color: var(--accent); }
+  /* 未选: + 添加(右侧小数字 = 该地点可用探测点数) */
+  .lp-addbtn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 7px; background: var(--accent); border: 0; color: var(--accent-fg); cursor: pointer; font: 700 11px var(--mono); transition: filter .1s; }
+  .lp-addbtn:hover { filter: brightness(1.08); }
+  .lp-addbtn :global(svg) { width: 9px; }
+  .lp-av { font: 700 11px var(--mono); }
+  /* 清空该地点全部选择 */
+  .lp-clr { flex: 0 0 auto; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; border: 0; background: transparent; color: var(--muted); cursor: pointer; transition: color .1s, background .1s; }
+  .lp-clr:hover { color: #ef4444; background: color-mix(in srgb, #ef4444 14%, transparent); }
+  .lp-clr :global(svg) { width: 9px; }
   .lp-list { max-height: 248px; overflow: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; }
   .lp-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; background: transparent; border: 0; cursor: pointer; text-align: left; transition: background .1s; }
   .lp-item:hover { background: var(--alt); }
@@ -933,6 +984,36 @@
   .pstats span.bad { color: #ef4444; border-color: color-mix(in srgb, #ef4444 40%, var(--line)); }
   .pstats span.bad i { color: color-mix(in srgb, #ef4444 70%, var(--muted)); }
   .raw { margin: 0; padding: 9px 11px; border-radius: 8px; background: var(--inbg); border: 1px solid var(--line); color: var(--fg); font: 500 11.5px var(--mono); line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; max-height: 220px; overflow-y: auto; }
+
+  /* 右下角控制组: 复位 + 2D/3D 投影切换。玻璃小分段, 与 HUD 同语言 */
+  .projctl {
+    position: absolute; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 4;
+    display: flex; align-items: center; gap: 8px;
+    opacity: 0; transition: opacity .7s ease .3s;
+  }
+  .projctl.in { opacity: 1; }
+  .projctl > .reset, .projsel {
+    display: flex; gap: 2px; padding: 3px; border-radius: 11px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    box-shadow: 0 18px 44px -26px rgba(0,0,0,.65);
+  }
+  /* 复位按钮: 单独的玻璃方块 */
+  .projctl > .reset {
+    width: 36px; height: 36px; align-items: center; justify-content: center; padding: 0;
+    cursor: pointer; color: var(--muted); transition: background .14s, color .14s;
+  }
+  .projctl > .reset:hover { color: var(--accent); background: color-mix(in srgb, var(--accent-dim) 70%, var(--panel)); }
+  .projctl > .reset:active { transform: translateY(1px); }
+  .projctl > .reset :global(svg) { width: 14px; }
+  .projsel button {
+    width: 38px; height: 30px; border: 0; border-radius: 8px; cursor: pointer;
+    background: transparent; color: var(--muted); font: 800 11px var(--mono); letter-spacing: -.02em;
+    transition: background .14s, color .14s;
+  }
+  .projsel button:hover { color: var(--fg); }
+  .projsel button.on { background: var(--accent-dim); color: var(--accent); }
 
   /* 窄屏: 浮窗背景更实, 地球退作背景 */
   @container (max-width: 900px) {

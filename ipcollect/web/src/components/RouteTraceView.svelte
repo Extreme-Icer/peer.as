@@ -12,7 +12,7 @@
   import { iPlay, iStop, iClose, iChevD, iChevR, iProbe, iClock, iGear, iInfinity, iSearch, iClear, iPlus, iCity, iCountry, iNet, iLoc, iRecenter } from '../lib/icons.js'
   import { streamTrace } from '../lib/globalping.js'
   import { loadProbeLocations } from '../lib/trace-probes.js'
-  import { setGeoSource, setGeoToken } from '../lib/geo-resolve.js'
+  import { setGeoSource } from '../lib/geo-resolve.js'
   import MobileBar from './MobileBar.svelte'
   import TraceGlobe from './TraceGlobe.svelte'
 
@@ -32,8 +32,7 @@
     type: _set.type ?? 'mtr', infinite: _set.infinite ?? false, family: _set.family ?? 'auto',
     proto: _set.proto ?? 'icmp', port: _set.port ?? 443, packets: _set.packets ?? 3,
   })
-  let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源(默认 NextTrace, 无 token 回退本项目)
-  let geoToken = $state(_set.geoToken ?? '')              // NextTrace API token
+  let geoSource = $state(_set.geoSource ?? 'nexttrace')   // GeoIP 数据源: NextTrace(经 worker, 免 token) / 内置
   let map2d = $state(_set.map2d ?? false)                 // 2D(墨卡托)/3D 切换(右下角, 粒子形变转场)
   let globeCtrl = null                                    // TraceGlobe 引擎句柄(复位按钮用)
   let famLabel = $derived(mtr.family === '4' ? 'IPv4' : mtr.family === '6' ? 'IPv6' : 'AUTO')
@@ -47,9 +46,8 @@
   $effect(() => { if (mtr.type !== 'ping' && mtr.infinite) mtr.infinite = false })
   // 应用 + 自动保存全部设置(MTR 选项 + GeoIP 源/token)
   $effect(() => { setGeoSource(geoSource) })
-  $effect(() => { setGeoToken(geoToken) })
   $effect(() => {
-    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, geoToken, map2d }
+    const data = { type: mtr.type, infinite: mtr.infinite, family: mtr.family, proto: mtr.proto, port: mtr.port, packets: mtr.packets, geoSource, map2d }
     try { localStorage.setItem(SETKEY, JSON.stringify(data)) } catch { /* 隐私模式忽略 */ }
   })
 
@@ -270,7 +268,7 @@
     const target = (tg ?? box).trim()
     if (!target) return
     if (!totalProbes) { errMsg = t('rt_pick_probes'); probesOpen = true; return }
-    setGeoSource(geoSource); setGeoToken(geoToken)   // 发起前确保 GeoIP 源/token 已生效(防 HMR/时序导致未应用 → 误回退)
+    setGeoSource(geoSource)   // 发起前确保 GeoIP 源已生效(防 HMR/时序导致未应用)
     box = target; ranFor = target; addHistory(target)
     ctl?.cancel()
     dropOpen = false; running = true; focusId = null; errMsg = ''
@@ -426,17 +424,6 @@
                 <option value="duckdb">{t('rt_source_builtin')}</option>
               </select>
             </label>
-            {#if geoSource === 'nexttrace'}
-              <label class="field tokenf">
-                <span>{t('rt_token')}</span>
-                <input type="password" bind:value={geoToken} placeholder={t('rt_token_ph')}
-                       spellcheck="false" autocapitalize="off" autocorrect="off" autocomplete="off"
-                       data-1p-ignore data-lpignore="true" />
-              </label>
-              {#if !geoToken.trim()}
-                <div class="tokenhint">{t('rt_token_need')}<a href="https://api.nxtrace.org/v4/api-tokens" target="_blank" rel="noopener noreferrer">{t('rt_token_get')}</a></div>
-              {/if}
-            {/if}
           </div>
         {/if}
       </div>
@@ -799,12 +786,6 @@
     transition: border-color .12s;
   }
   .srcsel:hover, .srcsel:focus-visible { border-color: var(--accent); }
-  .tokenf input { width: 140px; min-width: 0; font-size: 11.5px; }
-  .tokenf input::placeholder { color: var(--muted); opacity: .7; font-family: var(--sans); }
-  /* 选了 NextTrace 但没填 token 的提示 */
-  .tokenhint { flex: 1 1 100%; font: 500 11.5px var(--sans); color: var(--muted); line-height: 1.5; }
-  .tokenhint a { color: var(--link); text-decoration: none; }
-  .tokenhint a:hover { text-decoration: underline; }
 
   /* 监测点选择(搜索框 + 网格) */
   .probewrap { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; animation: drop .18s ease; }

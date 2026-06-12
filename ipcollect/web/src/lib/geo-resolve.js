@@ -3,13 +3,14 @@
 // 内置数据源(setGeoSource 切换, 默认 nexttrace):
 //   · 'duckdb'    —— 本项目自有数据: cc/city/asn/prefix 来自 DuckDB geo 数据集(queries.geoEnrich,
 //                    异步), 坐标用「真实探测点城市坐标表」(trace-probes 注入)→ 国家质心 CC_CENTROID。
-//                    坐标只到城市/国家级(DuckDB 无逐 IP 经纬)。
-//   · 'nexttrace' —— NextTrace API v4 GeoIP(api.nxtrace.org/v4/ipGeo, 需 token), 返回逐 IP 精确
-//                    经纬度 + 国家/省/城市/ASN/前缀。无 token / 查询失败 / 无坐标时回退 duckdb,
-//                    保证地球始终可画。token 用 setGeoToken 注入(前端 settings 保存)。
+//                    坐标只到城市/国家级(DuckDB 无逐 IP 经纬)。逐 IP 经 resolveGeo 客户端解析。
+//   · 'nexttrace' —— 逐 IP 精确经纬度, 但**不在客户端直接查 NextTrace**(免 token、免限流):改由
+//                    peer-as-nexttrace worker 拿 globalping measureId 取回 measurement + 用无限额
+//                    token 批量加 geo 返回。故此源下 geo 随 measurement 一起到达(d.geo[ip]),
+//                    `globalping.getMeasurement` 经 measurementUrl() 走 worker, buildHops 直接读 d.geo,
+//                    不调 resolveGeo。仅当 worker 没给某 IP geo 时, 该跳无坐标(不落地球)。
 //
-// setGeoResolver(fn) 仍可整体换成任意自定义解析器(覆盖上面的数据源选择)。接口形状不变,
-// 上层(globalping.streamTrace 富集每跳)一行不用改。
+// setGeoResolver(fn) 仍可整体换成任意自定义解析器(覆盖 duckdb 源)。
 
 import { ccLatLon } from './geo.js'
 import { geoEnrich } from './queries.js'
@@ -35,87 +36,26 @@ async function duckdbResolve(ip) {
   return { ip, cc, city: m.city || '', province: m.province || '', asn: m.asn ?? null, prefix: m.prefix ?? null, lat, lon, source, place: placeLabel(m.province, m.city, cc) || '' }
 }
 
-// ── 数据源 2: NextTrace API v4 GeoIP(逐 IP 精确经纬度, 需 token)──────────────
-const NT_ENDPOINT = 'https://api.nxtrace.org/v4/ipGeo'
-let ntToken = ''
-export function setGeoToken(tk) { tk = (tk || '').trim(); if (tk !== ntToken) { ntToken = tk; cache.clear() } }
-export function getGeoToken() { return ntToken }
-
-// 一条 NextTrace IPGeoData(单点或批量 results[].data)→ 统一 GeoResult。无坐标 -> null。
-function ntGeoResult(ip, j) {
-  if (!j) return null
-  const lat = typeof j.lat === 'number' ? j.lat : parseFloat(j.lat)
-  const lon = typeof j.lng === 'number' ? j.lng : parseFloat(j.lng)
-  if (!isFinite(lat) || !isFinite(lon)) return null
-  const asn = j.asnumber ? parseInt(String(j.asnumber).replace(/^AS/i, ''), 10) : null
-  // 地名按当前界面语言取(NextTrace 同时返回中文与 *_en 英文); zh 优先中文, 否则英文。
-  const zh = S?.lang === 'zh'
-  const pick = (z, e) => (zh ? (z || e) : (e || z)) || ''
-  const city = pick(j.city, j.city_en), prov = pick(j.prov, j.prov_en), country = pick(j.country, j.country_en)
-  const parts = []
-  for (const x of [city, prov, country]) { const v = (x || '').trim(); if (v && !parts.includes(v)) parts.push(v) }
-  return {
-    ip, cc: j.country_code || '', city: city || prov || country, province: prov || '',
-    asn: isFinite(asn) ? asn : null, prefix: j.prefix || null,
-    lat, lon, source: 'nexttrace', place: parts.join(' · '),
-  }
+// ── 数据源 2: NextTrace(经 peer-as-nexttrace worker, 免 token)─────────────────
+// 客户端不直接查 NextTrace; geo 由 worker 随 measurement 一起返回(见文件头 + worker 源码)。
+// measurementUrl(id): nexttrace 源 → 走 worker(?id=&lang=, 响应含 d.geo); duckdb 源 → 返回 null
+// (调用方直连 globalping, geo 由客户端 resolveGeo 解析)。
+const GEO_WORKER = 'https://peer-as-nexttrace.archeb.workers.dev/'
+export function measurementUrl(id) {
+  if (activeSource !== 'nexttrace') return null
+  return GEO_WORKER + '?id=' + encodeURIComponent(id) + '&lang=' + (S?.lang === 'zh' ? 'zh' : 'en')
 }
 
-// 单次 NextTrace 查询; 无 token / 非 2xx / 超时 / 无坐标 -> null(由 nexttraceResolve 回退 duckdb)。
-async function nexttraceLookup(ip) {
-  if (!ntToken) return null
-  const c = new AbortController(); const tm = setTimeout(() => c.abort(), 6000)
-  try {
-    const r = await fetch(NT_ENDPOINT + '?ip=' + encodeURIComponent(ip),
-      { headers: { 'X-NextTrace-Token': ntToken, Accept: 'application/json' }, signal: c.signal })
-    if (!r.ok) return null
-    return ntGeoResult(ip, await r.json())
-  } catch { return null } finally { clearTimeout(tm) }
-}
-async function nexttraceResolve(ip) {
-  return (await nexttraceLookup(ip)) || duckdbResolve(ip)   // 无 token / 失败 / 无坐标: 回退本项目数据
-}
-
-// ── 批量查询: POST /v4/ipGeo/batch(一次最多 64 个去重 IP, 顺序对应)──────────────
-const NT_BATCH_ENDPOINT = 'https://api.nxtrace.org/v4/ipGeo/batch'
-// 一批 IP -> Map(ip -> GeoResult|null)。无 token / 失败时返回空 Map(各 IP 回退 duckdb)。
-async function nexttraceBatch(ips) {
-  const out = new Map()
-  if (!ntToken || !ips.length) return out
-  const c = new AbortController(); const tm = setTimeout(() => c.abort(), 8000)
-  try {
-    const r = await fetch(NT_BATCH_ENDPOINT, {
-      method: 'POST',
-      headers: { 'X-NextTrace-Token': ntToken, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ ips }), signal: c.signal,
-    })
-    if (!r.ok) return out
-    const j = await r.json()
-    for (const it of (j.results || [])) {
-      if (it && it.ok && it.data) { const g = ntGeoResult(it.ip, it.data); if (g) out.set(it.ip, g) }
-    }
-    return out
-  } catch { return out } finally { clearTimeout(tm) }
-}
-
-// 批量预热缓存: 把一组 IP 一次性查回, 写进解析缓存(同 IP 后续 resolveGeo 直接命中)。
-// 仅 nexttrace 源 + 有 token 时走批量端点(每 64 一组); 否则逐个走常规 resolveGeo(仍各自缓存)。
+// 批量预热缓存(仅 duckdb 源, 客户端逐 IP 解析时并行填充; nexttrace 源 geo 随结果到达, 无需预热)。
 export function resolveGeoBatch(ips) {
+  if (activeSource === 'nexttrace') return   // geo 随 measurement 返回, 不在此预热
   const uniq = [...new Set((ips || []).map(s => (s || '').trim()))].filter(s => s && isIpLiteral(s) && !cache.has(s))
-  if (!uniq.length) return
-  if (customResolver || activeSource !== 'nexttrace' || !ntToken) { for (const ip of uniq) resolveGeo(ip); return }
-  for (let i = 0; i < uniq.length; i += 64) {
-    const chunk = uniq.slice(i, i + 64)
-    const batch = nexttraceBatch(chunk)   // 一条批量请求, 所有 chunk 内 IP 共享
-    for (const ip of chunk) {
-      const p = batch.then(m => m.get(ip) || duckdbResolve(ip)).catch(() => duckdbResolve(ip))
-      cache.set(ip, p)                    // 同步写缓存: 并发 resolveGeo 复用同一批量结果, 不重复请求
-    }
-  }
+  for (const ip of uniq) resolveGeo(ip)
 }
 
 // ── 数据源注册 + 选择 ─────────────────────────────────────────────────────────
-const SOURCES = { duckdb: duckdbResolve, nexttrace: nexttraceResolve }
+// nexttrace 源的逐 IP 解析理论上不会被调用(geo 随 measurement 到达); 万一被调到, 退化为 duckdb。
+const SOURCES = { duckdb: duckdbResolve, nexttrace: duckdbResolve }
 export function geoSources() { return Object.keys(SOURCES) }
 let activeSource = 'nexttrace'   // 默认 NextTrace(无 token 自动回退 duckdb)
 export function setGeoSource(name) { if (SOURCES[name] && name !== activeSource) { activeSource = name; cache.clear() } }

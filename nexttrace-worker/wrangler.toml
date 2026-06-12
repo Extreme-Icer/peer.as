@@ -1,0 +1,15 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "peer-as-nexttrace"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+
+# NextTrace geo 反代 for peer.as 环球网测(trace 视图)。
+# 客户端用自己 IP POST 创建 globalping measurement(避免 worker IP 被 GP 限流);
+# 本 worker 只接受 measureId → GET 取回该 measurement → 给其中出现的公网跳 IP 附 NextTrace geo 返回。
+# 只认 measureId、不接受任意 IP 查询 → 不会被当成免费 geo 代理。
+#
+# 部署:
+#   cd nexttrace-worker && npx wrangler deploy
+# Token:在 CF 后台该 Worker 的 Settings → Variables and Secrets 里加一个 Secret:
+#   NEXTTRACE_TOKEN = <无限额 NextTrace token>   (代码经 env.NEXTTRACE_TOKEN 读取)
+#   故意不在本文件声明该变量 → wrangler deploy 不会覆盖后台配置。

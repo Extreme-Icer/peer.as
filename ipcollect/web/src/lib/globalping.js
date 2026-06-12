@@ -16,7 +16,7 @@
 // 每一跳 IP 经 geo-resolve.resolveGeo 富集 cc/city/坐标(异步; 默认 DuckDB+质心, 可换在线 geoip)。
 
 import { ccLabel, asnName } from './bgp.js'
-import { resolveGeo, resolveGeoBatch } from './geo-resolve.js'
+import { resolveGeo, resolveGeoBatch, measurementUrl } from './geo-resolve.js'
 
 const API = 'https://api.globalping.io/v1'
 
@@ -53,7 +53,14 @@ export async function createMeasurement(body) {
   }
   return r.json()   // { id, probesCount }
 }
+// 取回 measurement。nexttrace 源 → 经 peer-as-nexttrace worker(?id=, 响应在 d.geo 里带逐 IP geo,
+// 客户端无需 token / 不直连 NextTrace);duckdb 源 → 直连 globalping(无 d.geo, geo 由客户端解析)。
+// 创建(POST)始终客户端直发(用用户自己 IP, 避免 worker 出口被 globalping 限流)。
 async function getMeasurement(id) {
+  const wu = measurementUrl(id)
+  if (wu) {                                  // nexttrace 源: 优先 worker(带 geo)
+    try { const r = await fetch(wu); if (r.ok) return r.json() } catch { /* 降级直连 */ }
+  }                                          // worker 故障/未部署 → 降级直连 globalping(无 geo, 仍出结果)
   const r = await fetch(API + '/measurements/' + id, { headers: headers(false) })
   if (!r.ok) throw new Error('measurement HTTP ' + r.status)
   return r.json()
@@ -138,26 +145,29 @@ function hopRtt(h) {
 
 // 把一个 probe 结果的逐跳富集成模型 hops(异步 geo)。丢弃无地址(* * *)/无坐标的跳, 保证几何有效。
 // ping 无 hops -> 合成「到目标的一跳」。最后一条命中目标地址者标 isTarget。
-async function buildHops(res, type, targetIp) {
+// geo: 来自 worker 的 d.geo 映射({ip: GeoResult})则用它(nexttrace 源, 已含语言); 为 null 则
+// 客户端 resolveGeo 解析(duckdb 源)。私网在两种模式下都无 geo(worker 不返回 / 这里跳过)。
+async function buildHops(res, type, targetIp, geo) {
   const r = res.result || {}
   const tgtIp = r.resolvedAddress || targetIp
   const out = []
+  const geoOf = async ip => geo ? (geo[ip] || null) : (isPrivate(ip) ? null : await resolveGeo(ip))
   if (type === 'ping') {
     const rtt = hopRtt({ stats: r.stats, timings: r.timings })
-    const g = await resolveGeo(tgtIp)
+    const g = await geoOf(tgtIp)
     if (!badGeo(g)) out.push(mkHop(1, tgtIp, g, rtt, r.stats?.loss ?? 0, true, asnName(g.asn)))
     return out
   }
   const hops = r.hops || []
-  let idx = 0
   for (let i = 0; i < hops.length; i++) {
     const h = hops[i]
     const ip = h.resolvedAddress
-    if (!ip || isPrivate(ip)) continue                 // * * * 超时跳 / LAN·私网: 当作不存在, 连前后有地理的跳
-    const g = await resolveGeo(ip)
-    if (badGeo(g)) continue                             // 地区不明 / anycast / 0,0: 同样跳过(连前后)
-    const asn = (h.asn && h.asn.length ? h.asn[0] : null) ?? g.asn ?? 0
-    out.push(mkHop(++idx, ip, g, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn) || h.resolvedHostname || '', asn))
+    if (!ip) continue                                   // 空跳 * * *: 省略该行; 序号用真实 TTL(i+1), 故下一跳会留缺口
+    // 私网/LAN 与 地区不明/anycast/0,0: 仍列进详情(序号 / IP / ASN / 地名照常), 只是清掉坐标 → 不落地球。
+    const g = await geoOf(ip)
+    const asn = (h.asn && h.asn.length ? h.asn[0] : null) ?? (g && g.asn) ?? 0
+    const disp = (g && !badGeo(g)) ? g : (g ? { ...g, lat: null, lon: null } : null)
+    out.push(mkHop(i + 1, ip, disp, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn) || h.resolvedHostname || '', asn))
   }
   // 命中目标地址者标 target; 若都没命中, 把最后一跳当落地(不强标 target, 目标靶标仍由 onInit 的 target 画)
   const hit = out.find(o => o.ip === tgtIp)
@@ -165,9 +175,10 @@ async function buildHops(res, type, targetIp) {
   return out
 }
 function mkHop(idx, ip, g, rtt, loss, isTarget, name, asn) {
+  g = g || {}   // 私网 / 无效地理: 无 geo 对象, 仅保留 idx/ip/asn/rtt, 坐标置空(不落地球)
   return {
-    idx, ip, asn: asn ?? g.asn ?? 0, name: name || asnName(g.asn) || '',
-    cc: g.cc || '', city: g.city || '', lat: g.lat, lon: g.lon,
+    idx, ip: ip || null, asn: asn ?? g.asn ?? 0, name: name || asnName(g.asn) || '',
+    cc: g.cc || '', city: g.city || '', lat: g.lat ?? null, lon: g.lon ?? null,
     rtt: rtt == null ? null : rtt, loss: Math.round(loss || 0), isTarget: !!isTarget,
   }
 }
@@ -225,15 +236,18 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
   async function ingest(d, isRerun) {
     const results = d.results || []
     if (!results.length) return
-    // 批量预热 geo: 本快照里目标 + 各跳的全部 IP 一次性查回(走 NextTrace batch 端点), 后续逐个 resolveGeo 命中缓存。
+    // 批量预热 geo: 本快照里目标 + 各跳的公网 IP 一次性查回(走 NextTrace batch 端点), 后续逐个 resolveGeo 命中缓存。
+    // 排除私网/LAN(无 geo 意义) —— 与 buildHops 一致, 别把限流额度浪费在 10.x/192.168 等不会落地球的跳上。
+    const geo = d.geo || null              // worker(nexttrace 源)随结果返回的逐 IP geo; duckdb 源为 null
     const ips = []
+    const addIp = ip => { if (ip && !isPrivate(ip)) ips.push(ip) }
     const firstAddr = results.find(r => r.result?.resolvedAddress)?.result.resolvedAddress
     if (!targetIp) targetIp = firstAddr || target
-    if (firstAddr) ips.push(firstAddr)
-    for (const res of results) { const r = res.result || {}; if (r.resolvedAddress) ips.push(r.resolvedAddress); for (const h of (r.hops || [])) if (h.resolvedAddress) ips.push(h.resolvedAddress) }
-    resolveGeoBatch(ips)
+    addIp(firstAddr)
+    for (const res of results) { const r = res.result || {}; addIp(r.resolvedAddress); for (const h of (r.hops || [])) addIp(h.resolvedAddress) }
+    if (!geo) resolveGeoBatch(ips)          // 仅 duckdb 源需客户端预热; nexttrace 源 geo 已随结果到达
     if (!inited) {
-      const tg = await resolveGeo(targetIp)
+      const tg = geo ? (geo[targetIp] || null) : await resolveGeo(targetIp)
       const probes = results.map((res, i) => probeMeta(res, i))
       probes.forEach((_, i) => { sent[i] = { n: 0, done: false } })
       onInit && onInit({
@@ -257,7 +271,7 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
       const curRaw = r.rawOutput || '', curStat = r.stats || null
       // 展示 = 已完结各轮(累计) + 本轮当前进度。单轮(非无尽)累计为空 → 即本轮自身。
       onMeta && onMeta(id, { raw: a.rawC + (a.rawC && curRaw ? '\n' : '') + curRaw, stats: showStats(addStats(a.sC, curStat)) })
-      const hops = await buildHops(res, opts.type, targetIp)
+      const hops = await buildHops(res, opts.type, targetIp, geo)
       const s = sent[i] || (sent[i] = { n: 0, done: false })
       const fin = st === 'finished' || st === 'failed'     // failed=探测点离线/出错, 也算完结(否则卡片一直转圈)
       if (isRerun) { if (fin && !s.done) { s.done = true; commit(a, curRaw, curStat); onUpdate && onUpdate(id, hops, roundsOf(res, opts.type)) }; continue }

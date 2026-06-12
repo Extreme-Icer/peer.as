@@ -1,0 +1,14 @@
+{
+  "name": "peer-as-nexttrace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "globalping measurement geo-enrichment reverse proxy for peer.as (NextTrace, server-side token)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240924.0",
+    "wrangler": "^3.78.0"
+  }
+}

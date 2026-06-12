@@ -350,7 +350,9 @@ export function createTraceGlobe(canvas, opts = {}) {
     probes = (model.probes || []).map(mp => {
       const old = prev.get(mp.id)
       const rgb = (mp.color || [45, 212, 191]).join(',')
-      const hops = (mp.hops || []).map(h => geoNode(h.lat, h.lon, h))
+      // 只把有坐标的跳画到地球(私网/anycast 无坐标 → 跳过, 弧线自然连接前后有地理的跳);
+      // 详情面板用的是完整 mp.hops(含这些), 故"不落地球 ≠ 详情里消失"。
+      const hops = (mp.hops || []).filter(h => h.lat != null && h.lon != null).map(h => geoNode(h.lat, h.lon, h))
       // segGrow[i] = 第 i 段(节点 i-1 → i, 节点 0 视为监测点本身)的生长进度 0..1
       const segGrow = old ? old.segGrow.slice() : []
       while (segGrow.length < hops.length) segGrow.push(0) // 每跳一条入边的生长进度; 新到的跳从 0 开始长

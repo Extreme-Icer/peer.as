@@ -41,6 +41,26 @@ let ntToken = ''
 export function setGeoToken(tk) { tk = (tk || '').trim(); if (tk !== ntToken) { ntToken = tk; cache.clear() } }
 export function getGeoToken() { return ntToken }
 
+// 一条 NextTrace IPGeoData(单点或批量 results[].data)→ 统一 GeoResult。无坐标 -> null。
+function ntGeoResult(ip, j) {
+  if (!j) return null
+  const lat = typeof j.lat === 'number' ? j.lat : parseFloat(j.lat)
+  const lon = typeof j.lng === 'number' ? j.lng : parseFloat(j.lng)
+  if (!isFinite(lat) || !isFinite(lon)) return null
+  const asn = j.asnumber ? parseInt(String(j.asnumber).replace(/^AS/i, ''), 10) : null
+  // 地名按当前界面语言取(NextTrace 同时返回中文与 *_en 英文); zh 优先中文, 否则英文。
+  const zh = S?.lang === 'zh'
+  const pick = (z, e) => (zh ? (z || e) : (e || z)) || ''
+  const city = pick(j.city, j.city_en), prov = pick(j.prov, j.prov_en), country = pick(j.country, j.country_en)
+  const parts = []
+  for (const x of [city, prov, country]) { const v = (x || '').trim(); if (v && !parts.includes(v)) parts.push(v) }
+  return {
+    ip, cc: j.country_code || '', city: city || prov || country, province: prov || '',
+    asn: isFinite(asn) ? asn : null, prefix: j.prefix || null,
+    lat, lon, source: 'nexttrace', place: parts.join(' · '),
+  }
+}
+
 // 单次 NextTrace 查询; 无 token / 非 2xx / 超时 / 无坐标 -> null(由 nexttraceResolve 回退 duckdb)。
 async function nexttraceLookup(ip) {
   if (!ntToken) return null
@@ -49,31 +69,49 @@ async function nexttraceLookup(ip) {
     const r = await fetch(NT_ENDPOINT + '?ip=' + encodeURIComponent(ip),
       { headers: { 'X-NextTrace-Token': ntToken, Accept: 'application/json' }, signal: c.signal })
     if (!r.ok) return null
-    const j = await r.json()
-    const lat = typeof j.lat === 'number' ? j.lat : parseFloat(j.lat)
-    const lon = typeof j.lng === 'number' ? j.lng : parseFloat(j.lng)
-    if (!isFinite(lat) || !isFinite(lon)) return null
-    const asn = j.asnumber ? parseInt(String(j.asnumber).replace(/^AS/i, ''), 10) : null
-    // 地名按当前界面语言取(NextTrace 同时返回中文与 *_en 英文); zh 优先中文, 否则英文。
-    const zh = S?.lang === 'zh'
-    const pick = (z, e) => (zh ? (z || e) : (e || z)) || ''
-    return {
-      ip, lat, lon, asn: isFinite(asn) ? asn : null, prefix: j.prefix || null,
-      country: pick(j.country, j.country_en), prov: pick(j.prov, j.prov_en), city: pick(j.city, j.city_en),
-    }
+    return ntGeoResult(ip, await r.json())
   } catch { return null } finally { clearTimeout(tm) }
 }
 async function nexttraceResolve(ip) {
-  const nt = await nexttraceLookup(ip)
-  if (nt) {
-    const parts = []
-    for (const x of [nt.city, nt.prov, nt.country]) { const v = (x || '').trim(); if (v && !parts.includes(v)) parts.push(v) }
-    return {
-      ip, cc: '', city: nt.city || nt.prov || nt.country, province: nt.prov || '',
-      asn: nt.asn, prefix: nt.prefix, lat: nt.lat, lon: nt.lon, source: 'nexttrace', place: parts.join(' · '),
+  return (await nexttraceLookup(ip)) || duckdbResolve(ip)   // 无 token / 失败 / 无坐标: 回退本项目数据
+}
+
+// ── 批量查询: POST /v4/ipGeo/batch(一次最多 64 个去重 IP, 顺序对应)──────────────
+const NT_BATCH_ENDPOINT = 'https://api.nxtrace.org/v4/ipGeo/batch'
+// 一批 IP -> Map(ip -> GeoResult|null)。无 token / 失败时返回空 Map(各 IP 回退 duckdb)。
+async function nexttraceBatch(ips) {
+  const out = new Map()
+  if (!ntToken || !ips.length) return out
+  const c = new AbortController(); const tm = setTimeout(() => c.abort(), 8000)
+  try {
+    const r = await fetch(NT_BATCH_ENDPOINT, {
+      method: 'POST',
+      headers: { 'X-NextTrace-Token': ntToken, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ ips }), signal: c.signal,
+    })
+    if (!r.ok) return out
+    const j = await r.json()
+    for (const it of (j.results || [])) {
+      if (it && it.ok && it.data) { const g = ntGeoResult(it.ip, it.data); if (g) out.set(it.ip, g) }
+    }
+    return out
+  } catch { return out } finally { clearTimeout(tm) }
+}
+
+// 批量预热缓存: 把一组 IP 一次性查回, 写进解析缓存(同 IP 后续 resolveGeo 直接命中)。
+// 仅 nexttrace 源 + 有 token 时走批量端点(每 64 一组); 否则逐个走常规 resolveGeo(仍各自缓存)。
+export function resolveGeoBatch(ips) {
+  const uniq = [...new Set((ips || []).map(s => (s || '').trim()))].filter(s => s && isIpLiteral(s) && !cache.has(s))
+  if (!uniq.length) return
+  if (customResolver || activeSource !== 'nexttrace' || !ntToken) { for (const ip of uniq) resolveGeo(ip); return }
+  for (let i = 0; i < uniq.length; i += 64) {
+    const chunk = uniq.slice(i, i + 64)
+    const batch = nexttraceBatch(chunk)   // 一条批量请求, 所有 chunk 内 IP 共享
+    for (const ip of chunk) {
+      const p = batch.then(m => m.get(ip) || duckdbResolve(ip)).catch(() => duckdbResolve(ip))
+      cache.set(ip, p)                    // 同步写缓存: 并发 resolveGeo 复用同一批量结果, 不重复请求
     }
   }
-  return duckdbResolve(ip)   // 无 token / 失败 / 无坐标: 回退本项目数据(地球仍可画)
 }
 
 // ── 数据源注册 + 选择 ─────────────────────────────────────────────────────────

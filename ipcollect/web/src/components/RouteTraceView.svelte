@@ -265,31 +265,38 @@
       return cc ? { city: p.city, country: cc, limit: p.count || 1 } : { magic: p.city, limit: p.count || 1 }
     })
     if (!locations.length) { running = false; errMsg = t('rt_pick_probes'); probesOpen = true; return }
+    const runType = mtr.type   // 锁定本次类型(发起后改 type 选择器不影响已跑结果的渲染)
     ctl = streamTrace(target, locations, {
       onInit(skel) {
         // 自建模型(各 probe 起始 hops 为空), 之后只从事件追加 —— 与消费真实流式 API 完全一致
-        trace = { target: skel.target, probes: skel.probes.map(p => ({
+        trace = { target: skel.target, type: runType, probes: skel.probes.map(p => ({
           id: p.id, color: p.color, colorHex: p.colorHex, city: p.city, cc: p.cc, country: p.country,
-          network: p.network, asn: p.asn, lat: p.lat, lon: p.lon, status: 'probing', hops: [], rounds: [],
+          network: p.network, asn: p.asn, lat: p.lat, lon: p.lon, status: 'probing', hops: [], rounds: [], raw: '', stats: null,
         })) }
       },
       onHop(id, hop) {
         const p = trace.probes.find(x => x.id === id); if (!p) return
         p.hops = [...p.hops, hop]
-        trace = { target: trace.target, probes: [...trace.probes] }   // 触发地球 + 列表更新
+        trace = { target: trace.target, type: trace.type, probes: [...trace.probes] }   // 触发地球 + 列表更新
+      },
+      onMeta(id, info) {                                     // ping: 原始输出(详情展示) + stats(prow 摘要)
+        const p = trace.probes.find(x => x.id === id); if (!p) return
+        if (info?.raw != null) p.raw = info.raw
+        if (info?.stats) p.stats = info.stats
+        trace = { target: trace.target, type: trace.type, probes: [...trace.probes] }
       },
       onProbeDone(id, info) {
         const p = trace.probes.find(x => x.id === id); if (!p) return
         p.status = 'done'
         p.rounds = (info?.rounds || []).slice(-40)           // 到目标的真实逐包 RTT 样本(光谱小点)
-        trace = { target: trace.target, probes: [...trace.probes] }
+        trace = { target: trace.target, type: trace.type, probes: [...trace.probes] }
       },
       onUpdate(id, hops, rounds) {                           // 无尽 ping 的后续轮: 刷新逐跳 + 累加该轮样本
         const p = trace.probes.find(x => x.id === id); if (!p) return
         if (hops && hops.length) p.hops = hops
         p.status = 'done'
         if (rounds && rounds.length) p.rounds = [...(p.rounds || []), ...rounds].slice(-40)
-        trace = { target: trace.target, probes: [...trace.probes] }
+        trace = { target: trace.target, type: trace.type, probes: [...trace.probes] }
       },
       onDone() { running = false },
       onError(e) { running = false; errMsg = e?.message === 'rate-limited' ? t('rt_err_rate') : `${t('rt_err')}: ${e?.message || ''}` },
@@ -497,8 +504,10 @@
             </div>
             <div class="plist">
               {#each trace.probes as p (p.id)}
+                {@const isPing = trace.type === 'ping'}
                 {@const hops = p.hops}
                 {@const last = hops[hops.length - 1]}
+                {@const st = p.stats}
                 <div class="pcard" class:focus={focusId === p.id}
                      onmouseenter={() => (focusId = p.id)} onmouseleave={() => (focusId = null)} role="presentation">
                   <button class="prow" style:--pc={p.colorHex} onclick={() => toggleRow(p.id)}>
@@ -507,25 +516,40 @@
                     <!-- 中间: 每个小点 = 一轮结果, 按延迟光谱蓝→绿→黄→红着色 -->
                     <span class="rounds">{#each p.rounds || [] as r}<i style:background={roundColor(r)}></i>{/each}</span>
                     <span class="pstat" class:run={p.status === 'probing'}>
-                      {#if p.status === 'done'}{last?.rtt ?? '—'}<u>ms</u>
-                      {:else}<span class="spin"></span>{hops.length}{/if}
+                      {#if p.status !== 'done'}<span class="spin"></span>{isPing ? '' : hops.length}
+                      {:else if isPing}{st ? st.avg : '—'}<u>ms</u>{#if st && st.loss}<b class="loss">{st.loss}%</b>{/if}
+                      {:else}{last?.rtt ?? '—'}<u>ms</u>{/if}
                     </span>
                     <Fa icon={openRows.has(p.id) ? iChevD : iChevR} />
                   </button>
                   {#if openRows.has(p.id)}
-                    <ol class="hops">
-                      {#each hops as h (h.idx)}
-                        <li class:tgt={h.isTarget}>
-                          <span class="hn">{h.idx}</span>
-                          <span class="hip">
-                            <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
-                            {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
-                          </span>
-                          <span class="hgeo">{h.city || h.cc || ''}</span>
-                          <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
-                        </li>
-                      {/each}
-                    </ol>
+                    {#if isPing}
+                      <!-- ping: 不展示逐跳, 而是 stats 摘要 + 原始 rawOutput -->
+                      <div class="pingdet">
+                        {#if st}
+                          <div class="pstats">
+                            <span><i>min</i>{st.min}</span><span><i>avg</i>{st.avg}</span><span><i>max</i>{st.max}</span>
+                            <span><i>rcv</i>{st.rcv}/{st.total}</span><span class:bad={st.loss}><i>loss</i>{st.loss}%</span>
+                            {#if st.drop}<span class="bad"><i>drop</i>{st.drop}</span>{/if}
+                          </div>
+                        {/if}
+                        {#if p.raw}<pre class="raw">{p.raw}</pre>{/if}
+                      </div>
+                    {:else}
+                      <ol class="hops">
+                        {#each hops as h (h.idx)}
+                          <li class:tgt={h.isTarget}>
+                            <span class="hn">{h.idx}</span>
+                            <span class="hip">
+                              <button class="hlink hip-ip" onclick={() => pick(h.ip)} title={h.name}>{h.ip}</button>
+                              {#if h.asn}<button class="hlink hip-asn" onclick={() => pick('AS' + h.asn)} title={h.name}>AS{h.asn}</button>{/if}
+                            </span>
+                            <span class="hgeo">{h.city || h.cc || ''}</span>
+                            <span class="hrtt">{h.rtt == null ? '*' : h.rtt}<u>{h.rtt == null ? '' : 'ms'}</u>{#if h.loss}<b class="loss">{h.loss}%</b>{/if}</span>
+                          </li>
+                        {/each}
+                      </ol>
+                    {/if}
                   {/if}
                 </div>
               {/each}
@@ -899,6 +923,16 @@
   .hrtt { font: 600 11.5px var(--mono); color: var(--fg); text-align: right; white-space: nowrap; }
   .hrtt u { color: var(--muted); text-decoration: none; font-size: 9.5px; margin-left: 1px; }
   .hrtt .loss { color: #ef4444; margin-left: 5px; font-size: 10px; }
+  .pstat .loss { color: #ef4444; font: 600 10px var(--mono); }
+
+  /* ping 详情: stats 摘要 + 原始输出(rawOutput) */
+  .pingdet { border-top: 1px solid var(--line2); padding: 8px 11px 10px; display: flex; flex-direction: column; gap: 7px; }
+  .pstats { display: flex; flex-wrap: wrap; gap: 5px 7px; }
+  .pstats span { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 7px; border-radius: 6px; background: color-mix(in srgb, var(--alt) 70%, transparent); border: 1px solid var(--line); font: 600 11.5px var(--mono); color: var(--fg); }
+  .pstats span i { font: 600 9.5px var(--sans); font-style: normal; letter-spacing: .03em; color: var(--muted); text-transform: uppercase; }
+  .pstats span.bad { color: #ef4444; border-color: color-mix(in srgb, #ef4444 40%, var(--line)); }
+  .pstats span.bad i { color: color-mix(in srgb, #ef4444 70%, var(--muted)); }
+  .raw { margin: 0; padding: 9px 11px; border-radius: 8px; background: var(--inbg); border: 1px solid var(--line); color: var(--fg); font: 500 11.5px var(--mono); line-height: 1.5; white-space: pre-wrap; word-break: break-all; overflow-x: auto; max-height: 220px; overflow-y: auto; }
 
   /* 窄屏: 浮窗背景更实, 地球退作背景 */
   @container (max-width: 900px) {

@@ -17,9 +17,9 @@ const D2R = Math.PI / 180
 const TAU = Math.PI * 2
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v
 
-// 地轴倾斜角(像照片里的地球)。负值 = 北极朝右倾(因左侧有 panel, 让地球向右偏更协调)。
-const TILT = -23.5 * D2R
-const COS_T = Math.cos(TILT), SIN_T = Math.sin(TILT)
+// 加载时的默认朝向(仅初始姿态, 之后可像真实地球仪一样朝任意方向自由拖动 —— 无固定地轴)。
+const INIT_LAT = -22 * D2R   // d3 rotate 的 φ = −中心纬度 → 视野中心落在北纬 ~22°
+const INIT_ROLL = 0          // 不倾斜, 地球站正(北极朝上); 用户可用右键拖动手动 roll 角度
 const LIFT = 1.025          // 弧线/节点略微抬离球面, 不被球体挡住
 
 // ── 陆地多边形(GeoJSON MultiPolygon, 模块级构建一次)──
@@ -51,6 +51,62 @@ function shortIp(ip) {
   return g.slice(0, 2).join(':') + '…' + g.slice(-2).join(':')
 }
 
+// ── 自由旋转(四元数)── 用四元数表示地球朝向, 拖动 = 在视空间叠加旋转(trackball),
+//    所以没有「被锁死的地轴」: 可像谷歌地球 / 真实地球仪一样朝任意方向转。
+//    朝向 q 把「地理笛卡尔向量」映射到「视空间」(x=屏幕右, y=屏幕上, z=朝观察者; z>0 为正面)。
+const qMul = (a, b) => [
+  a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3],
+  a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2],
+  a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1],
+  a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0],
+]
+const qNorm = q => { const m = Math.hypot(q[0], q[1], q[2], q[3]) || 1; return [q[0] / m, q[1] / m, q[2] / m, q[3] / m] }
+const qAxis = (x, y, z, a) => { const h = a / 2, s = Math.sin(h); return [Math.cos(h), x * s, y * s, z * s] }
+// 旋转矩阵(行优先 3x3): v_view = M · v_geo
+function qMat(q) {
+  const [w, x, y, z] = q
+  const xx = x * x, yy = y * y, zz = z * z, xy = x * y, xz = x * z, yz = y * z, wx = w * x, wy = w * y, wz = w * z
+  return [
+    [1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy)],
+    [2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx)],
+    [2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy)],
+  ]
+}
+function qSlerp(a, b, t) {
+  let d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
+  if (d < 0) { b = [-b[0], -b[1], -b[2], -b[3]]; d = -d }
+  if (d > 0.9995) return qNorm([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t])
+  const th0 = Math.acos(d), th = th0 * t, s0 = Math.sin(th0)
+  const s1 = Math.sin(th0 - th) / s0, s2 = Math.sin(th) / s0
+  return [a[0] * s1 + b[0] * s2, a[1] * s1 + b[1] * s2, a[2] * s1 + b[2] * s2, a[3] * s1 + b[3] * s2]
+}
+const qClamp = v => v < -1 ? -1 : v > 1 ? 1 : v
+// 矩阵 → 四元数(行优先, 同 qMat 约定)
+function matToQ(m) {
+  const t = m[0][0] + m[1][1] + m[2][2]
+  let w, x, y, z
+  if (t > 0) { const s = Math.sqrt(t + 1) * 2; w = .25 * s; x = (m[2][1] - m[1][2]) / s; y = (m[0][2] - m[2][0]) / s; z = (m[1][0] - m[0][1]) / s }
+  else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) { const s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2; w = (m[2][1] - m[1][2]) / s; x = .25 * s; y = (m[0][1] + m[1][0]) / s; z = (m[0][2] + m[2][0]) / s }
+  else if (m[1][1] > m[2][2]) { const s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2; w = (m[0][2] - m[2][0]) / s; x = (m[0][1] + m[1][0]) / s; y = .25 * s; z = (m[1][2] + m[2][1]) / s }
+  else { const s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2; w = (m[1][0] - m[0][1]) / s; x = (m[0][2] + m[2][0]) / s; y = (m[1][2] + m[2][1]) / s; z = .25 * s }
+  return qNorm([w, x, y, z])
+}
+// d3 rotate 欧拉角 [λ,φ,γ](弧度)→ 朝向四元数。λ=−中心经度, φ=−中心纬度, γ=屏幕内 roll。
+function eulerToQ(lam, phi, gam) {
+  const cλ = Math.cos(lam), sλ = Math.sin(lam), cφ = Math.cos(phi), sφ = Math.sin(phi), cγ = Math.cos(gam), sγ = Math.sin(gam)
+  const M0 = [cφ * cλ, -cφ * sλ, -sφ]
+  const M1 = [-sγ * sφ * cλ + cγ * sλ, sγ * sφ * sλ + cγ * cλ, -sγ * cφ]
+  const M2 = [cγ * sφ * cλ + sγ * sλ, -cγ * sφ * sλ + sγ * cλ, cγ * cφ]
+  return matToQ([M1, M2, M0])   // 视空间矩阵 Mv = P·M_d3(P 把地理笛卡尔轴排到屏幕轴)
+}
+// 视空间矩阵 → d3 rotate 角度[λ,φ,γ](度), 供 d3-geo 画陆地填充时严格对齐 projectLL。
+function mvEuler(m) {
+  const lam = Math.atan2(-m[2][1], m[2][0])
+  const phi = -Math.asin(qClamp(m[2][2]))
+  const gam = Math.atan2(-m[0][2], m[1][2])
+  return [lam / D2R, phi / D2R, gam / D2R]
+}
+
 export function createTraceGlobe(canvas, opts = {}) {
   const ctx = canvas.getContext('2d')
   const tipEl = opts.tip || null
@@ -61,8 +117,9 @@ export function createTraceGlobe(canvas, opts = {}) {
   const surf = opts.hit || canvas
   const root = document.documentElement
 
-  let W = 0, H = 0, DPR = 1, R = 0, Rbase = 0, cx = 0, cy = 0
-  let zoom = 1                     // 滚轮缩放(像谷歌地球): 实际 R = Rbase * zoom
+  let W = 0, H = 0, DPR = 1, R = 0, Rbase = 0, cx = 0, cy = 0, baseCx = 0, baseCy = 0
+  let zoom = 0.82                  // 滚轮缩放(像谷歌地球): 实际 R = Rbase * zoom。初始略缩小, 露出球缘/太空感
+  let panX = 0, panY = 0           // 球心相对默认位置的平移(滚轮朝鼠标缩放时累积, 让指针下的点不动)
   function resize() {
     const w = canvas.offsetWidth, h = canvas.offsetHeight
     if (!w || !h) return
@@ -72,8 +129,10 @@ export function createTraceGlobe(canvas, opts = {}) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
     // 地球占满整个视图、球心在 3D 空间里推到偏右(~57% 宽处); 半径取到能盖住最远的视口角 ——
     // 这样默认看不到任何圆盘边缘, 也就不存在「地球底色 ≠ 页面底色」的割裂(浅色尤甚)。缩小(滚轮)后才露球缘。
-    cx = W * 0.57; cy = H * 0.5
-    const farX = Math.max(cx, W - cx), farY = Math.max(cy, H - cy)
+    baseCx = W * 0.57; baseCy = H * 0.5
+    panX = clamp(panX, -W * 0.55, W * 0.55); panY = clamp(panY, -H * 0.55, H * 0.55)
+    cx = baseCx + panX; cy = baseCy + panY
+    const farX = Math.max(baseCx, W - baseCx), farY = Math.max(baseCy, H - baseCy)
     Rbase = Math.hypot(farX, farY) * 1.04
     R = Rbase * zoom
   }
@@ -98,18 +157,46 @@ export function createTraceGlobe(canvas, opts = {}) {
   let locations = []           // [{ id, la, lo, city, cc, country, count, sel }]  ← setLocations 注入
   const locHits = []           // 本帧各光点屏幕位置(供命中检测)
 
-  // ── 相机: 缓慢自转 + 新 trace 时缓飞到目标经度 ──
-  const BASE_LAT = 22 * D2R
-  let viewLon = 0, viewLat = BASE_LAT
-  const cam = { tlon: 0, tlat: BASE_LAT, flying: false, flyT: 0 }
-  const angDiff = d => { d = (d + Math.PI) % TAU; if (d < 0) d += TAU; return d - Math.PI }
+  // ── 相机: 自由朝向(四元数)+ 缓慢自转 + 新 trace 时缓飞到目标 ──
+  let q = eulerToQ(0, INIT_LAT, INIT_ROLL)   // 当前朝向(加载默认: 看北纬 ~22°、站正)
+  let MV = qMat(q)                           // 本帧旋转矩阵(每帧由 q 重算; projectLL 复用)
+  let userMoved = false                      // 用户是否已手动拖动/缩放(true 后不再自动飞到 home)
+  const cam = { q: null, flying: false, flyT: 0 }   // 缓飞目标朝向(slerp)
+  // 视空间叠加旋转(trackball): 横拖绕屏幕竖轴、纵拖绕屏幕横轴 —— 复合出任意朝向, 无固定地轴。
+  function dragRotate(dx, dy) {
+    const qy = qAxis(0, 1, 0, dx / R), qx = qAxis(1, 0, 0, dy / R)
+    q = qNorm(qMul(qMul(qx, qy), q))
+    cam.flying = false; userMoved = true
+  }
+  // 右键拖动: 绕视线轴 roll(转动地球仪的「角度」)。da = 指针绕球心的角度变化(球心附近已钳制限速)。
+  function rollRotate(da) { q = qNorm(qMul(qAxis(0, 0, 1, da), q)); cam.flying = false; userMoved = true }
 
-  // ── 投影(含地轴 roll)── 所有几何统一走这里, 倾斜才一致 ──
+  // ── 投影 ── 地理(lat,lon)→ 视空间; 所有几何统一走这里。x=屏幕右, y=屏幕上, z=朝观察者 ──
   function projectLL(lat, lon) {
-    const dl = lon - viewLon, cl = Math.cos(lat), sl = Math.sin(lat)
-    const cv = Math.cos(viewLat), sv = Math.sin(viewLat), cd = Math.cos(dl)
-    const x = cl * Math.sin(dl), y = cv * sl - sv * cl * cd, z = sv * sl + cv * cl * cd
-    return { x: x * COS_T - y * SIN_T, y: x * SIN_T + y * COS_T, z }   // 屏幕平面内倾斜
+    const cl = Math.cos(lat), sl = Math.sin(lat)
+    const px = cl * Math.cos(lon), py = cl * Math.sin(lon), pz = sl
+    const m = MV
+    return {
+      x: m[0][0] * px + m[0][1] * py + m[0][2] * pz,
+      y: m[1][0] * px + m[1][1] * py + m[1][2] * pz,
+      z: m[2][0] * px + m[2][1] * py + m[2][2] * pz,
+    }
+  }
+  // 缓飞到某地理点(经/纬, 度): 居中该点, 保留当前 roll。
+  function flyTo(lonDeg, latDeg) {
+    const roll = mvEuler(qMat(q))[2] * D2R
+    cam.q = eulerToQ(-lonDeg * D2R, -clamp(latDeg, -60, 60) * D2R, roll)
+    cam.flying = true; cam.flyT = 0
+  }
+  // 朝屏幕点 (px,py) 缩放(像谷歌地球): 调整球心平移, 让指针正下方的地球点保持不动。
+  function zoomAt(px, py, factor) {
+    const nz = clamp(zoom * factor, 0.5, 5.5)
+    if (nz === zoom) return
+    const k = nz / zoom
+    cx = px - (px - cx) * k; cy = py - (py - cy) * k
+    panX = clamp(cx - baseCx, -W * 0.55, W * 0.55); panY = clamp(cy - baseCy, -H * 0.55, H * 0.55)
+    cx = baseCx + panX; cy = baseCy + panY
+    zoom = nz; R = Rbase * zoom; cam.flying = false; userMoved = true
   }
 
   // ── 数据 ──
@@ -125,7 +212,8 @@ export function createTraceGlobe(canvas, opts = {}) {
     model = m || { target: null, probes: [] }
     const newKey = model.target ? model.target.ip + '@' + model.target.lat + ',' + model.target.lon : null
     const tgChanged = newKey !== targetKey; targetKey = newKey
-    target = model.target ? {
+    // 目标无有效坐标(0,0 / anycast 占位)→ 不在地球上画靶标(头部信息仍由组件单独展示)。
+    target = (model.target && (model.target.lat || model.target.lon)) ? {
       la: model.target.lat * D2R, lo: model.target.lon * D2R,
       ip: model.target.ip, label: model.target.label, city: model.target.city,
     } : null
@@ -145,19 +233,22 @@ export function createTraceGlobe(canvas, opts = {}) {
         appearT: old ? old.appearT : introT,
       }
     })
-    if (model.target && tgChanged) {                     // 新目标 → 相机缓飞过去(经度对中, 纬度夹northern)
-      cam.tlon = model.target.lon * D2R
-      cam.tlat = clamp(model.target.lat * D2R, 6 * D2R, 46 * D2R)
-      cam.flying = true; cam.flyT = 0
+    if (model.target && tgChanged && (model.target.lat || model.target.lon)) {   // 新目标 → 相机缓飞过去(0,0/anycast 不飞)
+      flyTo(model.target.lon, model.target.lat)
     }
   }
   function focus(id) { activeProbe = id || null }
-  function recenter() { if (target) { cam.tlon = target.lo; cam.tlat = clamp(target.la, 6 * D2R, 46 * D2R); cam.flying = true; cam.flyT = 0 } }
+  function recenter() { if (target) flyTo(target.lo / D2R, target.la / D2R) }
+  // 初始视角: 缓飞到用户所在地(经/纬, 度)。仅在尚无 trace 目标、且用户还没手动操作过地球时生效。
+  function setHome(lon, lat) {
+    if (typeof lat !== 'number' || typeof lon !== 'number') return
+    if (!target && !userMoved) flyTo(lon, lat)
+  }
 
   // ── 交互(hover 出 tooltip; 点击转发查询)──
   let pointer = { x: -1, y: -1, inside: false }, hover = null, lastHoverId = null, lastLocId = null
   const hitList = []   // 本帧全部可点目标 {sx,sy,rad,payload}; 点击时实时命中(不能用 hover —— 按下即被清)
-  const drag = { active: false, lx: 0, ly: 0, moved: 0 }
+  const drag = { active: false, lx: 0, ly: 0, moved: 0, button: 0 }
   function setPointer(e) {
     const r = surf.getBoundingClientRect(), t = e.touches ? e.touches[0] : e
     if (!t) return
@@ -171,13 +262,20 @@ export function createTraceGlobe(canvas, opts = {}) {
     else { pointer.inside = false; pointer.x = pointer.y = -1 }
   }
   const onLeave = () => { pointer.inside = false; pointer.x = pointer.y = -1 }
-  const onDown = e => { drag.active = true; drag.moved = 0; drag.lx = e.clientX; drag.ly = e.clientY; surf.classList.add('grabbing'); e.preventDefault() }
+  const onDown = e => { drag.active = true; drag.button = e.button; drag.moved = 0; drag.lx = e.clientX; drag.ly = e.clientY; surf.classList.add('grabbing'); e.preventDefault() }
+  const onCtx = e => e.preventDefault()   // 右键用于 roll, 屏蔽浏览器右键菜单
   const onWinMove = e => {
     if (!drag.active) return
     const dx = e.clientX - drag.lx, dy = e.clientY - drag.ly; drag.lx = e.clientX; drag.ly = e.clientY
     drag.moved += Math.abs(dx) + Math.abs(dy)
-    viewLon -= dx / R; viewLat = clamp(viewLat + dy / R, -89 * D2R, 89 * D2R)
-    cam.flying = false
+    // 右键 roll: 按指针绕球心的「角度变化」扭转 → 抓住的点始终跟随鼠标(上下半球都一致, 不反向);
+    // 分母对半径做下限钳制(球心附近用 minR² 兜底) → 靠近球心也不会突然变得超快。
+    if (drag.button === 2) {
+      const r = surf.getBoundingClientRect()
+      const px = (e.clientX - r.left) - cx, py = -((e.clientY - r.top) - cy)   // 视空间(y 朝上)指针相对球心
+      const minR2 = 90 * 90
+      rollRotate((px * -dy - py * dx) / Math.max(px * px + py * py, minR2))
+    } else dragRotate(dx, dy)
   }
   const onWinUp = () => { if (drag.active) { drag.active = false; surf.classList.remove('grabbing') } }
   // 触摸: 单指拖动旋转, 双指捏合缩放(像谷歌地球)。(.tg-hit 设 touch-action:none, 不会触发浏览器手势)
@@ -188,14 +286,18 @@ export function createTraceGlobe(canvas, opts = {}) {
     const t = e.touches[0]; if (!t) return; drag.active = true; drag.moved = 0; drag.lx = t.clientX; drag.ly = t.clientY; setPointer(e)
   }
   const onTMove = e => {
-    if (e.touches.length >= 2) { const d = touchDist(e); if (pinchD > 0) { zoom = clamp(zoom * (d / pinchD), 0.5, 5.5); pinchD = d } cam.flying = false; return }
+    if (e.touches.length >= 2) {
+      const d = touchDist(e)
+      if (pinchD > 0) { const a = e.touches[0], b = e.touches[1], r = surf.getBoundingClientRect(); zoomAt((a.clientX + b.clientX) / 2 - r.left, (a.clientY + b.clientY) / 2 - r.top, d / pinchD) }
+      pinchD = d; return
+    }
     const t = e.touches[0]; if (!t) return
-    if (drag.active) { const dx = t.clientX - drag.lx, dy = t.clientY - drag.ly; drag.lx = t.clientX; drag.ly = t.clientY; drag.moved += Math.abs(dx) + Math.abs(dy); viewLon -= dx / R; viewLat = clamp(viewLat + dy / R, -89 * D2R, 89 * D2R); cam.flying = false }
+    if (drag.active) { const dx = t.clientX - drag.lx, dy = t.clientY - drag.ly; drag.lx = t.clientX; drag.ly = t.clientY; drag.moved += Math.abs(dx) + Math.abs(dy); dragRotate(dx, dy) }
     setPointer(e)
   }
   const onTEnd = e => { if (!e.touches || e.touches.length < 2) pinchD = 0; drag.active = false; pointer.inside = false }
-  // 滚轮缩放(像谷歌地球): 朝指针方向放大/缩小; 缩放期间打断自动缓飞
-  const onWheel = e => { e.preventDefault(); zoom = clamp(zoom * (e.deltaY < 0 ? 1.12 : 0.892), 0.5, 5.5); cam.flying = false }
+  // 滚轮缩放(像谷歌地球): 朝指针所在的地球点放大/缩小; 缩放期间打断自动缓飞
+  const onWheel = e => { e.preventDefault(); const r = surf.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.892) }
   function hitAt(px, py) {       // 实时命中(用上一帧的 hitList, 不受 drag.active 清 hover 影响), 返回命中项
     let bd = 1e9, hit = null
     for (const it of hitList) { const d = (it.sx - px) ** 2 + (it.sy - py) ** 2; if (d < it.rad * it.rad && d < bd) { bd = d; hit = it } }
@@ -218,7 +320,7 @@ export function createTraceGlobe(canvas, opts = {}) {
   window.addEventListener('mousemove', onWinMove); window.addEventListener('mouseup', onWinUp)
   surf.addEventListener('touchstart', onTStart, { passive: true }); surf.addEventListener('touchmove', onTMove, { passive: true }); surf.addEventListener('touchend', onTEnd)
   surf.addEventListener('wheel', onWheel, { passive: false })
-  surf.addEventListener('click', onClick)
+  surf.addEventListener('click', onClick); surf.addEventListener('contextmenu', onCtx)
 
   // ── 弧线(纯大圆 slerp + 抬升)── 倾斜已含在 projectLL 里 ──
   function arcPoint(a, b, t) {
@@ -270,21 +372,19 @@ export function createTraceGlobe(canvas, opts = {}) {
     for (let p = 1; p < 6; p++) { const lat = (p / 6) * Math.PI - Math.PI / 2; strokeArc(P, lon => projectLL(lat, lon), -Math.PI, Math.PI, 46, aF * .85, aB * .85) }
   }
   // 陆地填色(与海洋深浅区分) —— 半球裁剪整体交给 d3-geo(geoOrthographic 自带 clipAngle(90)
-  // 的 clipCircle 缝合), 不再手写球缘缝合。投影参数与 projectLL 严格等价(已数值验证到 1e-13 px):
-  //   · rotate([-viewLon, -viewLat]) + translate(cx,cy) + scale(R)  ≡  projectLL 的视点旋转
-  //   · 23.5° 地轴倾斜(屏幕平面内 roll)用画布旋转实现: ctx.rotate(-TILT) 绕 (cx,cy)
+  // 的 clipCircle 缝合), 不再手写球缘缝合。投影参数与 projectLL 严格等价:
+  //   · proj.rotate(mvEuler(MV)) 把当前自由朝向(四元数 → 视空间矩阵 MV)反解成 d3 的 [λ,φ,γ] 欧拉角,
+  //     roll 已含在 γ 里 → 不再需要单独的画布 ctx.rotate; translate(cx,cy)+scale(R) 与 projectLL 一致。
   // 全部陆地经 geoPath 写进同一个 path、一次 fill(nonzero winding 取并集) → 重叠不叠 alpha,
   // 无"披萨片"反色、无横切弦、无闪烁; 深浅由这里的 fillStyle 一处决定。
   const proj = geoOrthographic().clipAngle(90)
   const landPath = geoPath(proj, ctx)
   function drawLand(P) {
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'
-    proj.rotate([-viewLon / D2R, -viewLat / D2R]).translate([cx, cy]).scale(R)
-    ctx.save()
-    ctx.translate(cx, cy); ctx.rotate(-TILT); ctx.translate(-cx, -cy)
+    // 旋转/roll 全由 d3 的欧拉角承担(从本帧 MV 反解), 与 projectLL 严格一致 —— 不再单独做画布 roll。
+    proj.rotate(mvEuler(MV)).translate([cx, cy]).scale(R)
     ctx.fillStyle = P.isDark ? 'rgba(30,47,62,.62)' : 'rgba(218,226,225,.5)'
     ctx.beginPath(); landPath(LAND); ctx.fill()
-    ctx.restore()
 
     // 海岸线描边(开放, 不闭合; 只描真实海岸线、不描球缘) —— 用 projectLL 手动剔背面, 单独一遍
     ctx.strokeStyle = P.isDark ? `rgba(${P.landRgb},.6)` : `rgba(${P.accentRgb},.42)`; ctx.lineWidth = 1
@@ -395,15 +495,15 @@ export function createTraceGlobe(canvas, opts = {}) {
     R = Rbase * zoom                 // 应用滚轮缩放
     const P = palette()
 
-    // 相机: 缓飞到目标 → 之后极慢自转(保持纬度)
-    if (cam.flying) {
+    // 相机: 缓飞到目标朝向 → 之后绕地理北极极慢自转(悬停节点 / popup 打开 / 拖动时暂停)
+    if (cam.flying && cam.q) {
       const k = 1 - Math.exp(-dt * 2.6)
-      viewLon += angDiff(cam.tlon - viewLon) * k
-      viewLat += (cam.tlat - viewLat) * k
+      q = qSlerp(q, cam.q, k)
       cam.flyT += dt; if (cam.flyT > 1.7) cam.flying = false
     } else if (!drag.active && !hover && !hold) {
-      viewLon += dt * 0.018                       // 自然缓慢自转(悬停节点 / popup 打开时暂停)
+      q = qMul(q, qAxis(0, 0, 1, dt * 0.018))     // 绕地球自身极轴自转(任意朝向下都自然)
     }
+    MV = qMat(q)                     // 本帧旋转矩阵(projectLL / drawLand 共用)
 
     ctx.clearRect(0, 0, W, H)
     drawGlobe(P)
@@ -591,13 +691,13 @@ export function createTraceGlobe(canvas, opts = {}) {
   raf = requestAnimationFrame(frame)
 
   return {
-    setData, setLocations, setHold, focus, recenter,
+    setData, setLocations, setHold, focus, recenter, setHome,
     destroy() {
       cancelAnimationFrame(raf); ro.disconnect()
       window.removeEventListener('mousemove', onMove); surf.removeEventListener('mouseleave', onLeave); surf.removeEventListener('mousedown', onDown)
       window.removeEventListener('mousemove', onWinMove); window.removeEventListener('mouseup', onWinUp)
       surf.removeEventListener('touchstart', onTStart); surf.removeEventListener('touchmove', onTMove); surf.removeEventListener('touchend', onTEnd)
-      surf.removeEventListener('wheel', onWheel); surf.removeEventListener('click', onClick)
+      surf.removeEventListener('wheel', onWheel); surf.removeEventListener('click', onClick); surf.removeEventListener('contextmenu', onCtx)
     },
   }
 }

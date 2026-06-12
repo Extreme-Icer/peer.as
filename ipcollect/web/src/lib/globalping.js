@@ -5,6 +5,7 @@
 // 上层(RouteTraceView)消费事件流重建模型, 切 mock↔live 一行不用改:
 //   onInit({ target, probes })   probes:[{id,color,colorHex,city,cc,country,network,asn,lat,lon}]
 //   onHop(id, hop)               逐跳追加 hop:{idx,ip,asn,name,cc,city,lat,lon,rtt,loss,isTarget}
+//   onMeta(id, { raw, stats })   每次快照的原始输出 + ping 统计(ping 详情用 rawOutput 展示, prow 显示 stats)
 //   onProbeDone(id, { rounds })  该探测点完成; rounds=到目标的逐包 RTT 样本(光谱小点)
 //   onUpdate(id, hops, rounds)   无尽 ping 的后续轮: 整条刷新 + 累加该轮样本
 //   onDone()                     全部完成(非无尽)
@@ -15,7 +16,7 @@
 // 每一跳 IP 经 geo-resolve.resolveGeo 富集 cc/city/坐标(异步; 默认 DuckDB+质心, 可换在线 geoip)。
 
 import { ccLabel, asnName } from './bgp.js'
-import { resolveGeo } from './geo-resolve.js'
+import { resolveGeo, resolveGeoBatch } from './geo-resolve.js'
 
 const API = 'https://api.globalping.io/v1'
 
@@ -121,6 +122,13 @@ function probeMeta(res, i) {
   }
 }
 
+// 无效地理: 无坐标 / lat,lng 同为 0 / 归属写了 ANYCAST(不分大小写)。这些跳不落地球(当作不存在)。
+function badGeo(g) {
+  if (!g || g.lat == null || g.lon == null) return true
+  if (g.lat === 0 && g.lon === 0) return true
+  return /anycast/i.test(`${g.city || ''} ${g.province || ''} ${g.place || ''} ${g.cc || ''}`)
+}
+
 // 一跳的 RTT(ms): mtr 用 stats.min(最优, 单调更稳); traceroute 用 timings 最小值。无样本 -> null。
 function hopRtt(h) {
   if (h.stats && h.stats.rcv > 0) return Math.round((h.stats.min ?? h.stats.avg ?? 0) * 10) / 10
@@ -137,7 +145,7 @@ async function buildHops(res, type, targetIp) {
   if (type === 'ping') {
     const rtt = hopRtt({ stats: r.stats, timings: r.timings })
     const g = await resolveGeo(tgtIp)
-    if (g && g.lat != null) out.push(mkHop(1, tgtIp, g, rtt, r.stats?.loss ?? 0, true, asnName(g.asn)))
+    if (!badGeo(g)) out.push(mkHop(1, tgtIp, g, rtt, r.stats?.loss ?? 0, true, asnName(g.asn)))
     return out
   }
   const hops = r.hops || []
@@ -147,7 +155,7 @@ async function buildHops(res, type, targetIp) {
     const ip = h.resolvedAddress
     if (!ip || isPrivate(ip)) continue                 // * * * 超时跳 / LAN·私网: 当作不存在, 连前后有地理的跳
     const g = await resolveGeo(ip)
-    if (!g || g.lat == null) continue                  // 地区不明: 同样跳过(连前后); 在线 geoip 接入后可补全
+    if (badGeo(g)) continue                             // 地区不明 / anycast / 0,0: 同样跳过(连前后)
     const asn = (h.asn && h.asn.length ? h.asn[0] : null) ?? g.asn ?? 0
     out.push(mkHop(++idx, ip, g, hopRtt(h), h.stats?.loss ?? 0, ip === tgtIp, asnName(asn) || h.resolvedHostname || '', asn))
   }
@@ -163,6 +171,30 @@ function mkHop(idx, ip, g, rtt, loss, isTarget, name, asn) {
     rtt: rtt == null ? null : rtt, loss: Math.round(loss || 0), isTarget: !!isTarget,
   }
 }
+// ── ping 统计累计(无尽模式跨轮聚合)─────────────────────────────────────────────
+const r3 = x => x == null ? null : Math.round(x * 1000) / 1000
+const emptyBase = () => ({ sumRtt: 0, rcv: 0, total: 0, drop: 0, min: null, max: null })
+// 把某轮快照统计 st 累加进聚合 base(sum 形式, 便于后续算总平均/总丢包)。
+function addStats(base, st) {
+  if (!st) return base
+  const rcv = st.rcv ?? 0
+  return {
+    sumRtt: base.sumRtt + (st.avg ?? 0) * rcv, rcv: base.rcv + rcv,
+    total: base.total + (st.total ?? 0), drop: base.drop + (st.drop ?? 0),
+    min: st.min == null ? base.min : (base.min == null ? st.min : Math.min(base.min, st.min)),
+    max: st.max == null ? base.max : (base.max == null ? st.max : Math.max(base.max, st.max)),
+  }
+}
+// 聚合 base -> 展示用 stats{min,max,avg,total,loss,rcv,drop}; 无任何数据返回 null。
+function showStats(base) {
+  if (!base || (!base.total && !base.rcv && base.min == null)) return null
+  return {
+    min: r3(base.min), max: r3(base.max), avg: r3(base.rcv ? base.sumRtt / base.rcv : 0),
+    total: base.total, rcv: base.rcv, drop: base.drop,
+    loss: r3(base.total ? (1 - base.rcv / base.total) * 100 : 0),
+  }
+}
+
 // 到目标的逐包 RTT 样本(光谱小点): mtr/traceroute 取目标跳 timings; ping 取顶层 timings。
 function roundsOf(res, type) {
   const r = res.result || {}
@@ -178,10 +210,11 @@ function roundsOf(res, type) {
 // ── 流式跟踪(POST + 轮询)─────────────────────────────────────────────────────
 const POLL_MS = 500
 export function streamTrace(target, locations, handlers = {}, opts = {}) {
-  const { onInit, onHop, onProbeDone, onUpdate, onDone, onError } = handlers
+  const { onInit, onHop, onMeta, onProbeDone, onUpdate, onDone, onError } = handlers
   let cancelled = false, timer = null
   let inited = false
   const sent = []     // 每个 probe 已下发的 hop 数 + 本轮是否已完结回调
+  const acc = []      // 每个 probe 的跨轮累计(无尽 ping): { rawC:已完结各轮 rawOutput 串接, sC:统计聚合 }
   let targetIp = null
   let firstId = null  // 首轮 measurement id; 无尽 ping 后续轮把它当 locations(字符串)复用同一批探测点
   const infinite = !!opts.infinite && opts.type === 'ping'   // 无尽仅 ping
@@ -192,30 +225,45 @@ export function streamTrace(target, locations, handlers = {}, opts = {}) {
   async function ingest(d, isRerun) {
     const results = d.results || []
     if (!results.length) return
+    // 批量预热 geo: 本快照里目标 + 各跳的全部 IP 一次性查回(走 NextTrace batch 端点), 后续逐个 resolveGeo 命中缓存。
+    const ips = []
+    const firstAddr = results.find(r => r.result?.resolvedAddress)?.result.resolvedAddress
+    if (!targetIp) targetIp = firstAddr || target
+    if (firstAddr) ips.push(firstAddr)
+    for (const res of results) { const r = res.result || {}; if (r.resolvedAddress) ips.push(r.resolvedAddress); for (const h of (r.hops || [])) if (h.resolvedAddress) ips.push(h.resolvedAddress) }
+    resolveGeoBatch(ips)
     if (!inited) {
-      // 目标坐标: 取首个解析出地址的 probe(anycast/GeoDNS 下各 probe 可能不同, 取其一画靶标)。
-      targetIp = results.find(r => r.result?.resolvedAddress)?.result.resolvedAddress || target
       const tg = await resolveGeo(targetIp)
       const probes = results.map((res, i) => probeMeta(res, i))
       probes.forEach((_, i) => { sent[i] = { n: 0, done: false } })
       onInit && onInit({
-        target: tg && tg.lat != null
+        target: !badGeo(tg)
           ? { ip: targetIp, label: target, lat: tg.lat, lon: tg.lon, cc: tg.cc, city: tg.city || ccLabel(tg.cc) || '', loc: tg.place || tg.city || ccLabel(tg.cc) || '' }
           : { ip: targetIp, label: target, lat: 0, lon: 0, cc: '', city: '', loc: '' },
         probes,
       })
       inited = true
     }
+    // 某轮在某 probe 完结时, 把该轮 rawOutput / 统计「提交」进累计(无尽 ping 跨轮 append + 累加)。
+    const commit = (a, curRaw, curStat) => {
+      a.rawC += (a.rawC && curRaw ? '\n' : '') + curRaw
+      if (a.rawC.length > 20000) a.rawC = a.rawC.slice(-20000)   // 无尽模式防无限增长
+      a.sC = addStats(a.sC, curStat)
+    }
     for (let i = 0; i < results.length; i++) {
-      const res = results[i], st = res.result?.status
-      const hops = await buildHops(res, opts.type, targetIp)
+      const res = results[i], r = res.result || {}, st = r.status
       const id = 'p' + i
+      const a = acc[i] || (acc[i] = { rawC: '', sC: emptyBase() })
+      const curRaw = r.rawOutput || '', curStat = r.stats || null
+      // 展示 = 已完结各轮(累计) + 本轮当前进度。单轮(非无尽)累计为空 → 即本轮自身。
+      onMeta && onMeta(id, { raw: a.rawC + (a.rawC && curRaw ? '\n' : '') + curRaw, stats: showStats(addStats(a.sC, curStat)) })
+      const hops = await buildHops(res, opts.type, targetIp)
       const s = sent[i] || (sent[i] = { n: 0, done: false })
       const fin = st === 'finished' || st === 'failed'     // failed=探测点离线/出错, 也算完结(否则卡片一直转圈)
-      if (isRerun) { if (fin && !s.done) { s.done = true; onUpdate && onUpdate(id, hops, roundsOf(res, opts.type)) }; continue }
+      if (isRerun) { if (fin && !s.done) { s.done = true; commit(a, curRaw, curStat); onUpdate && onUpdate(id, hops, roundsOf(res, opts.type)) }; continue }
       for (let k = s.n; k < hops.length; k++) onHop && onHop(id, hops[k])
       s.n = hops.length
-      if (fin && !s.done) { s.done = true; onProbeDone && onProbeDone(id, { rounds: roundsOf(res, opts.type) }) }
+      if (fin && !s.done) { s.done = true; commit(a, curRaw, curStat); onProbeDone && onProbeDone(id, { rounds: roundsOf(res, opts.type) }) }
     }
   }
 
